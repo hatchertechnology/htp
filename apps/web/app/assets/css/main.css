@@ -259,3 +259,35 @@ h1{font-size:30px} h2{font-size:21px} .desk-rail{flex-wrap:wrap;gap:10px;padding
 @media (max-width: 650px) { .repository-settings { padding-left: 0; } }
 
 .repository-settings .property-form { display: grid; gap: 16px; }
+
+.combined-performance { margin-bottom: 36px; }
+.combined-panel { padding: 22px; }
+.combined-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 16px 28px; }
+.combined-controls label { display: grid; gap: 6px; font-size: 12px; font-weight: 600; }
+.combined-controls select, .combined-commit-inspector select { border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink); padding: 8px 10px; min-height: 42px; font: inherit; }
+.combined-search, .combined-search-label { color: var(--rust); fill: #b94d28; }
+.combined-onsite, .combined-onsite-label { color: var(--navy, #182c3d); fill: #182c3d; }
+.combined-commit-key { font-size: 12px; color: var(--muted); padding-bottom: 10px; }
+.combined-commit-key::before { content: ''; display: inline-block; height: 14px; border-left: 1px dashed #657d8b; margin-right: 8px; vertical-align: middle; }
+.combined-chart { width: 100%; margin-top: 16px; min-width: 0; }
+.combined-chart svg { display: block; width: 100%; height: auto; }
+.combined-search-line { stroke: #b94d28; }
+.combined-onsite-line { stroke: #182c3d; stroke-dasharray: 7 3; }
+.combined-search-point { fill: #b94d28; }
+.combined-onsite-point { fill: #182c3d; }
+.combined-commit-marker { stroke: #53677e; stroke-width: 1; stroke-dasharray: 3 4; opacity: .8; }
+.combined-commit-hit { stroke: transparent; stroke-width: 10; cursor: pointer; }
+.combined-commit:hover .combined-commit-marker, .combined-commit.is-selected .combined-commit-marker { stroke: #10233a; stroke-width: 2; opacity: 1; stroke-dasharray: none; }
+.combined-commit-inspector { margin-top: 20px; }
+.combined-commit-inspector label { display: grid; gap: 8px; font-size: 13px; }
+.combined-commit-inspector select { width: 100%; max-width: 100%; min-width: 0; text-overflow: ellipsis; }
+.combined-commit-detail { padding: 16px 0; overflow-wrap: anywhere; }
+.combined-commit-detail p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+.combined-daily { margin-top: 16px; }
+.combined-daily summary { cursor: pointer; min-height: 44px; padding: 12px 0; font-size: 13px; }
+.combined-performance > .analytics-section-heading { align-items: start; }
+.combined-performance .refresh-control { min-height: 44px; font-size: 12px; white-space: nowrap; }
+@media (max-width: 650px) { .combined-panel { padding: 16px 8px; } .combined-controls { padding: 0 8px; gap: 14px; } .combined-controls label { flex: 1 1 130px; min-width: 0; } .combined-controls select { width: 100%; } .combined-commit-key { width: 100%; } .combined-commit-inspector, .combined-daily, .combined-panel > p { margin-inline: 8px; } }
+
+.combined-daily[open] .table-scroll { position: static; width: 100%; max-height: 320px; padding: 0; border: 0; z-index: auto; overflow: auto; }
+.combined-daily table { min-width: 380px; }

@@ -3,6 +3,7 @@ import type { PendingReport, SyncStatus } from '../../shared/types/sync'
 import type { GoogleReport } from '../../shared/types/dashboard'
 import type { SearchProperty, SearchReport, SearchRow, Inspection } from '../../shared/types/search'
 import { validDateRange } from '#shared/utils/analytics'
+const emit = defineEmits<{ snapshot: [value: { report: SearchReport | null; loading: boolean; error: string }] }>()
 const ws = useWorkspace()
 const { start, end } = useReportRange()
 const properties = ref<SearchProperty[]>([])
@@ -103,6 +104,9 @@ async function inspectUrl() {
 
 watch(() => [ws.user.value?.id, ws.selectedId.value, canSearch.value], () => { void discover() }, { immediate: true })
 watch(() => [property.value, start.value, end.value, ws.user.value?.id, ws.selectedId.value, canSearch.value], () => { void load() }, { immediate: true })
+watch([report, busy, discovering, error, discoveryError], () => {
+  emit('snapshot', { report: report.value, loading: busy.value || discovering.value, error: error.value || discoveryError.value })
+}, { immediate: true })
 onBeforeUnmount(() => { clearTimeout(discoveryTimer); clearTimeout(reportTimer); discoveryGeneration++; reportGeneration++; discoveryAbort?.abort(); reportAbort?.abort(); resetTools() })
 </script>
 

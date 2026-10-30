@@ -1,6 +1,6 @@
 import type { RepositoryHistory } from '../../shared/types/repository'
 import { validDateRange } from '#shared/utils/analytics'
-export function useRepositoryHistory(site: () => string, start: () => string, end: () => string, enabled: () => boolean = () => true, polling = true) {
+export function useRepositoryHistory(site: () => string, start: () => string, end: () => string, enabled: () => boolean = () => true, polling = true, allPages = false) {
   const ws = useWorkspace()
   const history = ref<RepositoryHistory | null>(null)
   const busy = ref(false)
@@ -21,6 +21,21 @@ export function useRepositoryHistory(site: () => string, start: () => string, en
         query: { start_date: start(), end_date: end(), ...(more ? { before_id: previous?.commits.at(-1)?.id } : {}) }, signal: controller.signal,
       })
       if (current !== generation) return
+      if (allPages && !more) {
+        let page = result
+        const seen = new Set<number>()
+        while (page.has_more) {
+          const cursor = page.commits.at(-1)?.id
+          if (!cursor || seen.has(cursor)) throw new Error('Commit history could not finish loading. Try again.')
+          seen.add(cursor)
+          page = await ws.request<RepositoryHistory>(`/api/websites/${site()}/repository`, {
+            query: { start_date: start(), end_date: end(), before_id: cursor }, signal: controller.signal,
+          })
+          if (current !== generation) return
+          result.commits.push(...page.commits)
+        }
+        result.has_more = false
+      }
       history.value = { ...result, commits: more ? [...(previous?.commits ?? []), ...result.commits] : result.commits }
       // Keep paginated history stable until explicitly refreshed.
       if (polling && result.repository?.enabled && !more) timer = setTimeout(() => { void load(false, true) }, 60000)

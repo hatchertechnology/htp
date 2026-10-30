@@ -11,6 +11,27 @@ a commit link, SHA, message, author name/login, original authored/committed time
 and the time Hatch first observed it. No author emails, patches, or credentials
 are stored. **A commit does not confirm a deployment or establish causation.**
 
+## Combined performance timeline
+
+The Overview's Search, visitors & code changes chart compares Search clicks
+(default) with GA4 Sessions (default). Both metrics can be changed independently;
+Search uses the left scale and Onsite uses the right scale. The graph reuses the
+saved reports already read by the dashboard and never calls Google or GitHub.
+
+Every saved commit for the current repository and tracked branch in the selected
+UTC dates gets a vertical marker. The tracked branch is `main` for three initial
+websites and `master` for www.kerryhatcher.com. All commit-history pages are loaded,
+not just the first 100 records. Duplicate SHAs across history streams are removed.
+Select a marker or use Inspect a commit for the message, SHA, author, timestamp,
+GitHub link, and the daily values for that UTC calendar date. Combined daily data
+provides an accessible table. Missing daily values remain gaps, not inferred zeroes.
+
+Commit markers use exact UTC times on the date axis. Search daily buckets use
+Pacific Time and GA4 uses its property timezone, so the providers' daily windows
+differ. These are trend comparisons, not precisely synchronized hourly reports;
+commits do not establish deployment or causation. Include today to view current-day
+commits. Backfill and collection errors are shown rather than claiming completeness.
+
 ## Collection
 
 The existing minute Cron invokes the secret-authenticated `google-sync` worker,
