@@ -242,3 +242,41 @@ Deno.test("worker persists success, sanitized failures, and discards fenced comp
     assert(!JSON.stringify(result).includes("private"));
   }
 });
+
+Deno.test("initial sync drains multiple websites and respects batch and time budgets", async () => {
+  const encrypted_grant = await sealGrant(
+    { user: "owner", refresh: "private" },
+    secret,
+  );
+  const fetcher =
+    (async (url) =>
+      String(url).endsWith("/token")
+        ? Response.json({ access_token: "short" })
+        : Response.json({
+          reports: Array.from({ length: 5 }, () => ({ metricHeaders: [] })),
+        })) as typeof fetch;
+  for (const slow of [false, true]) {
+    let claimed = 0, completed = 0, time = 0;
+    const rpc = async (name: string) => {
+      if (name === "claim_google_report") {
+        claimed++;
+        return { ...job, id: `job-${claimed}`, encrypted_grant };
+      }
+      completed++;
+      if (slow) time += 31_000;
+      return true;
+    };
+    const result = await runSync(
+      rpc,
+      { key: secret, clientId: "client", clientSecret: "secret" },
+      fetcher,
+      () => time,
+    );
+    assert(completed === (slow ? 2 : 12));
+    assert(
+      claimed === completed,
+      "must not claim a job that cannot start within the time budget",
+    );
+    assert(result.completed === completed && result.failed === 0);
+  }
+});

@@ -32,11 +32,12 @@ and stops future work, while keeping report history. Signing out does not stop w
 
 Supabase Cron invokes the Edge Function **every minute** to drain due work; each
 successful report is next due **one hour after completion**. This avoids making
-new users wait for the next hourly tick. Each invocation processes at most two
-jobs, with bounded HTTP timeouts. Larger installations should increase throughput
-with measured concurrent workers or a larger batch budget. Two jobs per minute
-supports about 120 successful jobs/hour before retries; default windows for the
-preceding seven days also remain active during their refresh period.
+new users wait for the next hourly tick. Each invocation processes up to twelve
+jobs sequentially, starting new jobs only within a sixty-second budget. Bounded
+HTTP timeouts leave time for the final job to complete within the function's
+runtime limit. This lets a normal initial connection collect several websites
+within one invocation. Larger queues continue on the next minute tick; default
+windows for the preceding seven days also remain active during their refresh period.
 
 Database claims use `FOR UPDATE SKIP LOCKED`, a three-minute lease, and a unique
 lease token. Overlapping invocations cannot commit the same lease twice. Expired

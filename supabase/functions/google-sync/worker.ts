@@ -9,12 +9,17 @@ export interface Config {
   clientId: string;
   clientSecret: string;
 }
-export async function runSync(rpc: Rpc, config: Config, fetcher = fetch) {
+export async function runSync(
+  rpc: Rpc,
+  config: Config,
+  fetcher = fetch,
+  now = Date.now,
+) {
   let completed = 0, failed = 0, discarded = 0;
   // Stay within Edge Function execution limits. Cron drains the remaining due
   // queue next minute; each successful job becomes due again one hour later.
-  const deadline = Date.now() + 80_000;
-  for (let i = 0; i < 2 && Date.now() < deadline; i++) {
+  const deadline = now() + 60_000;
+  for (let i = 0; i < 12 && now() < deadline; i++) {
     const job = await rpc("claim_google_report", {}) as Job | null;
     if (!job) break;
     let data = null, error = null;
