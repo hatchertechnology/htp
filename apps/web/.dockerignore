@@ -1,0 +1,9 @@
+node_modules
+.nuxt
+.output
+.data
+.env*
+tests
+PRODUCT.md
+DESIGN.md
+.impeccable

@@ -218,3 +218,26 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Nuxt frontend
+node_modules/
+.nuxt/
+.output/
+.data/
+.env.*
+!.env.example
+supabase/.temp/
+
+# Local Google OAuth credentials
+.local/
+google-oauth.json
+client_secret_*.json
+google-client-secret*.json
+
+# Local design exploration and browser-review output; keep durable design metadata.
+**/.impeccable/mocks/
+**/.impeccable/review/
+**/.impeccable/questions/
+**/.impeccable/regions-*.json
+**/.impeccable/config.local.json
+.playwright-cli/

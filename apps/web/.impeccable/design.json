@@ -1,0 +1,261 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-28T16:31:37.028744+00:00",
+  "title": "Design System: Hatch Operations Desk",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Action Rust",
+        "tonalRamp": [
+          "oklch(15% 0.14885 38.634)",
+          "oklch(26% 0.14885 38.634)",
+          "oklch(38% 0.14885 38.634)",
+          "oklch(49% 0.14885 38.634)",
+          "oklch(61% 0.14885 38.634)",
+          "oklch(72% 0.14885 38.634)",
+          "oklch(84% 0.14885 38.634)",
+          "oklch(95% 0.14885 38.634)"
+        ]
+      },
+      "rail": {
+        "role": "neutral",
+        "displayName": "Desk Navy",
+        "tonalRamp": [
+          "oklch(15% 0.04078 245.543)",
+          "oklch(26% 0.04078 245.543)",
+          "oklch(38% 0.04078 245.543)",
+          "oklch(49% 0.04078 245.543)",
+          "oklch(61% 0.04078 245.543)",
+          "oklch(72% 0.04078 245.543)",
+          "oklch(84% 0.04078 245.543)",
+          "oklch(95% 0.04078 245.543)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Report White",
+        "tonalRamp": [
+          "oklch(15% 0.00000 89.876)",
+          "oklch(26% 0.00000 89.876)",
+          "oklch(38% 0.00000 89.876)",
+          "oklch(49% 0.00000 89.876)",
+          "oklch(61% 0.00000 89.876)",
+          "oklch(72% 0.00000 89.876)",
+          "oklch(84% 0.00000 89.876)",
+          "oklch(95% 0.00000 89.876)"
+        ]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Ivory Canvas",
+        "tonalRamp": [
+          "oklch(15% 0.00801 98.879)",
+          "oklch(26% 0.00801 98.879)",
+          "oklch(38% 0.00801 98.879)",
+          "oklch(49% 0.00801 98.879)",
+          "oklch(61% 0.00801 98.879)",
+          "oklch(72% 0.00801 98.879)",
+          "oklch(84% 0.00801 98.879)",
+          "oklch(95% 0.00801 98.879)"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Report Ink",
+        "tonalRamp": [
+          "oklch(15% 0.05048 254.272)",
+          "oklch(26% 0.05048 254.272)",
+          "oklch(38% 0.05048 254.272)",
+          "oklch(49% 0.05048 254.272)",
+          "oklch(61% 0.05048 254.272)",
+          "oklch(72% 0.05048 254.272)",
+          "oklch(84% 0.05048 254.272)",
+          "oklch(95% 0.05048 254.272)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Slate Muted",
+        "tonalRamp": [
+          "oklch(15% 0.04402 252.214)",
+          "oklch(26% 0.04402 252.214)",
+          "oklch(38% 0.04402 252.214)",
+          "oklch(49% 0.04402 252.214)",
+          "oklch(61% 0.04402 252.214)",
+          "oklch(72% 0.04402 252.214)",
+          "oklch(84% 0.04402 252.214)",
+          "oklch(95% 0.04402 252.214)"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Fine Rule",
+        "tonalRamp": [
+          "oklch(15% 0.01192 239.919)",
+          "oklch(26% 0.01192 239.919)",
+          "oklch(38% 0.01192 239.919)",
+          "oklch(49% 0.01192 239.919)",
+          "oklch(61% 0.01192 239.919)",
+          "oklch(72% 0.01192 239.919)",
+          "oklch(84% 0.01192 239.919)",
+          "oklch(95% 0.01192 239.919)"
+        ]
+      },
+      "nav-hover": {
+        "role": "neutral",
+        "displayName": "Navigation Hover",
+        "tonalRamp": [
+          "oklch(15% 0.04238 242.829)",
+          "oklch(26% 0.04238 242.829)",
+          "oklch(38% 0.04238 242.829)",
+          "oklch(49% 0.04238 242.829)",
+          "oklch(61% 0.04238 242.829)",
+          "oklch(72% 0.04238 242.829)",
+          "oklch(84% 0.04238 242.829)",
+          "oklch(95% 0.04238 242.829)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Overview heading."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Panel titles."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "General reading rhythm."
+      },
+      "metric": {
+        "displayName": "Metric",
+        "purpose": "Summary measurements."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Context labels."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "navigation-state",
+        "value": "160ms cubic-bezier(.16,1,.3,1)",
+        "purpose": "Navigation and small link color transitions."
+      },
+      {
+        "name": "control-state",
+        "value": "160ms ease-out",
+        "purpose": "Inherited button color and border transitions."
+      },
+      {
+        "name": "chart-filter",
+        "value": "180ms cubic-bezier(.16,1,.3,1)",
+        "purpose": "Declared chart filter transition."
+      },
+      {
+        "name": "loading-spin",
+        "value": "1s linear infinite",
+        "purpose": "Report loading spinner; disabled with reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact-desktop",
+        "value": "1279px"
+      },
+      {
+        "name": "horizontal-navigation",
+        "value": "960px"
+      },
+      {
+        "name": "narrow",
+        "value": "650px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Refresh action",
+      "kind": "button",
+      "description": "Small secondary report action.",
+      "html": "<button class=\"ds-refresh\">Refresh</button>",
+      "css": ".ds-refresh{font-family:'Encode Sans Variable',sans-serif;display:flex;align-items:center;gap:8px;color:var(--muted,#53677e);font-size:12px;border:0;background:transparent;cursor:pointer;transition:color 160ms cubic-bezier(.16,1,.3,1)}.ds-refresh:focus-visible{outline:2px solid var(--rust,#b94d28);outline-offset:4px;}.ds-refresh:disabled{opacity:.6}"
+    },
+    {
+      "name": "Website selector",
+      "kind": "input",
+      "refersTo": "select",
+      "description": "Native selector for report context.",
+      "html": "<label class=\"ds-picker\">Website<select><option>Select a website</option></select></label>",
+      "css": ".ds-picker{font-family:'Encode Sans Variable',sans-serif;display:grid;gap:3px;color:var(--muted,#53677e);font-size:13px}.ds-picker select{font-family:'Encode Sans Variable',sans-serif;width:100%;min-height:42px;border:1px solid var(--border,#d9e1e7);border-radius:4px;background:#fff;color:var(--ink,#10233a);padding:8px 14px;font-size:16px}.ds-picker select:focus-visible{outline:2px solid var(--rust,#b94d28);outline-offset:4px;}"
+    },
+    {
+      "name": "Navigation",
+      "kind": "nav",
+      "refersTo": "navigation-active",
+      "description": "Navy navigation with rust current-page state.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-active\" aria-current=\"page\" href=\"#overview\">Overview</a><a href=\"#websites\">Websites</a></nav>",
+      "css": ".ds-nav{font-family:'Encode Sans Variable',sans-serif;background:var(--navy,#182c3d);padding:14px;display:grid;gap:10px}.ds-nav a{padding:12px 15px;color:#f2f5f6;font-size:17px;border-radius:4px;min-height:50px;text-decoration:none;transition:background-color 160ms cubic-bezier(.16,1,.3,1)}.ds-nav a:hover{background:#2b4254}.ds-nav a.ds-active{background:var(--rust,#b94d28);color:#fff}.ds-nav a:focus-visible{outline:2px solid var(--rust,#b94d28);outline-offset:4px;}"
+    },
+    {
+      "name": "Report panel",
+      "kind": "card",
+      "refersTo": "report-panel",
+      "description": "Flat container preserving context when data is unavailable.",
+      "html": "<section class=\"ds-report\"><h2>Channels</h2><p>Your report will appear here.</p></section>",
+      "css": ".ds-report{font-family:'Encode Sans Variable',sans-serif;background:#fff;border:1px solid var(--border,#d9e1e7);border-radius:5px;padding:18px 20px 12px;color:var(--ink,#10233a)}.ds-report h2{font-size:24px;font-weight:700;line-height:1.35;letter-spacing:-.025em;margin:0}.ds-report p{color:var(--muted,#53677e);font-size:13px;text-align:center;margin:72px 0}"
+    },
+    {
+      "name": "Summary measurement",
+      "kind": "custom",
+      "refersTo": "summary",
+      "description": "Labeled unavailable measurement without sample metrics.",
+      "html": "<div class=\"ds-summary\"><div><span>Active users</span><strong>\u2014</strong></div></div>",
+      "css": ".ds-summary{font-family:'Encode Sans Variable',sans-serif;background:#fff;border:1px solid var(--border,#d9e1e7);border-radius:5px;display:flex;gap:19px;align-items:center;padding:15px 20px;color:var(--ink,#10233a)}.ds-summary span{font-size:14px;line-height:1.3}.ds-summary strong{display:block;font-size:34px;font-weight:700;line-height:1.3;letter-spacing:-.02em;font-variant-numeric:tabular-nums}"
+    },
+    {
+      "name": "Date field",
+      "kind": "input",
+      "description": "Date menu field with rust keyboard focus.",
+      "html": "<label class=\"ds-date\">Start date<input type=\"date\" aria-label=\"Start date\"></label>",
+      "css": ".ds-date{font-family:'Encode Sans Variable',sans-serif;display:grid;gap:5px;color:var(--ink,#10233a);font-size:14px}.ds-date input{font-family:'Encode Sans Variable',sans-serif;border:1px solid var(--border,#d9e1e7);padding:8px 10px;border-radius:4px;background:#fff;color:var(--ink,#10233a);caret-color:var(--rust,#b94d28)}.ds-date input:focus-visible{outline:2px solid var(--rust,#b94d28);outline-offset:4px;}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Operations Desk",
+    "overview": "Operations Desk pairs a persistent navy navigation anchor with an ivory work surface and white, finely ruled reports. Rust marks active navigation, actions, and the traffic line. The result is calm, practical, and deliberately flat.\n\nSelf-hosted Encode Sans carries both headings and dense report text. Strong totals, tabular numerals, and restrained supporting labels establish hierarchy without ornamental imagery. Data, account, loading, and empty states use the same materials.",
+    "keyCharacteristics": [
+      "Navy navigation and ivory workspace",
+      "White panels with fine rules and modest corners",
+      "Rust for selection, actions, and chart emphasis",
+      "Readable report hierarchy with tabular numerals"
+    ],
+    "rules": [
+      {
+        "name": "The Flat Desk Rule",
+        "body": "Separate report surfaces with white fill and fine borders; do not add decorative panel shadows.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Readable Totals Rule",
+        "body": "Use tabular numerals for aligned measurements and retain explicit labels beside each total.",
+        "section": "typography"
+      }
+    ],
+    "dos": [
+      "Do retain navy navigation, ivory canvas, and white report surfaces.",
+      "Do use the rust focus outline and visible labels for controls.",
+      "Do preserve context and readable empty states while reports load.",
+      "Do let long domains wrap or truncate deliberately and keep numeric columns aligned."
+    ],
+    "donts": [
+      "Don't introduce gradients, glass, or decorative shadows into report panels.",
+      "Don't replace actual report values or missing data with illustrative metrics.",
+      "Don't add prior-period deltas unless the underlying comparison is available."
+    ]
+  }
+}

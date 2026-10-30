@@ -1,0 +1,7 @@
+{
+  "name": "@htp/supabase-tests",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test tests/database.test.mjs" },
+  "devDependencies": { "@electric-sql/pglite": "0.5.13" }
+}

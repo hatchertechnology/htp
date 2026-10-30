@@ -1,0 +1,17 @@
+# Only send workspace source and manifests to the remote builder.
+**
+!Cargo.toml
+!Cargo.lock
+!apps/
+!apps/**
+!crates/
+!crates/**
+**/target
+**/.env*
+.local/
+**/google-oauth.json
+**/client_secret_*.json
+**/google-client-secret*.json
+
+# The Rust workspace build does not need the independent Nuxt app.
+apps/web
