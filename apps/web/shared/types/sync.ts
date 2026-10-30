@@ -1,4 +1,5 @@
 export interface SyncStatus {
+  cadence?: 'hourly' | 'daily'
   state: 'pending' | 'ready' | 'stale' | 'error'
   fetched_at: string | null
   last_error: string | null

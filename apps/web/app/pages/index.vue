@@ -61,8 +61,11 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); generation++; controller?.abort
   <div class="overview-page">
     <div class="overview-heading"><div><h1>Website overview</h1><p>{{ ws.selected.value?.fqdn || 'A clearer view of your websites.' }}</p></div></div>
     <p v-if="ws.error.value" role="alert" class="form-error">{{ ws.error.value }} <button @click="ws.load">Try again</button></p>
+    <nav class="report-navigation" aria-label="Website reports">
+      <a href="#search-heading">Search</a><a href="#onsite-heading">Visitors</a><a href="#conversions-title">Conversions &amp; revenue</a><a href="#health-title">PageSpeed &amp; Core Web Vitals</a><a href="#business-title">Business Profile &amp; changes</a>
+    </nav>
     <SearchDashboard />
-    <div class="analytics-section-heading"><div><h2>Onsite performance</h2><p>What visitors do after they arrive · Google Analytics</p></div><button v-if="report" class="refresh-control" :disabled="busy" @click="load()"><UIcon name="i-lucide-refresh-cw" /><span>Refresh analytics</span></button></div>
+    <div class="analytics-section-heading"><div><h2 id="onsite-heading">Onsite performance</h2><p>What visitors do after they arrive · Google Analytics</p></div><button v-if="report" class="refresh-control" :disabled="busy" @click="load()"><UIcon name="i-lucide-refresh-cw" /><span>Refresh analytics</span></button></div>
     <p v-if="error" role="alert" class="form-error">{{ error }} <button @click="load()">Try again</button><NuxtLink to="/connections">Manage connection</NuxtLink></p>
     <ReportSyncNotice :sync="sync" />
     <div class="traffic-layout" :aria-busy="busy">
@@ -77,6 +80,9 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); generation++; controller?.abort
       <RankedReport title="Top pages" :report="report?.report.pages" dimension="Page" metric-name="screenPageViews" metric-label="Page views" :total="metric(summary, 'screenPageViews')" :waiting="!report" />
       <section class="report-panel devices-panel"><header><h2>Devices</h2></header><div v-if="deviceTotal" class="device-content"><svg viewBox="0 0 120 120" role="img" aria-label="Sessions by device category"><circle cx="60" cy="60" r="43" fill="none" stroke="#e6ebef" stroke-width="20" /><circle v-for="slice in deviceSlices" :key="slice.label" cx="60" cy="60" r="43" fill="none" :stroke="slice.color" stroke-width="20" pathLength="100" :stroke-dasharray="`${slice.share} ${100 - slice.share}`" :stroke-dashoffset="-slice.offset" transform="rotate(-90 60 60)" /><text x="60" y="59" text-anchor="middle" class="donut-total">{{ deviceTotal.toLocaleString() }}</text><text x="60" y="73" text-anchor="middle" class="donut-label">Sessions</text></svg><ul><li v-for="slice in deviceSlices" :key="slice.label"><span class="legend-dot" :style="{ background: slice.color }" /><span class="device-name">{{ slice.label }}</span><strong>{{ slice.share.toFixed(1) }}%</strong></li></ul></div><p v-else class="compact-empty">{{ !report ? 'Your report will appear here.' : 'No device data for this period.' }}</p></section>
     </div>
+    <ConversionDashboard />
+    <SiteHealthDashboard />
+    <BusinessDashboard />
     <p v-if="report" class="report-caption">Google Analytics · Property {{ report.property_id }} · {{ report.report.summary.metadata?.timeZone || 'Property timezone' }} · Exact hostname: {{ report.website.fqdn }}<span v-if="warning">Google reports sampling, thresholding, or grouped rows; some small counts may be withheld.</span></p>
   </div>
 </template>

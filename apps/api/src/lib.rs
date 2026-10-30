@@ -2,6 +2,7 @@
 
 pub mod analytics;
 pub mod auth;
+mod insights;
 mod mcp;
 pub mod search;
 pub mod websites;
@@ -43,6 +44,7 @@ pub fn app_with_analytics(
             websites.clone(),
             search::SearchClient::default(),
         ))
+        .merge(insights::router(websites.clone()))
         .merge(websites::router(websites))
         .layer(middleware::from_fn_with_state(auth, auth::require_user));
 

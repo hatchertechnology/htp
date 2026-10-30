@@ -198,3 +198,52 @@ h1{font-size:30px} h2{font-size:21px} .desk-rail{flex-wrap:wrap;gap:10px;padding
 .url-inspect-form input { font-size: 16px; }
 .inspection-result dl { grid-template-columns: 1fr; }
 }
+
+/* Saved insights follow the existing Operations Desk report vocabulary. */
+.insight-section { margin-top: 36px; min-width: 0; }
+.insight-control, .business-picker { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.insight-control select, .insight-section header select { max-width: 100%; min-height: 42px; padding: 8px 12px; border: 1px solid var(--border, #d9e1e7); border-radius: 4px; background: #fff; }
+.insight-totals { display: flex; flex-wrap: wrap; gap: 16px 32px; padding: 20px 0; }
+.insight-totals > div { min-width: 135px; }
+.insight-totals dt, .vital-list dt { color: #53677e; font-size: 13px; }
+.insight-totals dd { font-size: 30px; font-weight: 700; margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+.insight-totals small { font-size: 13px; color: #53677e; margin-left: 3px; }
+.health-layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; }
+.insight-section h3 { font-size: 19px; font-weight: 650; }
+.insight-section .report-panel { min-width: 0; margin-top: 16px; padding: 18px 20px 12px; }
+.insight-section .refresh-control { font-size: 12px; min-height: 36px; }
+.insight-section .report-panel header { flex-wrap: wrap; gap: 12px; }
+.insight-details > summary, .profile-timeline summary { cursor: pointer; min-height: 44px; padding: 12px 0; font-weight: 600; }
+.insight-details > summary:hover, .profile-timeline summary:hover { color: #b94d28; }
+.vital-list > div { padding: 15px 0; border-bottom: 1px solid #d9e1e7; }
+.vital-list dd { display: flex; justify-content: space-between; gap: 12px; margin: 5px 0 0; flex-wrap: wrap; }
+.vital-list dd strong { font-size: 23px; font-variant-numeric: tabular-nums; }
+.vital-list dd span { font-size: 13px; color: #53677e; }
+.audit-list { padding: 0; list-style: none; }
+.audit-list li { padding: 12px 0; border-top: 1px solid #d9e1e7; display: flex; justify-content: space-between; gap: 16px; }
+.business-picker { padding: 16px 0; }
+.business-picker select { max-width: min(100%, 440px); }
+.profile-timeline { list-style: none; padding: 0; }
+.profile-timeline li { padding: 8px 0; border-top: 1px solid #d9e1e7; }
+.profile-timeline time { margin-right: 16px; font-weight: 400; color: #53677e; }
+.profile-diff { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 20px; }
+.profile-fields > div { padding: 12px 0; border-top: 1px solid #d9e1e7; }
+.profile-fields dt, .profile-diff h4 { font-weight: 650; margin-bottom: 8px; }
+.profile-fields dd { margin: 0; }
+.insight-section pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 320px; overflow: auto; }
+.insight-section table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.insight-section th, .insight-section td { padding: 12px; text-align: left; border-bottom: 1px solid #d9e1e7; }
+.insight-section th { font-size: 12px; color: #53677e; }
+@media (max-width: 960px) { .health-layout { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 650px) { .insight-totals { gap: 16px; } .insight-totals > div { flex: 1 1 130px; } .business-picker .insight-control { width: 100%; } .business-picker select { width: 100%; } .insight-section .report-panel { padding: 16px; } .insight-section .refresh-control { min-height: 44px; } }
+
+.report-navigation { display: flex; flex-wrap: wrap; gap: 4px 20px; padding: 12px 0 18px; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+.report-navigation a { display: inline-flex; align-items: center; min-height: 44px; color: var(--ink); font-size: 13px; text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: 6px; }
+.report-navigation a:hover { color: var(--rust); text-decoration-color: currentColor; }
+.overview-page h2[id] { scroll-margin-top: 24px; }
+.observation-range { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 20px; margin-top: 20px; font-size: 13px; color: var(--muted); }
+.conversion-details { grid-template-columns: minmax(0, 1fr); }
+.insight-section .conversion-table { min-height: 0; }
+.conversion-table table { min-width: 650px; }
+.insight-section .conversion-table .conversion-dimension { width: 40%; min-width: 200px; max-width: 480px; overflow-wrap: anywhere; color: var(--ink); font-weight: 500; }
+@media (max-width: 650px) { .report-navigation { gap: 4px 16px; } }

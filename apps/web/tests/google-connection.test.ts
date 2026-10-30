@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { H3Event } from 'h3'
 import { seal, unseal } from '../server/utils/sealed-cookie'
-const mocks = vi.hoisted(() => ({ getUser: vi.fn(), getToken: vi.fn(), refresh: vi.fn(), read: vi.fn(), upsert: vi.fn(), rpc: vi.fn() }))
+const mocks = vi.hoisted(() => ({ getUser: vi.fn(), getToken: vi.fn(), refresh: vi.fn(), read: vi.fn(), upsert: vi.fn(), rpc: vi.fn(), authUrl: vi.fn() }))
 vi.mock('@supabase/supabase-js', () => ({ createClient: () => ({ auth: { getUser: mocks.getUser } }) }))
 vi.mock('../server/utils/google-store', () => ({ googleStore: () => ({ from: () => ({ select: () => ({ eq: (field: string, owner: string) => ({ maybeSingle: () => mocks.read(owner) }) }), upsert: mocks.upsert }), rpc: mocks.rpc }) }))
-vi.mock('google-auth-library', () => ({ CodeChallengeMethod: { S256: 'S256' }, OAuth2Client: class { getToken(...args: unknown[]) { return mocks.getToken(...args) } setCredentials() {} refreshAccessToken() { return mocks.refresh() } } }))
-import { finishGoogle, googleConnection, googleAccessToken, requireDashboardUser, disconnectGoogle } from '../server/utils/google'
+vi.mock('google-auth-library', () => ({ CodeChallengeMethod: { S256: 'S256' }, OAuth2Client: class { async generateCodeVerifierAsync() { return { codeVerifier: 'pkce-verifier', codeChallenge: 'pkce-challenge' } } generateAuthUrl(...args: unknown[]) { return mocks.authUrl(...args) } getToken(...args: unknown[]) { return mocks.getToken(...args) } setCredentials() {} refreshAccessToken() { return mocks.refresh() } } }))
+import { startGoogle, finishGoogle, googleConnection, googleAccessToken, requireDashboardUser, disconnectGoogle } from '../server/utils/google'
 const event = {} as H3Event
 const secret = Buffer.alloc(32, 4).toString('base64')
 const cookie = vi.fn(), cookiesSet = vi.fn(), redirect = vi.fn()
@@ -40,7 +40,7 @@ it('isolates stored credentials by verified user without returning secrets', asy
   connect('other')
   expect(await googleConnection(event)).toMatchObject({ connected: false })
   connect('owner')
-  expect(await googleConnection(event)).toEqual({ connected: true, configured: true, analytics: true, search: false, reauthorizationRequired: false })
+  expect(await googleConnection(event)).toEqual({ connected: true, configured: true, analytics: true, search: false, business: false, reauthorizationRequired: false })
   expect(JSON.stringify(await googleConnection(event))).not.toContain('private-refresh')
 })
 it('rejects OAuth state before exchanging a code', async () => {
@@ -93,4 +93,20 @@ it('does not claim connection success if durable storage fails', async () => {
   mocks.upsert.mockResolvedValue({ error: new Error('unavailable') })
   await finishGoogle(event)
   expect(redirect).toHaveBeenCalledWith(event, '/connections?google=failed')
+})
+
+it('reports Business Profile authorization separately from Analytics and Search', async () => {
+  connect('owner', ['https://www.googleapis.com/auth/business.manage'])
+  expect(await googleConnection(event)).toMatchObject({ business: true, analytics: false, search: false })
+})
+
+it('requests Business Profile consent with PKCE while keeping the pending state encrypted', async () => {
+  vi.stubGlobal('getHeader', (_event: unknown, name: string) => name === 'authorization' ? 'Bearer valid.user.token' : 'https://htp.hatchtech.dev')
+  mocks.authUrl.mockReturnValue('https://accounts.google.com/authorize')
+  expect(await startGoogle(event)).toEqual({ url: 'https://accounts.google.com/authorize' })
+  expect(mocks.authUrl).toHaveBeenCalledWith(expect.objectContaining({ scope: [analytics, search, 'https://www.googleapis.com/auth/business.manage'], code_challenge: 'pkce-challenge', code_challenge_method: 'S256' }))
+  const pending = cookiesSet.mock.calls[0]![2] as string
+  expect(pending).not.toContain('pkce-verifier')
+  expect(unseal(pending, secret, 'htp_google_state')).toMatchObject({ user: 'owner', verifier: 'pkce-verifier' })
+  expect(mocks.upsert).not.toHaveBeenCalled()
 })

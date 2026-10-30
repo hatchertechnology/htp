@@ -6,6 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 axum.workspace = true
+chrono.workspace = true
 htp-shared.workspace = true
 jsonwebtoken.workspace = true
 reqwest = { workspace = true, features = ["query"] }

@@ -32,6 +32,8 @@ export async function handle(request: Request): Promise<Response> {
       return await response.json();
     };
     const result = await runSync(rpc, {
+      pagespeedKey: Deno.env.get("GOOGLE_PAGESPEED_KEY"),
+      cruxKey: Deno.env.get("GOOGLE_CRUX_KEY"),
       key: required("GOOGLE_GRANT_KEY"),
       clientId: required("GOOGLE_CLIENT_ID"),
       clientSecret: required("GOOGLE_CLIENT_SECRET"),

@@ -5,7 +5,7 @@ export type GoogleReport = {
   dimensionHeaders?: { name: string }[]
   rows?: { dimensionValues?: { value: string }[]; metricValues?: { value: string }[] }[]
   rowCount?: number
-  metadata?: { timeZone?: string; subjectToThresholding?: boolean; dataLossFromOtherRow?: boolean; samplingMetadatas?: unknown[] }
+  metadata?: { timeZone?: string; currencyCode?: string; subjectToThresholding?: boolean; dataLossFromOtherRow?: boolean; samplingMetadatas?: unknown[] }
 }
 export type DashboardReport = {
   sync?: SyncStatus

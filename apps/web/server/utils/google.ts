@@ -7,6 +7,7 @@ import { googleStore } from './google-store'
 
 const scope = 'https://www.googleapis.com/auth/analytics.readonly'
 const searchScope = 'https://www.googleapis.com/auth/webmasters.readonly'
+const businessScope = 'https://www.googleapis.com/auth/business.manage'
 const grantCookie = 'htp_google'
 const stateCookie = 'htp_google_state'
 type Grant = { user: string; refresh: string; access?: string; expires?: number; until: number; scopes?: string[] }
@@ -72,7 +73,7 @@ export async function googleConnection(event: H3Event) {
   const configured = !!config.googleClientId && !!config.googleClientSecret && !!config.googleCookieKey && !!config.supabaseServiceRoleKey
   if (configured) await readGrant(event, user.id)
   const connection = configured ? await readConnection(event, user.id) : null
-  return { connected: !!connection && connection.status !== 'disconnected', configured, analytics: !!connection?.scopes.includes(scope), search: !!connection?.scopes.includes(searchScope), reauthorizationRequired: connection?.status === 'reauthorization_required' }
+  return { connected: !!connection && connection.status !== 'disconnected', configured, analytics: !!connection?.scopes.includes(scope), search: !!connection?.scopes.includes(searchScope), business: !!connection?.scopes.includes(businessScope), reauthorizationRequired: connection?.status === 'reauthorization_required' }
 }
 export async function startGoogle(event: H3Event) {
   const user = await requireDashboardUser(event)
@@ -83,7 +84,7 @@ export async function startGoogle(event: H3Event) {
   const codes = await oauth.generateCodeVerifierAsync()
   const state = randomBytes(32).toString('base64url')
   setCookie(event, stateCookie, seal({ user: user.id, state, verifier: codes.codeVerifier, until: Date.now() + 600_000 } satisfies Pending, config.googleCookieKey, stateCookie), options(event, 600))
-  return { url: oauth.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: [scope, searchScope], state, code_challenge: codes.codeChallenge, code_challenge_method: CodeChallengeMethod.S256 }) }
+  return { url: oauth.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: [scope, searchScope, businessScope], state, code_challenge: codes.codeChallenge, code_challenge_method: CodeChallengeMethod.S256 }) }
 }
 export async function finishGoogle(event: H3Event) {
   const config = configuration(event)
@@ -95,7 +96,7 @@ export async function finishGoogle(event: H3Event) {
   if (query.error || typeof query.code !== 'string') return sendRedirect(event, '/connections?google=denied')
   try {
     const { tokens } = await client(event).getToken({ code: query.code, codeVerifier: pending.verifier })
-    if (!tokens.refresh_token || !tokens.scope?.split(' ').some(value => [scope, searchScope].includes(value))) return sendRedirect(event, '/connections?google=missing_scope')
+    if (!tokens.refresh_token || !tokens.scope?.split(' ').some(value => [scope, searchScope, businessScope].includes(value))) return sendRedirect(event, '/connections?google=missing_scope')
     await writeGrant(event, { user: pending.user, refresh: tokens.refresh_token, scopes: tokens.scope?.split(' '), until: 0 })
     return sendRedirect(event, '/?google=connected')
   } catch { return sendRedirect(event, '/connections?google=failed') }

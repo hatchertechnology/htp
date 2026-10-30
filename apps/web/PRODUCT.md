@@ -9,7 +9,7 @@ web
 ## Stack
 
 Nuxt and Nuxt UI frontend, Rust API, Supabase authentication and website records,
-Google Analytics Data API, Google Search Console and URL Inspection APIs, Fly hosting at htp.hatchtech.dev.
+Google Analytics Data API, Search Console and URL Inspection, PageSpeed Insights, Chrome UX Report, Google Business Profile APIs, Fly hosting at htp.hatchtech.dev.
 
 ## Product Purpose
 
@@ -23,6 +23,11 @@ website and reading real Google Analytics data in one clear dashboard.
 - Browser users connect their own Google account using read-only Analytics and Search Console OAuth.
 - Overview leads with Search Console clicks, impressions, CTR, position, daily search trends, top queries and landing pages. The user explicitly requested Search first.
 - URL Inspection reads indexed status, crawl and canonical information for one page. All integrations are read-only.
+- Conversion reporting includes configured GA4 key events, aggregate session conversion rates, revenue, daily trends, landing pages, channels, and event names.
+- Daily mobile/desktop PageSpeed homepage audits and origin-level CrUX observations are stored with history. Missing CrUX coverage is explicit.
+- Users can track multiple authorized Business Profile locations per website. Hourly snapshots preserve profile contents and local performance; field changes retain before/after JSON and observation times.
+- A daily comparison table aligns observed profile changes with saved traffic, search, conversions, local actions, and mobile PageSpeed/CrUX observations. Provider timezones and overlapping CrUX windows remain explicit.
+- Business Profile requires Google API approval and business.manage consent; the application reads profiles and metrics without editing them.
 - Onsite reporting includes aggregate users, sessions, views and engagement, a daily traffic
   chart, acquisition channels, top pages, and device shares for a date range.
 - Supabase isolates website records by owner. Google refresh credentials are

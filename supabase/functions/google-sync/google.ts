@@ -9,7 +9,16 @@ export interface Job {
   encrypted_grant: string;
   website_id: string;
   fqdn: string;
-  kind: "analytics" | "search" | "properties";
+  kind:
+    | "analytics"
+    | "search"
+    | "properties"
+    | "conversions"
+    | "pagespeed"
+    | "crux"
+    | "business_locations"
+    | "business_profile"
+    | "business_performance";
   property_id: string;
   start_date: string;
   end_date: string;
@@ -34,18 +43,24 @@ export function validProperty(site: string, host: string): boolean {
     return false;
   }
 }
-async function google(
+export async function google(
   url: string,
   options: RequestInit,
   fetcher: typeof fetch,
+  timeout = 20_000,
+  allowNotFound = false,
 ): Promise<Json> {
   const response = await fetcher(url, {
     ...options,
     redirect: "error",
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(timeout),
   });
   const value = await response.json();
-  if (!response.ok) {
+  if (
+    !response.ok &&
+    !(allowNotFound && response.status === 404 &&
+      value?.error?.status === "NOT_FOUND")
+  ) {
     const reasons = value?.error?.errors ?? [];
     const quota = reasons.some((e: Json) =>
       [
@@ -167,29 +182,49 @@ export async function fetchReport(
   if (!/^[1-9][0-9]{0,19}$/.test(job.property_id)) {
     throw new SyncError("invalid_report");
   }
-  const shapes: [string | null, string[], string, number][] = [
-    [
-      null,
-      [
-        "activeUsers",
-        "sessions",
-        "screenPageViews",
-        "engagementRate",
-        "averageSessionDuration",
-      ],
-      "sessions",
-      1,
-    ],
-    ["date", ["activeUsers", "sessions", "screenPageViews"], "date", 366],
-    [
-      "pagePathPlusQueryString",
-      ["screenPageViews", "activeUsers"],
-      "screenPageViews",
-      10,
-    ],
-    ["sessionDefaultChannelGroup", ["sessions", "activeUsers"], "sessions", 10],
-    ["deviceCategory", ["sessions", "activeUsers"], "sessions", 10],
+  const conversionMetrics = [
+    "keyEvents",
+    "sessionKeyEventRate",
+    "totalRevenue",
+    "sessions",
   ];
+  const shapes: [string | null, string[], string, number][] =
+    job.kind === "conversions"
+      ? [
+        [null, conversionMetrics, "keyEvents", 1],
+        ["date", conversionMetrics, "date", 366],
+        ["landingPagePlusQueryString", conversionMetrics, "keyEvents", 100],
+        ["sessionDefaultChannelGroup", conversionMetrics, "keyEvents", 100],
+        ["eventName", ["keyEvents"], "keyEvents", 100],
+      ]
+      : [
+        [
+          null,
+          [
+            "activeUsers",
+            "sessions",
+            "screenPageViews",
+            "engagementRate",
+            "averageSessionDuration",
+          ],
+          "sessions",
+          1,
+        ],
+        ["date", ["activeUsers", "sessions", "screenPageViews"], "date", 366],
+        [
+          "pagePathPlusQueryString",
+          ["screenPageViews", "activeUsers"],
+          "screenPageViews",
+          10,
+        ],
+        [
+          "sessionDefaultChannelGroup",
+          ["sessions", "activeUsers"],
+          "sessions",
+          10,
+        ],
+        ["deviceCategory", ["sessions", "activeUsers"], "sessions", 10],
+      ];
   const requests = shapes.map(([dimension, metrics, order, limit]) => ({
     dateRanges: [{ startDate: job.start_date, endDate: job.end_date }],
     metrics: metrics.map((name) => ({ name })),
@@ -242,6 +277,8 @@ export async function fetchReport(
     daily: reports[1],
     pages: reports[2],
     channels: reports[3],
-    devices: reports[4],
+    ...(job.kind === "conversions"
+      ? { events: reports[4] }
+      : { devices: reports[4] }),
   };
 }

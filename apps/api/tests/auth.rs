@@ -845,3 +845,128 @@ async fn dashboard_returns_pending_instead_of_false_zeroes_before_first_sync() {
     assert_eq!(body["sync"]["state"], "pending");
     assert!(body.get("report").is_none());
 }
+
+#[tokio::test]
+async fn insight_routes_use_only_user_scoped_saved_data_and_validate_requests() {
+    let fixture = WebsiteFixture::default();
+    fixture.0.lock().await.push(htp_shared::Website {
+        id: uuid::Uuid::from_u128(1),
+        fqdn: "www.example.com".into(),
+        ga4_property_id: Some("123".into()),
+    });
+    let hits = Arc::new(AtomicUsize::new(0));
+    let calls = hits.clone();
+    let reports = Router::new()
+        .route(
+            "/rest/v1/rpc/request_google_report",
+            axum::routing::post(
+                move |headers: axum::http::HeaderMap, Json(body): Json<Value>| {
+                    let calls = calls.clone();
+                    async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        assert_eq!(headers["apikey"], "publishable-fixture-key");
+                        assert!(!headers.contains_key("x-google-access-token"));
+                        assert_eq!(body["p_website_id"], "00000000-0000-0000-0000-000000000001");
+                        Json(json!({"data":{"source":body["p_kind"]},"sync":{"state":"ready"}}))
+                    }
+                },
+            ),
+        )
+        .route(
+            "/rest/v1/rpc/google_insight_history",
+            axum::routing::post(|Json(body): Json<Value>| async move {
+                assert_eq!(body["p_before_id"], 100);
+                Json(json!({"snapshots":[],"changes":[],"bindings":["locations/10"]}))
+            }),
+        )
+        .route(
+            "/rest/v1/rpc/set_business_location",
+            axum::routing::post(|Json(body): Json<Value>| async move {
+                assert_eq!(body["p_location_id"], "locations/10");
+                Json(json!({"linked":body["p_linked"]}))
+            }),
+        );
+    let auth = TestAuth::with_routes(
+        Router::new()
+            .route("/rest/v1/websites", axum::routing::any(data_api_fixture))
+            .with_state(fixture)
+            .merge(reports),
+    )
+    .await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let path = "/websites/00000000-0000-0000-0000-000000000001/insights/report";
+    for kind in [
+        "pagespeed",
+        "crux",
+        "conversions",
+        "business_locations",
+        "business_profile",
+        "business_performance",
+    ] {
+        let body = json!({"kind":kind,"property_id":"123","start_date":"2026-10-01","end_date":"2026-10-28"});
+        let response = analytics_request(&auth, path, Some(&token), None, body).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response_json(response).await["data"]["source"], kind);
+    }
+    let body = json!({"kind":"business_profile","property_id":"locations/10","start_date":"2026-10-01","end_date":"2026-10-28","before_id":100});
+    let response = analytics_request(
+        &auth,
+        "/websites/00000000-0000-0000-0000-000000000001/insights/history",
+        Some(&token),
+        None,
+        body.clone(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(hits.load(Ordering::SeqCst), 6);
+    let response = auth
+        .app
+        .clone()
+        .oneshot(
+            Request::put("/websites/00000000-0000-0000-0000-000000000001/business/location")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"location_id":"locations/10","linked":true}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn insight_validation_and_ownership_fail_before_reading_saved_data() {
+    let fixture = WebsiteFixture::default();
+    let auth = TestAuth::with_routes(
+        Router::new()
+            .route("/rest/v1/websites", axum::routing::any(data_api_fixture))
+            .with_state(fixture),
+    )
+    .await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let path = "/websites/00000000-0000-0000-0000-000000000001/insights/report";
+    let body = json!({"kind":"business_profile","property_id":"locations/10","start_date":"2026-10-01","end_date":"2026-10-28"});
+    assert_eq!(
+        analytics_request(&auth, path, None, None, body.clone())
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let mut invalid = body.clone();
+    invalid["end_date"] = json!("2025-01-01");
+    assert_eq!(
+        analytics_request(&auth, path, Some(&token), None, invalid)
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        analytics_request(&auth, path, Some(&token), None, body)
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+}

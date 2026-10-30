@@ -1,10 +1,11 @@
 import { openGrant, sealGrant } from "./crypto.ts";
 import { fetchReport, type Job, refreshToken, SyncError } from "./google.ts";
+import { fetchInsight, type InsightKeys } from "./insights.ts";
 export type Rpc = (
   name: string,
   body: Record<string, unknown>,
 ) => Promise<unknown>;
-export interface Config {
+export interface Config extends InsightKeys {
   key: string;
   clientId: string;
   clientSecret: string;
@@ -24,30 +25,43 @@ export async function runSync(
     if (!job) break;
     let data = null, error = null;
     try {
-      const grant = await openGrant(
-        job.encrypted_grant,
-        config.key,
-        job.owner_id,
-      );
-      const token = await refreshToken(
-        grant.refresh,
-        config.clientId,
-        config.clientSecret,
-        fetcher,
-      );
-      if (token.refresh && token.refresh !== grant.refresh) {
-        await rpc("rotate_google_grant", {
-          p_owner_id: job.owner_id,
-          p_generation: job.generation,
-          p_encrypted_grant: await sealGrant({
-            ...grant,
-            refresh: token.refresh,
-          }, config.key),
-        });
+      if (["pagespeed", "crux"].includes(job.kind)) {
+        data = await fetchInsight(job, "", config, fetcher);
+      } else {
+        const grant = await openGrant(
+          job.encrypted_grant,
+          config.key,
+          job.owner_id,
+        );
+        const token = await refreshToken(
+          grant.refresh,
+          config.clientId,
+          config.clientSecret,
+          fetcher,
+        );
+        if (token.refresh && token.refresh !== grant.refresh) {
+          await rpc("rotate_google_grant", {
+            p_owner_id: job.owner_id,
+            p_generation: job.generation,
+            p_encrypted_grant: await sealGrant({
+              ...grant,
+              refresh: token.refresh,
+            }, config.key),
+          });
+        }
+        data = ["analytics", "search", "properties", "conversions"].includes(
+            job.kind,
+          )
+          ? await fetchReport(job, token.access, fetcher)
+          : await fetchInsight(job, token.access, config, fetcher);
       }
-      data = await fetchReport(job, token.access, fetcher);
     } catch (cause) {
       error = cause instanceof SyncError ? cause.code : "google_unavailable";
+      // Public API-key failures must never revoke an unrelated OAuth grant.
+      if (
+        ["pagespeed", "crux"].includes(job.kind) &&
+        error === "google_authorization_required"
+      ) error = "integration_not_configured";
     }
     const saved = await rpc("complete_google_report", {
       p_job_id: job.id,

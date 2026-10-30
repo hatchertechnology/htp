@@ -132,3 +132,85 @@ Database tests apply the actual migrations to a disposable PostgreSQL runtime
 (PGlite), then exercise user/service privileges, source validation, leases,
 snapshot history, failure recovery, and disconnects. This does not replace a
 hosted smoke test of Cron, Vault, Google consent, and the deployed function.
+
+## Site health, conversions, and Business Profile
+
+The `google_site_insights` migration extends the same queue, fencing, and snapshot
+storage. Deploy this migration before the updated worker, API, and web app.
+Existing Analytics/Search reports and the live URL Inspection diagnostic continue
+to work. No dashboard report request calls Google: the new Rust insight routes
+use user-scoped database RPCs; the Edge Function is the only report collector.
+
+| Source | Collection | Stored data |
+| --- | --- | --- |
+| PageSpeed Insights | Daily, mobile and desktop | HTTPS homepage Lighthouse categories, audit diagnostics, version, test time and URL; embedded screenshots are omitted |
+| Chrome UX Report | Daily, PHONE and DESKTOP | Origin-level LCP, INP, CLS percentiles and collection periods, or an explicit insufficient-data observation |
+| GA4 conversions | Hourly, selected dates plus automatic trailing 28 complete UTC dates | Separate aggregate totals/rate/revenue, daily outcomes, up to 100 landing pages/channels/event names, original headers and metadata |
+| Business location discovery | Hourly | Authorized locations across paginated Google accounts; users explicitly link relevant locations to a website |
+| Business Profile contents | Hourly for linked locations | Name, categories, phones, address, website, hours, service area, open status, description, services, labels, coordinates and attributes |
+| Business Profile performance | Hourly, selected dates plus trailing 28 complete UTC dates | Daily Search/Maps impressions by device, website clicks, call-button clicks and direction requests |
+
+Set `GOOGLE_PAGESPEED_KEY` and `GOOGLE_CRUX_KEY` in the Edge Function secrets and
+enable their respective APIs in Google Cloud. Keys are not browser configuration.
+Google OAuth credentials are not used for public PageSpeed/CrUX calls. Collection
+still follows the account connection lifecycle: disconnect stops all jobs, while
+saved data stays available. Missing keys are stored as `integration_not_configured`;
+public-key authentication failures never revoke the account's OAuth connection.
+
+Business Profile requires Google project approval and the Account Management,
+Business Information, and Business Profile Performance APIs. Reconnect Google to
+authorize `https://www.googleapis.com/auth/business.manage`. Google does not offer
+a narrower reporting-only scope for these calls; Hatch uses only GET/report reads,
+and never edits a Google profile. Consent may be granted separately for each
+service. Enable APIs and complete Google's approval/consent requirements before
+claiming live Business Profile availability. Existing grants continue to collect
+Analytics/Search without the new scope.
+
+A website supports up to 50 tracked locations. `set_business_location` checks
+ownership and verifies that the requested resource was discovered by the worker;
+clients cannot inject provider results. Unlinking stops future work and fences
+in-flight writes, retaining previous observations. A website rename isolates its
+bindings and report history from the previous hostname. Reports are service-only
+with RLS enabled; only ownership-checking RPCs expose saved data.
+
+Every successful profile read appends an observation. A separate
+`google_profile_changes` record stores each changed top-level field's before and
+after JSON, the old/new snapshot IDs, and both observation timestamps. The first
+observation is explicitly marked `__baseline`, not an edit. Unordered profile
+arrays are normalized to avoid artificial edits; ordered address lines retain
+their order. Identical observations do not add changes. Failures add no profile
+observations or inferred deletions. Actual edit timestamps, actors, changes
+between polls, and profile history before tracking began are unavailable.
+
+`POST /websites/{id}/insights/report` reads/queues a saved source; static
+observations (PageSpeed, CrUX, discovery, profile contents) share a fixed job rather
+than separate jobs per viewing range. `POST /websites/{id}/insights/history` reads
+observations collected within the requested **UTC observation dates**, with
+`before_id` pagination (200 observations plus a continuation indicator). The
+history response omits PageSpeed audit payloads and duplicate full profiles;
+original snapshots remain in the database, and profile change records contain
+the before/after values. History dates are collection dates, not the date ranges
+inside performance reports. The default dashboard ends yesterday; include today
+when examining newly collected profile or site-health observations.
+
+The profile comparison table reads matching-date saved Analytics, conversion,
+Search, and Business Profile daily reports from the database, along with that UTC day’s latest mobile PageSpeed test and CrUX observation. Daily performance
+metrics retain provider dates: GA4 property timezone, Search Console Pacific time,
+and Business Profile location dates. Profile observations use UTC; same-day
+alignment is approximate. These are comparisons, not causal claims. Missing local
+metrics are shown as unavailable rather than fabricated zeroes. Call clicks do
+not prove answered calls, and GA4 conversions depend on configured key events.
+CrUX observations have overlapping 28-day windows and may be unavailable for
+small sites. PageSpeed scores are lab tests and can vary between runs.
+
+No automatic historical deletion is introduced. Existing snapshot retention and
+website/user deletion cascades apply. Operational rollout still requires applying
+the migration, configuring API keys/Google API approvals, deploying all three
+services, reconnecting consent, and selecting locations. Unit/fixture tests do
+not verify production Google API access, Cron delivery, or real customer tracking.
+
+Provider references: [PageSpeed](https://developers.google.com/speed/docs/insights/v5/reference/pagespeedapi/runpagespeed),
+[CrUX](https://developer.chrome.com/docs/crux/api),
+[GA4 metrics](https://developers.google.com/analytics/devguides/reporting/data/v1/api-schema),
+[Business Information](https://developers.google.com/my-business/reference/businessinformation/rest/v1/locations),
+[Business performance](https://developers.google.com/my-business/reference/performance/rest/v1/locations/fetchMultiDailyMetricsTimeSeries).

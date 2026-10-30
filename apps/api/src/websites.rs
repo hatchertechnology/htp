@@ -35,22 +35,45 @@ impl WebsiteStore {
         start: &str,
         end: &str,
     ) -> Result<Value, WebsiteError> {
+        self.rpc(headers, "request_google_report", json!({"p_website_id":id,"p_kind":kind,"p_property_id":property,"p_start_date":start,"p_end_date":end})).await
+    }
+
+    pub(crate) async fn rpc(
+        &self,
+        headers: &HeaderMap,
+        name: &str,
+        body: Value,
+    ) -> Result<Value, WebsiteError> {
         let authorization = headers
             .get(header::AUTHORIZATION)
             .ok_or(WebsiteError::Unauthorized)?;
-        let response = self.client.post(format!("{}/rpc/request_google_report", self.url.trim_end_matches("/websites")))
-            .header("apikey", &self.publishable_key).header(header::AUTHORIZATION, authorization)
+        let response = self
+            .client
+            .post(format!(
+                "{}/rpc/{name}",
+                self.url.trim_end_matches("/websites")
+            ))
+            .header("apikey", &self.publishable_key)
+            .header(header::AUTHORIZATION, authorization)
             .timeout(Duration::from_secs(10))
-            .json(&json!({"p_website_id":id,"p_kind":kind,"p_property_id":property,"p_start_date":start,"p_end_date":end}))
-            .send().await.map_err(|_| WebsiteError::Unavailable)?;
+            .json(&body)
+            .send()
+            .await
+            .map_err(|_| WebsiteError::Unavailable)?;
         match response.status() {
             StatusCode::UNAUTHORIZED => return Err(WebsiteError::Unauthorized),
             StatusCode::FORBIDDEN => return Err(WebsiteError::Forbidden),
+            StatusCode::BAD_REQUEST => {
+                return Err(WebsiteError::Invalid(
+                    "Invalid report source, range, or location binding.",
+                ));
+            }
             status if !status.is_success() => return Err(WebsiteError::Unavailable),
             _ => {}
         }
         response.json().await.map_err(|_| WebsiteError::Unavailable)
     }
+
     pub(crate) async fn find(
         &self,
         id: Uuid,

@@ -7,7 +7,7 @@ export function useWorkspace() {
   const owner = useState<string | null>('workspace:owner', () => null)
   const loading = useState('workspace:loading', () => false)
   const error = useState('workspace:error', () => '')
-  const google = useState('workspace:google', () => ({ connected: false, configured: true, analytics: false, search: false, reauthorizationRequired: false }))
+  const google = useState('workspace:google', () => ({ connected: false, configured: true, analytics: false, search: false, business: false, reauthorizationRequired: false }))
   const connectionReady = useState('workspace:google-ready', () => false)
   const selected = computed(() => sites.value.find(site => site.id === selectedId.value) ?? null)
 
@@ -32,16 +32,16 @@ export function useWorkspace() {
     if (!auth.user.value) return
     const user = auth.user.value.id
     try {
-      const result = await request<{connected: boolean; configured: boolean; analytics: boolean; search: boolean; reauthorizationRequired: boolean}>('/api/google/connection')
+      const result = await request<{connected: boolean; configured: boolean; analytics: boolean; search: boolean; business: boolean; reauthorizationRequired: boolean}>('/api/google/connection')
       if (auth.user.value?.id === user) google.value = result
-    } catch { if (auth.user.value?.id === user) google.value = { connected: false, configured: true, analytics: false, search: false, reauthorizationRequired: false } }
+    } catch { if (auth.user.value?.id === user) google.value = { connected: false, configured: true, analytics: false, search: false, business: false, reauthorizationRequired: false } }
     finally { if (auth.user.value?.id === user) connectionReady.value = true }
   }
   watch(() => [auth.ready.value, auth.user.value?.id] as const, () => {
     const id = auth.user.value?.id ?? null
     if (!auth.ready.value || owner.value === id) return
     owner.value = id; sites.value = []; selectedId.value = ''; error.value = ''; loading.value = false
-    google.value = { connected: false, configured: true, analytics: false, search: false, reauthorizationRequired: false }; connectionReady.value = false
+    google.value = { connected: false, configured: true, analytics: false, search: false, business: false, reauthorizationRequired: false }; connectionReady.value = false
     if (id) { void load(); void checkGoogle() }
   }, { immediate: true })
   onMounted(() => { if (auth.user.value && !sites.value.length) void load() })
@@ -55,5 +55,11 @@ export function useReportRange() {
   const now = new Date()
   const start = useState('report:start', () => new Date(now.getTime() - 28 * 86400_000).toISOString().slice(0, 10))
   const end = useState('report:end', () => new Date(now.getTime() - 86400_000).toISOString().slice(0, 10))
-  return { start, end }
+  function includeToday() {
+    const today = new Date().toISOString().slice(0, 10)
+    if ((Date.parse(today) - Date.parse(start.value)) / 86400_000 >= 366) start.value = new Date(Date.parse(today) - 365 * 86400_000).toISOString().slice(0, 10)
+    if (start.value > today) start.value = today
+    end.value = today
+  }
+  return { start, end, includeToday }
 }
