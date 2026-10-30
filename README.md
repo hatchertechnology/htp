@@ -519,3 +519,9 @@ upstream outages produce explicit sanitized errors.
 
 Official contracts: [Search Analytics](https://developers.google.com/webmaster-tools/v1/searchanalytics/query)
 and [URL Inspection](https://developers.google.com/webmaster-tools/v1/urlInspection.index/inspect).
+
+## GitHub repository history
+
+Owners can attach a public GitHub repository to each website, collect commit history
+in the background, and review it alongside performance reports. See
+[configuration, REST, and MCP usage](docs/github-history.md).

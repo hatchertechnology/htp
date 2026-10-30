@@ -63,7 +63,7 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); generation++; controller?.abort
     <div class="overview-heading"><div><h1>Website overview</h1><p>{{ ws.selected.value?.fqdn || 'A clearer view of your websites.' }}</p></div></div>
     <p v-if="ws.error.value" role="alert" class="form-error">{{ ws.error.value }} <button @click="ws.load">Try again</button></p>
     <nav class="report-navigation" aria-label="Website reports">
-      <a href="#search-heading">Search</a><a href="#onsite-heading">Visitors</a><a href="#conversions-title">Conversions &amp; revenue</a><a href="#health-title">PageSpeed &amp; Core Web Vitals</a><a v-if="businessProfileEnabled" href="#business-title">Business Profile &amp; changes</a>
+      <a href="#search-heading">Search</a><a href="#onsite-heading">Visitors</a><a href="#conversions-title">Conversions &amp; revenue</a><a href="#health-title">PageSpeed &amp; Core Web Vitals</a><a href="#repository-title">Website changes</a><a v-if="businessProfileEnabled" href="#business-title">Business Profile &amp; changes</a>
     </nav>
     <SearchDashboard />
     <div class="analytics-section-heading"><div><h2 id="onsite-heading">Onsite performance</h2><p>What visitors do after they arrive · Google Analytics</p></div><button v-if="report" class="refresh-control" :disabled="busy" @click="load()"><UIcon name="i-lucide-refresh-cw" /><span>Refresh analytics</span></button></div>
@@ -83,6 +83,7 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); generation++; controller?.abort
     </div>
     <ConversionDashboard />
     <SiteHealthDashboard />
+    <RepositoryHistory />
     <BusinessDashboard v-if="businessProfileEnabled" />
     <p v-if="report" class="report-caption">Google Analytics · Property {{ report.property_id }} · {{ report.report.summary.metadata?.timeZone || 'Property timezone' }} · Exact hostname: {{ report.website.fqdn }}<span v-if="warning">Google reports sampling, thresholding, or grouped rows; some small counts may be withheld.</span></p>
   </div>

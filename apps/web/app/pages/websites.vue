@@ -87,6 +87,7 @@ watch(() => user.value?.id, () => { cancelEdit(); removing.value = null })
                 <p v-if="propertyError" class="form-error" role="alert">{{ propertyError }}</p>
                 <div class="website-form-actions"><UButton type="submit" :loading="propertyBusy">Save property</UButton><UButton variant="outline" color="neutral" :disabled="propertyBusy" @click="propertySite = null">Cancel</UButton></div>
               </form>
+              <RepositorySettings :website-id="website.id" :fqdn="website.fqdn" />
               <div v-if="removing?.id === website.id" class="website-delete" role="group" :aria-label="`Confirm deletion of ${website.fqdn}`"><p>Delete <strong>{{ website.fqdn }}</strong>? This removes the record only.</p><div><UButton color="neutral" variant="outline" :disabled="saving" @click="removing = null">Cancel</UButton><UButton color="error" :loading="saving" @click="remove">Delete record</UButton></div></div>
             </li>
           </ul>

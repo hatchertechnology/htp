@@ -1,3 +1,4 @@
+use rmcp::schemars;
 use rmcp::{
     ServerHandler,
     model::{CallToolResult, Implementation, ServerCapabilities, ServerConfig},
@@ -45,10 +46,123 @@ pub(crate) fn service() -> StreamableHttpService<HelloWorldMcp, LocalSessionMana
 }
 
 #[derive(Clone)]
-pub(crate) struct SecuredHelloWorldMcp;
+pub(crate) struct SecuredHelloWorldMcp {
+    store: crate::websites::WebsiteStore,
+}
+
+#[derive(serde::Deserialize, rmcp::schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RepositoryToolInput {
+    fqdn: String,
+    repository_url: Option<String>,
+    branch: Option<String>,
+    #[serde(default = "tool_enabled")]
+    enabled: bool,
+}
+fn tool_enabled() -> bool {
+    true
+}
+#[derive(serde::Deserialize, rmcp::schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RepositoryHistoryInput {
+    fqdn: String,
+    start_date: Option<String>,
+    end_date: Option<String>,
+    before_id: Option<i64>,
+}
+
+fn repository_tool_result(
+    result: Result<serde_json::Value, crate::websites::WebsiteError>,
+) -> CallToolResult {
+    match result {
+        Ok(value) => CallToolResult::structured(value),
+        Err(_) => CallToolResult::error(vec![rmcp::model::ContentBlock::text(
+            "Repository request failed. Check website ownership, the GitHub URL, and the date range.",
+        )]),
+    }
+}
 
 #[tool_router]
 impl SecuredHelloWorldMcp {
+    #[tool(
+        description = "Attach, change, or pause a public GitHub repository for an FQDN owned by the signed-in user. Saves configuration; collection runs in the background. Null repository_url pauses collection and retains history.",
+        annotations(destructive_hint = false, idempotent_hint = true)
+    )]
+    async fn set_website_repository(
+        &self,
+        rmcp::handler::server::wrapper::Parameters(input): rmcp::handler::server::wrapper::Parameters<RepositoryToolInput>,
+        rmcp::handler::server::tool::Extension(parts): rmcp::handler::server::tool::Extension<
+            axum::http::request::Parts,
+        >,
+    ) -> CallToolResult {
+        let Ok(fqdn) = htp_shared::normalize_fqdn(&input.fqdn) else {
+            return CallToolResult::error(vec![rmcp::model::ContentBlock::text(
+                "Enter a valid FQDN.",
+            )]);
+        };
+        repository_tool_result(
+            crate::repositories::save(
+                &self.store,
+                &parts.headers,
+                None,
+                Some(&fqdn),
+                crate::repositories::RepositoryInput {
+                    repository_url: input.repository_url,
+                    branch: input.branch,
+                    enabled: input.enabled,
+                },
+            )
+            .await,
+        )
+    }
+    #[tool(
+        description = "Read database-saved GitHub commit history and collection status for an FQDN owned by the signed-in user. Dates use YYYY-MM-DD in UTC. Commit dates do not establish deployment dates.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true
+        )
+    )]
+    async fn website_repository_history(
+        &self,
+        rmcp::handler::server::wrapper::Parameters(input): rmcp::handler::server::wrapper::Parameters<RepositoryHistoryInput>,
+        rmcp::handler::server::tool::Extension(parts): rmcp::handler::server::tool::Extension<
+            axum::http::request::Parts,
+        >,
+    ) -> CallToolResult {
+        let Ok(fqdn) = htp_shared::normalize_fqdn(&input.fqdn) else {
+            return CallToolResult::error(vec![rmcp::model::ContentBlock::text(
+                "Enter a valid FQDN.",
+            )]);
+        };
+        let start = input
+            .start_date
+            .as_deref()
+            .map(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d"))
+            .transpose();
+        let end = input
+            .end_date
+            .as_deref()
+            .map(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d"))
+            .transpose();
+        let (Ok(start), Ok(end)) = (start, end) else {
+            return CallToolResult::error(vec![rmcp::model::ContentBlock::text(
+                "Use YYYY-MM-DD dates.",
+            )]);
+        };
+        repository_tool_result(
+            crate::repositories::read(
+                &self.store,
+                &parts.headers,
+                None,
+                Some(&fqdn),
+                start,
+                end,
+                input.before_id,
+            )
+            .await,
+        )
+    }
     #[tool(
         description = "Return the secured hello world message for a signed-in Supabase user",
         annotations(
@@ -72,14 +186,19 @@ impl ServerHandler for SecuredHelloWorldMcp {
                 "htp-api-secured",
                 env!("CARGO_PKG_VERSION"),
             ))
-            .with_instructions("Use hello_world_secured to retrieve the secured greeting.")
+            .with_instructions("Use the repository tools to manage public GitHub bindings and read saved commit history for your FQDNs.")
     }
 }
 
-pub(crate) fn secured_service() -> StreamableHttpService<SecuredHelloWorldMcp, LocalSessionManager>
-{
+pub(crate) fn secured_service(
+    store: crate::websites::WebsiteStore,
+) -> StreamableHttpService<SecuredHelloWorldMcp, LocalSessionManager> {
     StreamableHttpService::new(
-        || Ok(SecuredHelloWorldMcp),
+        move || {
+            Ok(SecuredHelloWorldMcp {
+                store: store.clone(),
+            })
+        },
         LocalSessionManager::default().into(),
         config(),
     )

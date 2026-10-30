@@ -1,3 +1,4 @@
+import { runRepositorySync } from "./repository.ts";
 import { authorized } from "./crypto.ts";
 import { runSync } from "./worker.ts";
 const required = (name: string) => {
@@ -31,6 +32,7 @@ export async function handle(request: Request): Promise<Response> {
       if (!response.ok) throw new Error("database_unavailable");
       return await response.json();
     };
+    const repositories = await runRepositorySync(rpc);
     const result = await runSync(rpc, {
       pagespeedKey: Deno.env.get("GOOGLE_PAGESPEED_KEY"),
       cruxKey: Deno.env.get("GOOGLE_CRUX_KEY"),
@@ -38,7 +40,9 @@ export async function handle(request: Request): Promise<Response> {
       clientId: required("GOOGLE_CLIENT_ID"),
       clientSecret: required("GOOGLE_CLIENT_SECRET"),
     });
-    return Response.json(result, { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ ...result, repositories }, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch {
     // Never log provider responses, OAuth credentials, or encrypted grants.
     console.error(

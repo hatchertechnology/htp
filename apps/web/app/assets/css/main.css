@@ -247,3 +247,15 @@ h1{font-size:30px} h2{font-size:21px} .desk-rail{flex-wrap:wrap;gap:10px;padding
 .conversion-table table { min-width: 650px; }
 .insight-section .conversion-table .conversion-dimension { width: 40%; min-width: 200px; max-width: 480px; overflow-wrap: anywhere; color: var(--ink); font-weight: 500; }
 @media (max-width: 650px) { .report-navigation { gap: 4px 16px; } }
+
+.repository-settings { margin: 0 0 16px; padding: 0 0 0 16px; }
+.repository-settings summary { cursor: pointer; padding: 12px 0; font-weight: 600; }
+.repository-settings p { max-width: 70ch; color: var(--text-muted, #53677e); }
+.repository-enabled { display: flex; align-items: center; gap: 8px; }
+.repository-history-table td { vertical-align: top; }
+.repository-history-table td:nth-child(2) { min-width: 240px; overflow-wrap: anywhere; }
+.repository-history-table small { display: block; margin-top: 6px; color: var(--text-muted, #53677e); }
+.repository-history-table th:first-child, .repository-history-table td:first-child, .repository-history-table td:last-child { white-space: nowrap; }
+@media (max-width: 650px) { .repository-settings { padding-left: 0; } }
+
+.repository-settings .property-form { display: grid; gap: 16px; }

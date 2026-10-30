@@ -4,6 +4,7 @@ pub mod analytics;
 pub mod auth;
 mod insights;
 mod mcp;
+mod repositories;
 pub mod search;
 pub mod websites;
 
@@ -38,13 +39,14 @@ pub fn app_with_analytics(
 ) -> Router {
     let protected = Router::new()
         .route("/secured", get(async || Json(secured_message())))
-        .nest_service("/mcp/secured", mcp::secured_service())
+        .nest_service("/mcp/secured", mcp::secured_service(websites.clone()))
         .merge(analytics::router(websites.clone(), analytics))
         .merge(search::router(
             websites.clone(),
             search::SearchClient::default(),
         ))
         .merge(insights::router(websites.clone()))
+        .merge(repositories::router(websites.clone()))
         .merge(websites::router(websites))
         .layer(middleware::from_fn_with_state(auth, auth::require_user));
 

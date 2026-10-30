@@ -142,7 +142,7 @@ async fn official_mcp_client_authenticates_every_request() {
         );
         let client = ClientConfig::default().serve(transport).await.unwrap();
         let tools = client.list_tools(None).await.unwrap();
-        assert_eq!(tools.tools.len(), 1);
+        assert_eq!(tools.tools.len(), 3);
         assert_eq!(tools.tools[0].name, "hello_world_secured");
         let result = client
             .call_tool(CallToolRequestParams::new("hello_world_secured"))
@@ -969,4 +969,81 @@ async fn insight_validation_and_ownership_fail_before_reading_saved_data() {
             .status(),
         StatusCode::NOT_FOUND
     );
+}
+
+#[tokio::test]
+async fn repository_rest_and_mcp_forward_only_the_current_user_identity() {
+    let route = |headers: axum::http::HeaderMap, Json(body): Json<Value>| async move {
+        assert!(
+            headers["authorization"]
+                .to_str()
+                .unwrap()
+                .starts_with("Bearer ")
+        );
+        assert_eq!(headers["apikey"], "publishable-fixture-key");
+        Json(body)
+    };
+    let auth = TestAuth::with_routes(
+        Router::new()
+            .route(
+                "/rest/v1/rpc/set_website_repository",
+                axum::routing::post(route),
+            )
+            .route(
+                "/rest/v1/rpc/website_repository_history",
+                axum::routing::post(route),
+            ),
+    )
+    .await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let path = "/websites/00000000-0000-0000-0000-000000000001/repository";
+    let input = json!({"repository_url":"https://github.com/example/site.git/","branch":"main","enabled":true});
+    let response = auth
+        .app
+        .clone()
+        .oneshot(
+            Request::put(path)
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(input.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 10000).await.unwrap()).unwrap();
+    assert_eq!(body["p_repository_url"], "https://github.com/example/site");
+    assert_eq!(body["p_website_id"], "00000000-0000-0000-0000-000000000001");
+    for (name, args, key, value) in [
+        (
+            "set_website_repository",
+            json!({"fqdn":"EXAMPLE.COM.","repository_url":"https://github.com/example/site","enabled":false}),
+            "p_enabled",
+            json!(false),
+        ),
+        (
+            "website_repository_history",
+            json!({"fqdn":"example.com","start_date":"2026-10-01","end_date":"2026-10-30"}),
+            "p_start_date",
+            json!("2026-10-01"),
+        ),
+    ] {
+        let response=auth.app.clone().oneshot(Request::post("/mcp/secured").header("host","localhost").header("authorization",format!("Bearer {token}")).header("content-type","application/json").header("accept","application/json, text/event-stream").header("mcp-protocol-version","2025-11-25").body(Body::from(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":args}}).to_string())).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let result: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 10000).await.unwrap()).unwrap();
+        assert_eq!(
+            result["result"]["structuredContent"]["p_fqdn"],
+            "example.com"
+        );
+        assert_eq!(result["result"]["structuredContent"][key], value);
+    }
+    let response = auth
+        .app
+        .clone()
+        .oneshot(Request::get(path).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }

@@ -19,6 +19,7 @@ website and reading real Google Analytics data in one clear dashboard.
 ## Capabilities and Constraints
 
 - Users can create, list, rename and delete their own website records.
+- Owners can attach a public GitHub repository and optional branch to each FQDN through UI, REST, or MCP. Background polling stores commit dates and observation times; pausing/replacing links preserves history. Website change history uses the selected reporting dates, and commits do not imply deployments.
 - Each website can have a numeric GA4 property binding; Google checks report access.
 - Browser users connect their own Google account using read-only Analytics and Search Console OAuth.
 - Overview leads with Search Console clicks, impressions, CTR, position, daily search trends, top queries and landing pages. The user explicitly requested Search first.
