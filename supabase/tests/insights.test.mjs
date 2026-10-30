@@ -17,6 +17,16 @@ test('insight collection preserves profile diffs, ownership, bindings, observati
     await db.exec(`insert into auth.users values('${owner}'),('${other}');
       insert into public.websites(id,owner_id,fqdn,ga4_property_id) values('${site}','${owner}','example.com','123');
       insert into public.google_connections(owner_id,encrypted_grant,scopes) values('${owner}','encrypted',array['https://www.googleapis.com/auth/analytics.readonly','https://www.googleapis.com/auth/business.manage']);`)
+    assert.equal((await db.query('select public.business_profile_enabled() as enabled')).rows[0].enabled, false)
+    await db.exec("set role service_role")
+    await db.query('select public.claim_google_report()')
+    await db.exec('reset role')
+    assert.equal((await db.query("select count(*)::int as n from public.google_report_jobs where kind like 'business_%'")).rows[0].n, 0, 'disabled discovery does not seed jobs')
+    await db.exec('set role authenticated')
+    await db.query("select set_config('request.jwt.claims',$1,false)", [JSON.stringify({ sub: owner, is_anonymous: false })])
+    await assert.rejects(() => db.query("select public.request_google_report($1,'business_locations','','2026-10-01','2026-10-28')", [site]), /temporarily disabled/)
+    await assert.rejects(() => db.query("select public.set_business_location($1,'locations\/10',true)", [site]), /temporarily disabled/)
+    await db.exec("reset role; create or replace function public.business_profile_enabled() returns boolean language sql immutable set search_path = '' as $$ select true $$")
     async function identity(user, anonymous = false) { await db.exec('reset role; set role authenticated'); await db.query("select set_config('request.jwt.claims',$1,false)", [JSON.stringify({ sub: user, is_anonymous: anonymous })]) }
     async function report(kind, property, start = '2026-10-01', end = '2026-10-28') { return (await db.query('select public.request_google_report($1,$2,$3,$4,$5) as data', [site, kind, property, start, end])).rows[0].data }
     async function history(kind, property, before = null) { return (await db.query("select public.google_insight_history($1,$2,$3,current_date-1,current_date+1,$4) as data", [site, kind, property, before])).rows[0].data }
@@ -61,6 +71,12 @@ test('insight collection preserves profile diffs, ownership, bindings, observati
     const website = result.changes.find(c => c.field === 'websiteUri'); assert.equal(website.after_value, null)
     assert.equal((await history('business_profile', 'locations/10', result.snapshots[0].id)).snapshots.length, 2)
     assert.equal((await history('business_profile', 'locations/10')).bindings[0], 'locations/10')
+    await db.exec("reset role; create or replace function public.business_profile_enabled() returns boolean language sql immutable set search_path = '' as $$ select false $$")
+    assert.equal(await claim('business_profile'), null, 'existing Business Profile jobs cannot be claimed while paused')
+    await identity(owner)
+    assert.equal((await history('business_profile', 'locations/10')).snapshots.length, 3, 'pause preserves readable snapshots')
+    assert.equal((await history('business_profile', 'locations/10')).changes.length, 4, 'pause preserves field history')
+    await db.exec("reset role; create or replace function public.business_profile_enabled() returns boolean language sql immutable set search_path = '' as $$ select true $$")
     const speed = await claim('pagespeed', 'mobile')
     await complete(speed, { lighthouseResult: { categories: { performance: { score: 0.7 } } } })
     await identity(owner)

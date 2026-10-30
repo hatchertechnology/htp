@@ -1,3 +1,4 @@
+import { businessProfileEnabled } from '../../shared/utils/features'
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { OAuth2Client, CodeChallengeMethod } from 'google-auth-library'
 import { createClient } from '@supabase/supabase-js'
@@ -84,7 +85,7 @@ export async function startGoogle(event: H3Event) {
   const codes = await oauth.generateCodeVerifierAsync()
   const state = randomBytes(32).toString('base64url')
   setCookie(event, stateCookie, seal({ user: user.id, state, verifier: codes.codeVerifier, until: Date.now() + 600_000 } satisfies Pending, config.googleCookieKey, stateCookie), options(event, 600))
-  return { url: oauth.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: [scope, searchScope, businessScope], state, code_challenge: codes.codeChallenge, code_challenge_method: CodeChallengeMethod.S256 }) }
+  return { url: oauth.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: [scope, searchScope, ...(businessProfileEnabled ? [businessScope] : [])], state, code_challenge: codes.codeChallenge, code_challenge_method: CodeChallengeMethod.S256 }) }
 }
 export async function finishGoogle(event: H3Event) {
   const config = configuration(event)

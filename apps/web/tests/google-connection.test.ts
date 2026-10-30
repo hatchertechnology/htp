@@ -100,11 +100,11 @@ it('reports Business Profile authorization separately from Analytics and Search'
   expect(await googleConnection(event)).toMatchObject({ business: true, analytics: false, search: false })
 })
 
-it('requests Business Profile consent with PKCE while keeping the pending state encrypted', async () => {
+it('omits disabled Business Profile consent while retaining encrypted PKCE state', async () => {
   vi.stubGlobal('getHeader', (_event: unknown, name: string) => name === 'authorization' ? 'Bearer valid.user.token' : 'https://htp.hatchtech.dev')
   mocks.authUrl.mockReturnValue('https://accounts.google.com/authorize')
   expect(await startGoogle(event)).toEqual({ url: 'https://accounts.google.com/authorize' })
-  expect(mocks.authUrl).toHaveBeenCalledWith(expect.objectContaining({ scope: [analytics, search, 'https://www.googleapis.com/auth/business.manage'], code_challenge: 'pkce-challenge', code_challenge_method: 'S256' }))
+  expect(mocks.authUrl).toHaveBeenCalledWith(expect.objectContaining({ scope: [analytics, search], code_challenge: 'pkce-challenge', code_challenge_method: 'S256' }))
   const pending = cookiesSet.mock.calls[0]![2] as string
   expect(pending).not.toContain('pkce-verifier')
   expect(unseal(pending, secret, 'htp_google_state')).toMatchObject({ user: 'owner', verifier: 'pkce-verifier' })

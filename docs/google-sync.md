@@ -214,3 +214,18 @@ Provider references: [PageSpeed](https://developers.google.com/speed/docs/insigh
 [GA4 metrics](https://developers.google.com/analytics/devguides/reporting/data/v1/api-schema),
 [Business Information](https://developers.google.com/my-business/reference/businessinformation/rest/v1/locations),
 [Business performance](https://developers.google.com/my-business/reference/performance/rest/v1/locations/fetchMultiDailyMetricsTimeSeries).
+
+## Temporary Business Profile pause
+
+Business Profile collection and UI are disabled pending Google Basic API Access
+approval: https://github.com/hatchertechnology/htp/issues/2. Other Google reports
+continue to run. The database gate `public.business_profile_enabled()` returns
+false: no Business Profile jobs are seeded or claimed, and report requests and
+location linking are rejected. Existing jobs, location links, snapshots, and
+change records are preserved, and saved history remains readable.
+
+After approval, add a migration replacing that function to return true, set
+`businessProfileEnabled` in `apps/web/shared/utils/features.ts` to true, update the
+OAuth consent test, and deploy the web app. This restores the existing dashboard,
+navigation, connection details, permission requests, and collection without
+rebuilding the integration. Confirm nonzero API quotas before re-enabling it.
