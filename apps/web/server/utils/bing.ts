@@ -42,21 +42,32 @@ export async function finishBing(event: H3Event) {
   const state = typeof query.state === 'string' ? query.state : ''
   if (!/^[A-Za-z0-9_-]{43}$/.test(state) || !pending || pending.until < Date.now() || state.length !== pending.state.length || !timingSafeEqual(Buffer.from(state), Buffer.from(pending.state))) return sendRedirect(event, '/connections?bing=invalid_state')
   if (query.error || typeof query.code !== 'string' || query.code.length > 8192) return sendRedirect(event, '/connections?bing=denied')
+  let stage = 'token_exchange'
+  let tokenStatus = 0
   try {
     const response = await fetch('https://www.bing.com/webmasters/oauth/token', {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
       body: new URLSearchParams({ client_id: config.bingClientId, client_secret: config.bingClientSecret, grant_type: 'authorization_code', code: query.code, redirect_uri: `${config.origin}/auth/bing/callback` }),
     })
+    tokenStatus = response.status
     const tokens = await response.json()
-    if (!response.ok || typeof tokens.refresh_token !== 'string' || !tokens.refresh_token || tokens.refresh_token.length > 4096) throw new Error('invalid_grant')
+    if (!response.ok) throw new Error('token_exchange_failed')
+    stage = 'refresh_token'
+    if (typeof tokens.refresh_token !== 'string' || !tokens.refresh_token || tokens.refresh_token.length > 4096) throw new Error('invalid_grant')
+    stage = 'read_scope'
     if (tokens.scope && (typeof tokens.scope !== 'string' || !tokens.scope.toLowerCase().split(' ').includes('webmaster.read'))) throw new Error('missing_scope')
+    stage = 'save_connection'
     const { error } = await bingStore(event).from('bing_connections').upsert({
       owner_id: pending.user, generation: randomUUID(), status: 'connected', updated_at: new Date().toISOString(),
       encrypted_grant: seal({ user: pending.user, refresh: tokens.refresh_token, scopes: ['webmaster.read'] }, config.bingCookieKey, `htp_bing_grant:${pending.user}`),
     })
     if (error) throw new Error('storage_unavailable')
     return sendRedirect(event, '/connections?bing=connected')
-  } catch { return sendRedirect(event, '/connections?bing=failed') }
+  } catch {
+    // Only fixed stage names and HTTP status are logged, never tokens or provider bodies.
+    console.error(`Bing OAuth callback failed (${stage}; HTTP ${tokenStatus}).`)
+    return sendRedirect(event, '/connections?bing=failed')
+  }
 }
 export async function disconnectBing(event: H3Event) {
   const user = await requireDashboardUser(event)

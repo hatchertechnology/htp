@@ -9,6 +9,7 @@ const event = {} as H3Event
 const key = Buffer.alloc(32,7).toString('base64')
 const cookie = vi.fn(), set = vi.fn(), redirect = vi.fn()
 beforeEach(() => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
   vi.stubGlobal('useRuntimeConfig', () => ({ bingClientId:'client',bingClientSecret:'secret',bingCookieKey:key,supabaseServiceRoleKey:'private-service',appOrigin:'https://htp.example',apiBaseUrl:'https://api.example', public:{supabaseUrl:'https://db.example'} }))
   mocks.user.mockResolvedValue({id:'owner',authorization:'Bearer owner-token'})
   mocks.read.mockResolvedValue({data:{status:'connected'},error:null})
@@ -49,6 +50,7 @@ it('saves only an owner-bound encrypted refresh token and does not claim success
   mocks.fetch.mockResolvedValue(Response.json({refresh_token:'private-refresh'}))
   await finishBing(event)
   expect(redirect).toHaveBeenLastCalledWith(event,'/connections?bing=failed')
+  expect(console.error).toHaveBeenLastCalledWith('Bing OAuth callback failed (save_connection; HTTP 200).')
 })
 it('reads only the authenticated connection status and disconnects account-wide',async () => {
   expect(await bingConnection(event)).toEqual({configured:true,connected:true,reauthorizationRequired:false})
