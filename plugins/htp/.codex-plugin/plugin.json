@@ -1,0 +1,39 @@
+{
+  "name": "htp",
+  "version": "1.0.1",
+  "description": "Analyze saved website evidence in HTP and make source-backed SEO, performance, conversion, and content recommendations.",
+  "author": {
+    "name": "Kerry Hatcher",
+    "email": "kerry@kerryhatcher.com"
+  },
+  "homepage": "https://htp.hatchtech.dev",
+  "keywords": [
+    "htp",
+    "seo",
+    "analytics",
+    "search-console",
+    "pagespeed",
+    "crux",
+    "website-performance",
+    "repository-history"
+  ],
+  "interface": {
+    "displayName": "HTP",
+    "shortDescription": "Website SEO and performance",
+    "longDescription": "Connect to your HTP account through browser OAuth. Discover your websites, inspect saved Google Analytics, Search Console, PageSpeed, CrUX, conversions and Business Profile evidence, and correlate results with repository history. Receive prioritized recommendations with dates, freshness and data gaps. Repository settings can be changed when you request it.",
+    "developerName": "Kerry Hatcher",
+    "category": "Data & Analytics",
+    "capabilities": [],
+    "websiteURL": "https://htp.hatchtech.dev",
+    "logo": "./assets/icon.svg",
+    "composerIcon": "./assets/icon.svg",
+    "brandColor": "#B94D28",
+    "defaultPrompt": [
+      "Review all my HTP websites and prioritize SEO improvements using saved evidence.",
+      "Analyze SEO and performance trends for one of my HTP websites.",
+      "Compare repository changes with saved website performance in HTP."
+    ]
+  },
+  "apps": "./.app.json",
+  "skills": "./skills"
+}

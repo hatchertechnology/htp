@@ -24,6 +24,32 @@ pub struct WebsiteStore {
 }
 
 impl WebsiteStore {
+    pub(crate) async fn list_saved(
+        &self,
+        headers: &HeaderMap,
+        limit: usize,
+        offset: usize,
+    ) -> Result<WebsitePage, WebsiteError> {
+        if !(1..=100).contains(&limit) {
+            return Err(WebsiteError::Invalid("Limit must be between 1 and 100."));
+        }
+        let mut items = self
+            .request(
+                Method::GET,
+                headers,
+                &[
+                    ("order", "fqdn.asc,id.asc".to_owned()),
+                    ("limit", (limit + 1).to_string()),
+                    ("offset", offset.to_string()),
+                ],
+                None,
+            )
+            .await?;
+        let has_more = items.len() > limit;
+        items.truncate(limit);
+        Ok(WebsitePage { items, has_more })
+    }
+
     /// Read the latest snapshot and register an hourly refresh subscription.
     /// The database RPC checks ownership independently of the HTTP handler.
     pub(crate) async fn saved_report(
@@ -161,25 +187,11 @@ async fn list(
     headers: HeaderMap,
     Query(page): Query<Pagination>,
 ) -> Result<Json<WebsitePage>, WebsiteError> {
-    let limit = page.limit.unwrap_or(50);
-    if !(1..=100).contains(&limit) {
-        return Err(WebsiteError::Invalid("Limit must be between 1 and 100."));
-    }
-    let mut items = store
-        .request(
-            Method::GET,
-            &headers,
-            &[
-                ("order", "fqdn.asc,id.asc".to_owned()),
-                ("limit", (limit + 1).to_string()),
-                ("offset", page.offset.unwrap_or(0).to_string()),
-            ],
-            None,
-        )
-        .await?;
-    let has_more = items.len() > limit;
-    items.truncate(limit);
-    Ok(Json(WebsitePage { items, has_more }))
+    Ok(Json(
+        store
+            .list_saved(&headers, page.limit.unwrap_or(50), page.offset.unwrap_or(0))
+            .await?,
+    ))
 }
 
 async fn create(

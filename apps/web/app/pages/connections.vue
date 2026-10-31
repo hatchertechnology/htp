@@ -22,7 +22,7 @@ async function disconnect() {
 <template>
   <div class="page-heading"><h1>Connections</h1><p>Your account and the services behind your website reports.</p></div>
   <div class="connections-layout">
-    <section class="connection-settings surface" aria-labelledby="google-heading">
+    <div><section class="connection-settings surface" aria-labelledby="google-heading">
       <div class="settings-title"><UIcon name="i-lucide-chart-no-axes-combined" /><h2 id="google-heading">Google services</h2></div>
       <p>Connect the Google account that has access to your websites. Review Search Console performance, inspect URLs, and read Google Analytics reports in one workspace.</p>
       <div class="connection-state"><span :class="['connection-dot', {connected: google.connected && !google.reauthorizationRequired}]" />{{ !user ? 'Sign in first' : !connectionReady ? 'Checking connection…' : google.reauthorizationRequired ? 'Reconnect to resume updates' : google.connected ? 'Connected for background updates' : 'Not connected' }}</div>
@@ -33,7 +33,7 @@ async function disconnect() {
       <dl v-if="google.connected" class="service-access"><div><dt>Google Analytics</dt><dd>{{ google.analytics ? 'Authorized · read-only' : 'Reconnect to authorize' }}</dd></div><div><dt>Search Console &amp; URL Inspection</dt><dd>{{ google.search ? 'Authorized · read-only' : 'Reconnect to authorize' }}</dd></div><div v-if="businessProfileEnabled"><dt>Business Profile</dt><dd>{{ google.business ? 'Authorized · reporting and profile observations' : 'Reconnect to authorize' }}</dd></div></dl>
       <div class="connection-notes"><p>Analytics and Search Console use read-only access.<span v-if="businessProfileEnabled"> Business Profile requires Google’s business.manage permission; Hatch only reads profile data and metrics.</span> Reports<span v-if="businessProfileEnabled"> and profile observations</span> refresh hourly; PageSpeed and CrUX refresh daily, including while you are signed out.</p><p>Enable the Google Analytics Data API and Google Search Console API in your OAuth project. The URL Inspection API is part of Search Console. Your Google account must have access to each property.<span v-if="businessProfileEnabled"> Business Profile also requires approved API access and the Account Management, Business Information, and Performance APIs.</span> An administrator configures PageSpeed and CrUX API keys for background collection.</p><p>Your Google connection is stored encrypted for your account. Disconnecting stops updates on all devices; saved reports remain. You may need to reconnect while the Google app is in testing.</p><p>Google access is currently available to approved test users.</p></div>
       <NuxtLink to="/websites" class="settings-link">Link a GA4 property to a website <UIcon name="i-lucide-arrow-right" /></NuxtLink>
-    </section>
+    </section><AuthorizedAgents /></div>
     <AccountPanel />
   </div>
 </template>

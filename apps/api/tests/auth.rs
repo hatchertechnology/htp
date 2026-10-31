@@ -142,7 +142,7 @@ async fn official_mcp_client_authenticates_every_request() {
         );
         let client = ClientConfig::default().serve(transport).await.unwrap();
         let tools = client.list_tools(None).await.unwrap();
-        assert_eq!(tools.tools.len(), 3);
+        assert_eq!(tools.tools.len(), 5);
         assert_eq!(tools.tools[0].name, "hello_world_secured");
         let result = client
             .call_tool(CallToolRequestParams::new("hello_world_secured"))
@@ -1046,4 +1046,187 @@ async fn repository_rest_and_mcp_forward_only_the_current_user_identity() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn mcp_research_discovers_websites_and_reads_all_saved_datasets() {
+    let (auth, hits) = research_mcp_fixture().await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let first = response_json(
+        research_mcp_call(&auth, Some(&token), "list_websites", json!({"limit":2})).await,
+    )
+    .await;
+    assert_eq!(
+        first["result"]["structuredContent"]["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(first["result"]["structuredContent"]["next_offset"], 2);
+    let second = response_json(
+        research_mcp_call(
+            &auth,
+            Some(&token),
+            "list_websites",
+            json!({"limit":2,"offset":2}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        second["result"]["structuredContent"]["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(second["result"]["structuredContent"]["has_more"], false);
+    for dataset in ["sources", "snapshots", "profile_changes"] {
+        let args = json!({"fqdn":"WWW1.EXAMPLE.COM.","dataset":dataset,"limit":1});
+        let response = research_mcp_call(&auth, Some(&token), "website_saved_data", args).await;
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let result = response_json(response).await;
+        assert_eq!(result["result"]["isError"], false);
+        assert_eq!(
+            result["result"]["structuredContent"]["p_fqdn"],
+            "www1.example.com"
+        );
+        assert_eq!(result["result"]["structuredContent"]["p_dataset"], dataset);
+    }
+    let result=response_json(research_mcp_call(&auth,Some(&token),"website_saved_data",json!({"fqdn":"www1.example.com","dataset":"snapshots","job_id":"00000000-0000-0000-0000-000000000001","before_id":"20","limit":5})).await).await;
+    assert_eq!(result["result"]["structuredContent"]["p_before_id"], "20");
+    assert_eq!(result["result"]["structuredContent"]["p_limit"], 5);
+    for args in [
+        json!({"fqdn":"bad","dataset":"sources"}),
+        json!({"fqdn":"example.com","dataset":"sources","limit":0}),
+        json!({"fqdn":"example.com","dataset":"sources","job_id":"invalid"}),
+    ] {
+        let result =
+            response_json(research_mcp_call(&auth, Some(&token), "website_saved_data", args).await)
+                .await;
+        assert_eq!(result["result"]["isError"], true);
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), 4);
+    let result = response_json(
+        research_mcp_call(
+            &auth,
+            Some(&token),
+            "website_saved_data",
+            json!({"fqdn":"hidden.example.com","dataset":"sources"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(result["result"]["isError"], true);
+    assert!(!result.to_string().contains("PRIVATE DATABASE DETAIL"));
+    assert_eq!(
+        research_mcp_call(
+            &auth,
+            None,
+            "website_saved_data",
+            json!({"fqdn":"example.com","dataset":"sources"})
+        )
+        .await
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+async fn research_mcp_call(
+    auth: &TestAuth,
+    token: Option<&str>,
+    name: &str,
+    args: Value,
+) -> axum::response::Response {
+    let mut request = Request::post("/mcp/secured")
+        .header("host", "localhost")
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-protocol-version", "2025-11-25");
+    if let Some(token) = token {
+        request = request.header("authorization", format!("Bearer {token}"));
+    }
+    auth.app.clone().oneshot(request.body(Body::from(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":args}}).to_string())).unwrap()).await.unwrap()
+}
+
+async fn research_mcp_fixture() -> (TestAuth, Arc<AtomicUsize>) {
+    let fixture = WebsiteFixture::default();
+    for n in 1..=3 {
+        fixture.0.lock().await.push(htp_shared::Website {
+            id: uuid::Uuid::from_u128(n),
+            fqdn: format!("www{n}.example.com"),
+            ga4_property_id: Some("123".into()),
+        });
+    }
+    let hits = Arc::new(AtomicUsize::new(0));
+    let calls = hits.clone();
+    let reports = Router::new().route(
+        "/rest/v1/rpc/website_saved_data",
+        axum::routing::post(
+            move |headers: axum::http::HeaderMap, Json(body): Json<Value>| {
+                let calls = calls.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    assert!(
+                        headers["authorization"]
+                            .to_str()
+                            .unwrap()
+                            .starts_with("Bearer ")
+                    );
+                    assert_eq!(headers["apikey"], "publishable-fixture-key");
+                    assert!(!headers.contains_key("x-google-access-token"));
+                    if body["p_fqdn"] == "hidden.example.com" {
+                        return (
+                            StatusCode::FORBIDDEN,
+                            Json(json!({"message":"PRIVATE DATABASE DETAIL"})),
+                        );
+                    }
+                    (StatusCode::OK, Json(body))
+                }
+            },
+        ),
+    );
+    let auth = TestAuth::with_routes(
+        Router::new()
+            .route("/rest/v1/websites", axum::routing::any(data_api_fixture))
+            .with_state(fixture)
+            .merge(reports),
+    )
+    .await;
+    (auth, hits)
+}
+
+#[tokio::test]
+async fn mcp_unauthorized_response_discovers_the_project_oauth_server() {
+    let auth = TestAuth::new().await;
+    let rejected = auth.request("/mcp/secured", None).await;
+    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+    let challenge = rejected.headers()["www-authenticate"].to_str().unwrap();
+    assert!(challenge.contains("resource_metadata=\"http://127.0.0.1:3000/.well-known/oauth-protected-resource/mcp/secured\""));
+    for path in [
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp/secured",
+    ] {
+        let response = auth
+            .app
+            .clone()
+            .oneshot(
+                Request::get(path)
+                    .header("host", "attacker.invalid")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let data = response_json(response).await;
+        assert_eq!(data["resource"], "http://127.0.0.1:3000/mcp/secured");
+        assert_eq!(
+            data["authorization_servers"],
+            json!([format!("{}/auth/v1", auth.url)])
+        );
+        assert_eq!(data["bearer_methods_supported"], json!(["header"]));
+        assert!(!data.to_string().contains("attacker.invalid"));
+    }
 }

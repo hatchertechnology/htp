@@ -154,7 +154,7 @@ The additional secured routes require a **signed-in user's access token**:
 | Interface | Endpoint | Operation |
 | --- | --- | --- |
 | REST | `GET /secured` | Return the secured greeting |
-| MCP | `/mcp/secured` | Initialize, discover, and call `hello_world_secured` |
+| MCP | `/mcp/secured` | Discover websites and read complete saved SEO evidence, report sources, profile changes and repository history |
 
 Both return `{"message":"hello world secured"}` (in `structuredContent` and
 text content for MCP). The existing `GET /` and `/mcp` remain public. The secured
@@ -525,3 +525,15 @@ and [URL Inspection](https://developers.google.com/webmaster-tools/v1/urlInspect
 Owners can attach a public GitHub repository to each website, collect commit history
 in the background, and review it alongside performance reports. See
 [configuration, REST, and MCP usage](docs/github-history.md).
+
+### AI agent access to SEO data
+
+The authenticated MCP endpoint exposes `list_websites`, `website_saved_data`
+(sources, complete snapshots and profile changes), and `website_repository_history`.
+See [agent access and pagination](docs/mcp-seo.md) for connection details, all saved
+report kinds, freshness interpretation and verification commands.
+
+The secured MCP endpoint also supports browser OAuth sign-in. Add its URL in an
+agent's remote MCP settings, sign in to HTP when the browser opens, and approve
+access. Supabase handles PKCE and refresh tokens; manage grants under Connections
+→ Authorized apps. See [browser authentication](docs/mcp-seo.md#browser-sign-in-recommended).

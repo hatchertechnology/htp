@@ -30,6 +30,7 @@ export default defineNuxtConfig({
     },
   },
   routeRules: {
+    '/oauth/**': { headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow' } },
     '/auth/**': { headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } },
     '/api/**': { headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } },
     '/**': { headers: { 'Referrer-Policy': 'strict-origin-when-cross-origin', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY' } },

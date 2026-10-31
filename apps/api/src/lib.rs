@@ -4,6 +4,7 @@ pub mod analytics;
 pub mod auth;
 mod insights;
 mod mcp;
+mod oauth;
 mod repositories;
 pub mod search;
 pub mod websites;
@@ -37,6 +38,7 @@ pub fn app_with_analytics(
     websites: websites::WebsiteStore,
     analytics: analytics::AnalyticsClient,
 ) -> Router {
+    let oauth_routes = oauth::router(auth.project_url());
     let protected = Router::new()
         .route("/secured", get(async || Json(secured_message())))
         .nest_service("/mcp/secured", mcp::secured_service(websites.clone()))
@@ -53,6 +55,7 @@ pub fn app_with_analytics(
     Router::new()
         .route("/", get(async || Json(message())))
         .nest_service("/mcp", mcp::service())
+        .merge(oauth_routes)
         .merge(protected)
 }
 

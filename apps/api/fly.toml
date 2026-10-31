@@ -10,6 +10,7 @@ primary_region = "iad"
   SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Loul540Y3Oj_qIojV0kr0w_Jq5vhn5H"
   MCP_ALLOWED_HOSTS = "htp-api-kerry-hatcher.fly.dev"
   MCP_ALLOWED_ORIGINS = "https://htp-api-kerry-hatcher.fly.dev"
+  MCP_RESOURCE_URL = "https://htp-api-kerry-hatcher.fly.dev/mcp/secured"
 
 [http_service]
   internal_port = 3000

@@ -1,6 +1,13 @@
 project_id = "htp"
 
+[auth]
+site_url = "https://htp.hatchtech.dev"
+
+[auth.oauth_server]
+enabled = true
+authorization_url_path = "/oauth/consent"
+allow_dynamic_registration = true
+
 [functions.google-sync]
 # Cron authenticates with a separate secret checked inside the handler.
 verify_jwt = false
-

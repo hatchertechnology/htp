@@ -48,6 +48,9 @@ struct Claims {
 }
 
 impl SupabaseAuth {
+    pub(crate) fn project_url(&self) -> &str {
+        self.issuer.trim_end_matches("/auth/v1")
+    }
     /// Create a verifier for a trusted Supabase project URL.
     /// Only configure URLs controlled by the operator, never by a request.
     #[must_use]
@@ -130,15 +133,34 @@ pub(crate) async fn require_user(
     State(auth): State<SupabaseAuth>,
     mut request: Request,
     next: Next,
-) -> Result<Response, AuthError> {
-    let token = bearer_token(request.headers())?;
-    let user = auth.verify(token).await?;
+) -> Response {
+    let verified = match bearer_token(request.headers()) {
+        Ok(token) => auth.verify(token).await,
+        Err(error) => Err(error),
+    };
+    let user = match verified {
+        Ok(user) => user,
+        Err(error) => {
+            let mut response = error.into_response();
+            if response.status() == StatusCode::UNAUTHORIZED {
+                let challenge = format!(
+                    "Bearer realm=\"htp\", resource_metadata=\"{}\", scope=\"openid offline_access\"",
+                    crate::oauth::metadata_url()
+                );
+                response.headers_mut().insert(
+                    header::WWW_AUTHENTICATE,
+                    HeaderValue::from_str(&challenge).expect("valid OAuth challenge"),
+                );
+            }
+            return response;
+        }
+    };
     request.extensions_mut().insert(user);
     let mut response = next.run(request).await;
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    Ok(response)
+    response
 }
 
 fn bearer_token(headers: &HeaderMap) -> Result<&str, AuthError> {
