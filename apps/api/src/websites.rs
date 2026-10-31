@@ -89,12 +89,54 @@ impl WebsiteStore {
         match response.status() {
             StatusCode::UNAUTHORIZED => return Err(WebsiteError::Unauthorized),
             StatusCode::FORBIDDEN => return Err(WebsiteError::Forbidden),
+            StatusCode::CONFLICT if name == "import_seosmith_audit" => {
+                return Err(WebsiteError::Invalid(
+                    "A different report already uses this run ID.",
+                ));
+            }
+            StatusCode::BAD_REQUEST if name == "import_seosmith_audit" => {
+                return Err(WebsiteError::Invalid(
+                    "Report could not be imported. Check its hostname, run ID, format, and timestamps.",
+                ));
+            }
             StatusCode::BAD_REQUEST => {
                 return Err(WebsiteError::Invalid(
                     "Invalid report source, range, or location binding.",
                 ));
             }
             status if !status.is_success() => return Err(WebsiteError::Unavailable),
+            _ => {}
+        }
+        response.json().await.map_err(|_| WebsiteError::Unavailable)
+    }
+
+    /// Token-authenticated ingestion. The database binds the credential to one website.
+    pub(crate) async fn ingest_seosmith(&self, body: Value) -> Result<Value, WebsiteError> {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(20))
+            .build()
+            .map_err(|_| WebsiteError::Unavailable)?;
+        let response = client
+            .post(format!(
+                "{}/rpc/ingest_seosmith_audit",
+                self.url.trim_end_matches("/websites")
+            ))
+            .header("apikey", &self.publishable_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|_| WebsiteError::Unavailable)?;
+        match response.status() {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                return Err(WebsiteError::Unauthorized);
+            }
+            StatusCode::BAD_REQUEST | StatusCode::CONFLICT => {
+                return Err(WebsiteError::Invalid(
+                    "Invalid or conflicting Seosmith delivery.",
+                ));
+            }
+            s if !s.is_success() => return Err(WebsiteError::Unavailable),
             _ => {}
         }
         response.json().await.map_err(|_| WebsiteError::Unavailable)

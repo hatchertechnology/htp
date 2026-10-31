@@ -550,3 +550,12 @@ traffic rows use the overview date filter.
 See [Bing reporting setup](docs/bing-sync.md) for the migration, OAuth client,
 encrypted grant configuration, Edge Function and Vault/Cron rollout. The new
 feature requires that configuration before live reporting is available.
+
+## Seosmith technical SEO audits
+
+HTP accepts website-scoped Seosmith pushes and owner-authenticated JSON imports.
+The Overview → Technical SEO section retains every run, plots history by scan
+time, and provides searchable findings and checked URLs. Complete runs with
+matching settings support finding-change comparisons.
+See [Seosmith ingestion and history](docs/seosmith.md) for API, access controls,
+migrations, worker provisioning and verification.

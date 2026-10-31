@@ -8,6 +8,7 @@ mod mcp;
 mod oauth;
 mod repositories;
 pub mod search;
+mod seosmith;
 pub mod websites;
 
 use axum::{Json, Router, middleware, routing::get};
@@ -40,6 +41,7 @@ pub fn app_with_analytics(
     analytics: analytics::AnalyticsClient,
 ) -> Router {
     let oauth_routes = oauth::router(auth.project_url());
+    let seosmith_ingest = seosmith::ingest_router(websites.clone());
     let protected = Router::new()
         .route("/secured", get(async || Json(secured_message())))
         .nest_service("/mcp/secured", mcp::secured_service(websites.clone()))
@@ -50,6 +52,7 @@ pub fn app_with_analytics(
         ))
         .merge(insights::router(websites.clone()))
         .merge(bing::router(websites.clone()))
+        .merge(seosmith::read_router(websites.clone()))
         .merge(repositories::router(websites.clone()))
         .merge(websites::router(websites))
         .layer(middleware::from_fn_with_state(auth, auth::require_user));
@@ -58,6 +61,7 @@ pub fn app_with_analytics(
         .route("/", get(async || Json(message())))
         .nest_service("/mcp", mcp::service())
         .merge(oauth_routes)
+        .merge(seosmith_ingest)
         .merge(protected)
 }
 
