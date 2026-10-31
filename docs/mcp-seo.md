@@ -200,3 +200,17 @@ history, and repository history. All calls succeeded. Profile-change results
 were empty; repository results were bounded to October 1–30, 2026, with another
 page available for Civic Pulse. These checks validate the actual ChatGPT tool
 connection, without claiming a full SEO review or exhaustive history traversal.
+
+## Bing observations
+
+`website_saved_data` also supports `bing_sources` and `bing_snapshots`, with the
+same ownership checks and pagination controls. Inventory `bing_sources` for each
+FQDN, then paginate `bing_snapshots` to read daily observations of Bing traffic,
+queries/pages, crawl health, issues, and sitemaps. The Google `sources` response
+advertises these extra datasets. Cursors are dataset-specific.
+
+Section `rows: null` plus an `error` means unavailable data; it is not a zero or
+a successful empty list. Bing daily traffic and weekly query/page reports have
+different coverage from Google web-search reports. Query/page dates are provider
+periods, not an arbitrary requested date range. Full rows remain available in MCP
+when dashboard tables show only the first 20. See [Bing setup](bing-sync.md).

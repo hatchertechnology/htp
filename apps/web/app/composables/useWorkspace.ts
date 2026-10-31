@@ -8,6 +8,9 @@ export function useWorkspace() {
   const loading = useState('workspace:loading', () => false)
   const error = useState('workspace:error', () => '')
   const google = useState('workspace:google', () => ({ connected: false, configured: true, analytics: false, search: false, business: false, reauthorizationRequired: false }))
+  const bing = useState('workspace:bing', () => ({ connected: false, configured: true, reauthorizationRequired: false }))
+  const bingReady = useState('workspace:bing-ready', () => false)
+  const bingError = useState('workspace:bing-error', () => '')
   const connectionReady = useState('workspace:google-ready', () => false)
   const selected = computed(() => sites.value.find(site => site.id === selectedId.value) ?? null)
 
@@ -37,15 +40,25 @@ export function useWorkspace() {
     } catch { if (auth.user.value?.id === user) google.value = { connected: false, configured: true, analytics: false, search: false, business: false, reauthorizationRequired: false } }
     finally { if (auth.user.value?.id === user) connectionReady.value = true }
   }
+  async function checkBing() {
+    if (!auth.user.value) return
+    const user = auth.user.value.id
+    try {
+      const result = await request<{ connected: boolean; configured: boolean; reauthorizationRequired: boolean }>('/api/bing/connection')
+      if (auth.user.value?.id === user) { bing.value = result; bingError.value = '' }
+    } catch (cause) { if (auth.user.value?.id === user) bingError.value = failureMessage(cause) }
+    finally { if (auth.user.value?.id === user) bingReady.value = true }
+  }
   watch(() => [auth.ready.value, auth.user.value?.id] as const, () => {
     const id = auth.user.value?.id ?? null
     if (!auth.ready.value || owner.value === id) return
     owner.value = id; sites.value = []; selectedId.value = ''; error.value = ''; loading.value = false
     google.value = { connected: false, configured: true, analytics: false, search: false, business: false, reauthorizationRequired: false }; connectionReady.value = false
-    if (id) { void load(); void checkGoogle() }
+    bing.value = { connected: false, configured: true, reauthorizationRequired: false }; bingReady.value = false; bingError.value = ''
+    if (id) { void load(); void checkGoogle(); void checkBing() }
   }, { immediate: true })
   onMounted(() => { if (auth.user.value && !sites.value.length) void load() })
-  return { ...auth, sites, selectedId, selected, loading, error, google, connectionReady, request, load, checkGoogle }
+  return { ...auth, sites, selectedId, selected, loading, error, google, connectionReady, bing, bingReady, bingError, request, load, checkGoogle, checkBing }
 }
 export function failureMessage(cause: unknown) {
   const error = cause as { data?: { error?: string; message?: string; statusMessage?: string }; message?: string }

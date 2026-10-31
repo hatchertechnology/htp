@@ -11,3 +11,6 @@ allow_dynamic_registration = true
 [functions.google-sync]
 # Cron authenticates with a separate secret checked inside the handler.
 verify_jwt = false
+
+[functions.bing-sync]
+verify_jwt = false

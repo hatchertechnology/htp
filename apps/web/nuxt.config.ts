@@ -13,6 +13,9 @@ export default defineNuxtConfig({
     googleClientId: '',
     googleClientSecret: '',
     googleCookieKey: '',
+    bingClientId: '',
+    bingClientSecret: '',
+    bingCookieKey: '',
     supabaseServiceRoleKey: '',
     public: {
       apiBaseUrl,

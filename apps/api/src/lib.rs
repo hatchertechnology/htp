@@ -2,6 +2,7 @@
 
 pub mod analytics;
 pub mod auth;
+mod bing;
 mod insights;
 mod mcp;
 mod oauth;
@@ -48,6 +49,7 @@ pub fn app_with_analytics(
             search::SearchClient::default(),
         ))
         .merge(insights::router(websites.clone()))
+        .merge(bing::router(websites.clone()))
         .merge(repositories::router(websites.clone()))
         .merge(websites::router(websites))
         .layer(middleware::from_fn_with_state(auth, auth::require_user));

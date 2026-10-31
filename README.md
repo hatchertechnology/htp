@@ -537,3 +537,16 @@ The secured MCP endpoint also supports browser OAuth sign-in. Add its URL in an
 agent's remote MCP settings, sign in to HTP when the browser opens, and approve
 access. Supabase handles PKCE and refresh tokens; manage grants under Connections
 → Authorized apps. See [browser authentication](docs/mcp-seo.md#browser-sign-in-recommended).
+
+## Bing Webmaster Tools
+
+Connect Bing under **Connections** for read-only search traffic, dated query/page
+statistics, crawl health, and sitemap reports in the website overview. The
+independent daily collector retains observations, supports saved-data access
+through MCP (`bing_sources` / `bing_snapshots`), and keeps reports readable after
+disconnection. Bing's reporting periods differ from Google's: only Bing's daily
+traffic rows use the overview date filter.
+
+See [Bing reporting setup](docs/bing-sync.md) for the migration, OAuth client,
+encrypted grant configuration, Edge Function and Vault/Cron rollout. The new
+feature requires that configuration before live reporting is available.

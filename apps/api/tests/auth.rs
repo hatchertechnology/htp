@@ -1082,7 +1082,13 @@ async fn mcp_research_discovers_websites_and_reads_all_saved_datasets() {
         1
     );
     assert_eq!(second["result"]["structuredContent"]["has_more"], false);
-    for dataset in ["sources", "snapshots", "profile_changes"] {
+    for dataset in [
+        "sources",
+        "snapshots",
+        "profile_changes",
+        "bing_sources",
+        "bing_snapshots",
+    ] {
         let args = json!({"fqdn":"WWW1.EXAMPLE.COM.","dataset":dataset,"limit":1});
         let response = research_mcp_call(&auth, Some(&token), "website_saved_data", args).await;
         assert_eq!(response.headers()["cache-control"], "no-store");
@@ -1107,7 +1113,7 @@ async fn mcp_research_discovers_websites_and_reads_all_saved_datasets() {
                 .await;
         assert_eq!(result["result"]["isError"], true);
     }
-    assert_eq!(hits.load(Ordering::SeqCst), 4);
+    assert_eq!(hits.load(Ordering::SeqCst), 6);
     let result = response_json(
         research_mcp_call(
             &auth,
@@ -1229,4 +1235,71 @@ async fn mcp_unauthorized_response_discovers_the_project_oauth_server() {
         assert_eq!(data["bearer_methods_supported"], json!(["header"]));
         assert!(!data.to_string().contains("attacker.invalid"));
     }
+}
+
+#[tokio::test]
+async fn bing_reports_use_only_owned_saved_data_and_preserve_pending_state() {
+    let fixture = WebsiteFixture::default();
+    fixture.0.lock().await.push(htp_shared::Website {
+        id: uuid::Uuid::from_u128(1),
+        fqdn: "example.com".into(),
+        ga4_property_id: None,
+    });
+    let hits = Arc::new(AtomicUsize::new(0));
+    let calls = hits.clone();
+    let saved = Router::new().route("/rest/v1/rpc/request_bing_report", axum::routing::post(
+        move |headers: axum::http::HeaderMap, Json(body): Json<Value>| {
+            let calls = calls.clone();
+            async move {
+                assert_eq!(headers["apikey"], "publishable-fixture-key");
+                assert!(headers["authorization"].to_str().unwrap().starts_with("Bearer "));
+                assert!(!headers.contains_key("x-bing-access-token"));
+                assert_eq!(body, json!({"p_website_id":"00000000-0000-0000-0000-000000000001"}));
+                let first = calls.fetch_add(1, Ordering::SeqCst) == 0;
+                Json(json!({"data": if first { Value::Null } else { json!({"site_url":"https://example.com/","sections":{"traffic":{"rows":[],"error":null}}}) },"sync":{"state":if first {"pending"} else {"ready"},"cadence":"daily"}}))
+            }
+        }
+    ));
+    let auth = TestAuth::with_routes(
+        Router::new()
+            .route("/rest/v1/websites", axum::routing::any(data_api_fixture))
+            .with_state(fixture)
+            .merge(saved),
+    )
+    .await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let path = "/websites/00000000-0000-0000-0000-000000000001/bing/dashboard";
+    assert_eq!(
+        analytics_request(&auth, path, None, None, json!({}))
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        analytics_request(
+            &auth,
+            path,
+            Some(&token),
+            None,
+            json!({"site_url":"https://other.com/"})
+        )
+        .await
+        .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let pending = analytics_request(&auth, path, Some(&token), None, json!({})).await;
+    assert_eq!(pending.status(), StatusCode::ACCEPTED);
+    assert_eq!(response_json(pending).await["code"], "report_pending");
+    let ready =
+        response_json(analytics_request(&auth, path, Some(&token), None, json!({})).await).await;
+    assert_eq!(ready["site_url"], "https://example.com/");
+    assert_eq!(ready["sync"]["cadence"], "daily");
+    let missing = "/websites/00000000-0000-0000-0000-000000000099/bing/dashboard";
+    assert_eq!(
+        analytics_request(&auth, missing, Some(&token), None, json!({}))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 2);
 }

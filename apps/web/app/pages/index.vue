@@ -66,10 +66,11 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); generation++; controller?.abort
     <div class="overview-heading"><div><h1>Website overview</h1><p>{{ ws.selected.value?.fqdn || 'A clearer view of your websites.' }}</p></div></div>
     <p v-if="ws.error.value" role="alert" class="form-error">{{ ws.error.value }} <button @click="ws.load">Try again</button></p>
     <nav class="report-navigation" aria-label="Website reports">
-      <a href="#combined-title">Combined timeline</a><a href="#search-heading">Search</a><a href="#onsite-heading">Visitors</a><a href="#conversions-title">Conversions &amp; revenue</a><a href="#health-title">PageSpeed &amp; Core Web Vitals</a><a href="#repository-title">Website changes</a><a v-if="businessProfileEnabled" href="#business-title">Business Profile &amp; changes</a>
+      <a href="#combined-title">Combined timeline</a><a href="#search-heading">Google Search</a><a href="#bing-heading">Bing</a><a href="#onsite-heading">Visitors</a><a href="#conversions-title">Conversions &amp; revenue</a><a href="#health-title">PageSpeed &amp; Core Web Vitals</a><a href="#repository-title">Website changes</a><a v-if="businessProfileEnabled" href="#business-title">Business Profile &amp; changes</a>
     </nav>
     <CombinedPerformance :search="searchSnapshot.report" :onsite="report" :search-loading="searchSnapshot.loading" :onsite-loading="busy" :search-error="searchSnapshot.error" :onsite-error="error" />
     <SearchDashboard @snapshot="searchSnapshot = $event" />
+    <BingDashboard />
     <div class="analytics-section-heading"><div><h2 id="onsite-heading">Onsite performance</h2><p>What visitors do after they arrive · Google Analytics</p></div><button v-if="report" class="refresh-control" :disabled="busy" @click="load()"><UIcon name="i-lucide-refresh-cw" /><span>Refresh analytics</span></button></div>
     <p v-if="error" role="alert" class="form-error">{{ error }} <button @click="load()">Try again</button><NuxtLink to="/connections">Manage connection</NuxtLink></p>
     <ReportSyncNotice :sync="sync" />
