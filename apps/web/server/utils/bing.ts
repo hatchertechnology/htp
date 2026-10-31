@@ -55,7 +55,7 @@ export async function finishBing(event: H3Event) {
     stage = 'refresh_token'
     if (typeof tokens.refresh_token !== 'string' || !tokens.refresh_token || tokens.refresh_token.length > 4096) throw new Error('invalid_grant')
     stage = 'read_scope'
-    const grantedScopes = (Array.isArray(tokens.scope) ? tokens.scope : typeof tokens.scope === 'string' ? tokens.scope.split(/[\s,]+/) : []).filter((value: unknown): value is string => typeof value === 'string').map((value: string) => value.toLowerCase())
+    const grantedScopes: string[] = (Array.isArray(tokens.scope) ? tokens.scope : typeof tokens.scope === 'string' ? tokens.scope.split(/[\s,]+/) : []).filter((value: unknown): value is string => typeof value === 'string').map((value: string) => value.toLowerCase())
     // Bing's live token endpoint returns 'Read' for webmaster.read consent.
     if (tokens.scope && !grantedScopes.some(value => value === 'webmaster.read' || value === 'read')) throw new Error('missing_scope')
     stage = 'save_connection'
