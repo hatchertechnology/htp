@@ -71,7 +71,7 @@ it('proxies saved data using the user identity without provider credentials and 
 
 it('accepts Bing read scopes as arrays or delimited strings and rejects unrelated scopes',async () => {
   cookie.mockReturnValue(seal({user:'owner',state:'a'.repeat(43),until:Date.now()+10000},key,'htp_bing_state'))
-  for (const scope of [['Webmaster.Read'],'Webmaster.Read,other.scope','webmaster.read other.scope']) {
+  for (const scope of ['Read',['Read'],['Webmaster.Read'],'Webmaster.Read,other.scope','webmaster.read other.scope']) {
     mocks.fetch.mockResolvedValue(Response.json({refresh_token:'private-refresh',scope}))
     await finishBing(event)
     expect(redirect).toHaveBeenLastCalledWith(event,'/connections?bing=connected')

@@ -56,11 +56,8 @@ export async function finishBing(event: H3Event) {
     if (typeof tokens.refresh_token !== 'string' || !tokens.refresh_token || tokens.refresh_token.length > 4096) throw new Error('invalid_grant')
     stage = 'read_scope'
     const grantedScopes = (Array.isArray(tokens.scope) ? tokens.scope : typeof tokens.scope === 'string' ? tokens.scope.split(/[\s,]+/) : []).filter((value: unknown): value is string => typeof value === 'string').map((value: string) => value.toLowerCase())
-    if (tokens.scope && !grantedScopes.includes('webmaster.read')) {
-      const scopeMetadata = typeof tokens.scope === 'string' && /^[a-z._\s,;:|-]{1,100}$/i.test(tokens.scope) ? tokens.scope : `format:${Array.isArray(tokens.scope) ? 'array' : typeof tokens.scope}`
-      console.error(`Bing OAuth scope metadata: ${scopeMetadata}`)
-      throw new Error('missing_scope')
-    }
+    // Bing's live token endpoint returns 'Read' for webmaster.read consent.
+    if (tokens.scope && !grantedScopes.some(value => value === 'webmaster.read' || value === 'read')) throw new Error('missing_scope')
     stage = 'save_connection'
     const { error } = await bingStore(event).from('bing_connections').upsert({
       owner_id: pending.user, generation: randomUUID(), status: 'connected', updated_at: new Date().toISOString(),

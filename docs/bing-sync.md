@@ -1,7 +1,8 @@
 # Bing Webmaster reporting
 
 Hatch connects a user's Bing Webmaster account with the `webmaster.read` OAuth
-scope. It reads reports only: no URL submission, IndexNow, sitemap edits, crawl
+scope. Bing's live token response names this granted permission `Read`; Hatch
+accepts that equivalent spelling and the qualified scope name. It reads reports only: no URL submission, IndexNow, sitemap edits, crawl
 configuration changes, site registration, or verification writes are performed.
 
 ## Data and dashboard
