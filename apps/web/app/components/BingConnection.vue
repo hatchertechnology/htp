@@ -27,7 +27,7 @@ async function disconnect() {
     <p v-if="!bing.configured" class="form-notice">Bing connections are not configured yet. Contact the workspace administrator.</p>
     <UButton v-if="!bing.connected || bing.reauthorizationRequired" :loading="busy" :disabled="!ws.user.value || !bingReady || !bing.configured || !!bingError" icon="i-lucide-link" @click="connect">{{ bing.reauthorizationRequired ? 'Reconnect Bing' : 'Connect Bing' }}</UButton>
     <UButton v-if="bing.connected" :loading="busy" color="neutral" variant="outline" @click="disconnect">Disconnect Bing</UButton>
-    <div class="connection-notes"><p>Read-only access. Reports collect daily, including while you are signed out. Bing may update query and page statistics weekly.</p><p>Hatch matches verified root properties to the exact website hostname and prefers HTTPS. Add and verify each website in Bing Webmaster Tools first.</p><p>Your connection is encrypted. Disconnecting stops updates across all devices and keeps saved reports available.</p></div>
+    <div class="connection-notes"><p>Read-only access. Reports collect daily, including while you are signed out. Bing may update query and page statistics weekly.</p><p>Hatch matches verified root properties, including Bing’s www aliases. Exact hostnames are preferred, then HTTPS. Add and verify each website in Bing Webmaster Tools first.</p><p>Your connection is encrypted. Disconnecting stops updates across all devices and keeps saved reports available.</p></div>
   </section>
 </template>
 <style scoped>.bing-connection { margin-top: 1.5rem; }</style>

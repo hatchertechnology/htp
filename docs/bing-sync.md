@@ -7,9 +7,11 @@ configuration changes, site registration, or verification writes are performed.
 ## Data and dashboard
 
 The independent `bing-sync` Edge Function discovers verified root properties for
-each owned website using `GetUserSites`. Matching requires the exact hostname;
-`example.com` and `www.example.com` are separate. HTTPS wins over HTTP, with URL
-order breaking ties. Subdirectory properties are excluded because they do not
+each owned website using `GetUserSites`. Matching prefers the exact hostname, then accepts the same root with or without
+`www` because Bing canonicalizes these aliases into one registered property.
+Other subdomains are excluded. Exact hostnames win, then HTTPS, then URL order.
+Reports retain the selected Bing property URL and may combine hostname variants;
+they are not labeled as exact-hostname analytics. Subdirectory properties are excluded because they do not
 represent the whole website. Only property URL and verified state are saved;
 verification codes from discovery are omitted. No matching property is saved as
 an explicit successful discovery observation and checked again the next day.

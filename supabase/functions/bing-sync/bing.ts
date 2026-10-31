@@ -58,8 +58,11 @@ export function validSite(site: unknown, host: string): site is string {
   if (typeof site !== "string" || site.length > 2048) return false;
   try {
     const u = new URL(site);
-    // Root properties only: a subdirectory must not masquerade as a full site.
-    return ["http:", "https:"].includes(u.protocol) && u.hostname === host &&
+    // Bing canonicalizes www aliases to one root property. Other subdomains
+    // and subdirectory properties must not masquerade as this website.
+    const canonical = (name: string) => name.replace(/^www\./, "");
+    return ["http:", "https:"].includes(u.protocol) &&
+      canonical(u.hostname) === canonical(host) &&
       !u.username && !u.password && !u.port && !u.search && !u.hash &&
       u.pathname === "/";
   } catch {
@@ -117,6 +120,8 @@ export async function fetchReport(job: Job, access: string, fetcher = fetch) {
     .filter((row) => row.IsVerified === true && validSite(row.Url, job.fqdn))
     .map((row) => ({ Url: row.Url as string, IsVerified: true }))
     .sort((a, b) =>
+      Number(new URL(b.Url).hostname === job.fqdn) -
+        Number(new URL(a.Url).hostname === job.fqdn) ||
       Number(b.Url.startsWith("https:")) - Number(a.Url.startsWith("https:")) ||
       a.Url.localeCompare(b.Url)
     );

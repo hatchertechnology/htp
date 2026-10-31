@@ -265,3 +265,32 @@ Deno.test("failed refresh-token fencing discards work without saving a stale rep
   assert.equal(result.discarded, 1);
   assert(!calls.includes("complete_bing_report"));
 });
+
+Deno.test("Bing www aliases match the registered root, with exact hostnames preferred", async () => {
+  assert.equal(validSite("http://example.com/", "www.example.com"), true);
+  assert.equal(validSite("https://www.example.com/", "example.com"), true);
+  assert.equal(
+    validSite("https://other.example.com/", "www.example.com"),
+    false,
+  );
+  let selected = "";
+  const report = await fetchReport(
+    { ...job, fqdn: "www.example.com" },
+    "access",
+    async (input) => {
+      const u = new URL(String(input));
+      if (u.pathname.endsWith("GetUserSites")) {
+        return Response.json({
+          d: [{ Url: "https://example.com/", IsVerified: true }, {
+            Url: "http://www.example.com/",
+            IsVerified: true,
+          }],
+        });
+      }
+      selected = u.searchParams.get("siteUrl")!;
+      return Response.json({ d: [] });
+    },
+  );
+  assert.equal(selected, "http://www.example.com/");
+  assert.equal(report.site_url, selected);
+});

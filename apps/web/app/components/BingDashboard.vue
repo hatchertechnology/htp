@@ -60,7 +60,7 @@ onBeforeUnmount(() => { generation++; controller?.abort(); clearTimeout(timer) }
     <div v-if="!report?.site_url" class="report-panel chart-empty" aria-live="polite">
       <UIcon :name="busy ? 'i-lucide-loader-circle' : 'i-lucide-search'" :class="{ 'loading-spin': busy }" />
       <h3>{{ !ws.user.value ? 'Sign in to see Bing reports.' : !ws.selected.value ? 'Select a website for Bing reports.' : busy ? 'Reading saved Bing data…' : error ? 'Bing data could not load.' : sync?.last_error ? 'The latest Bing collection failed.' : sync?.connection_status === 'reauthorization_required' ? 'Reconnect Bing to resume collection.' : !sync?.connection_status || sync.connection_status === 'disconnected' ? 'Connect Bing to start collecting data.' : report ? 'No matching verified Bing website.' : 'Waiting for the first Bing sync.' }}</h3>
-      <p v-if="report && sync?.connection_status === 'connected'">Verify this exact hostname in Bing Webmaster Tools. Hatch checks for matching root properties daily.</p>
+      <p v-if="report && sync?.connection_status === 'connected'">Verify this website in Bing Webmaster Tools. Bing may list www and non-www variants under one root property. Hatch checks for matching properties daily.</p>
       <p v-else>Daily reports remain available after disconnecting. The first collection starts after you connect.</p>
       <UButton to="/connections" color="neutral" variant="outline">Manage Bing connection</UButton>
     </div>
@@ -73,7 +73,7 @@ onBeforeUnmount(() => { generation++; controller?.abort(); clearTimeout(timer) }
         </section>
         <div class="summary-stack" aria-label="Bing traffic summary"><div v-for="item in metrics" :key="item.label" class="summary-panel"><UIcon :name="item.icon" /><div><span>{{ item.label }}</span><strong>{{ traffic.length ? item.value : '—' }}</strong></div></div></div>
       </div>
-      <p class="report-caption">Bing traffic combines search surfaces, including web, chat, images, news, and video.<span>Chart and totals use returned daily rows within the selected dates, preserving Bing’s calendar dates. Google’s web-search totals cover a different scope.</span></p>
+      <p class="report-caption">Bing traffic combines search surfaces, including web, chat, images, news, and video. Reports cover the Bing property shown above; hostname variants may be combined.<span>Chart and totals use returned daily rows within the selected dates, preserving Bing’s calendar dates. Google’s web-search totals cover a different scope.</span></p>
       <div class="search-rankings">
         <section v-for="table in tables" :key="table.key" class="report-panel search-table"><header><h3>{{ table.title }}</h3></header>
           <p class="report-caption">Latest Bing report · may refresh weekly · independent of the date filter. Up to 20 rows, newest dates first. Position is the average impression position.</p>
