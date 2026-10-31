@@ -55,7 +55,8 @@ export async function finishBing(event: H3Event) {
     stage = 'refresh_token'
     if (typeof tokens.refresh_token !== 'string' || !tokens.refresh_token || tokens.refresh_token.length > 4096) throw new Error('invalid_grant')
     stage = 'read_scope'
-    if (tokens.scope && (typeof tokens.scope !== 'string' || !tokens.scope.toLowerCase().split(' ').includes('webmaster.read'))) throw new Error('missing_scope')
+    const grantedScopes = (Array.isArray(tokens.scope) ? tokens.scope : typeof tokens.scope === 'string' ? tokens.scope.split(/[\s,]+/) : []).filter((value: unknown): value is string => typeof value === 'string').map((value: string) => value.toLowerCase())
+    if (tokens.scope && !grantedScopes.includes('webmaster.read')) throw new Error('missing_scope')
     stage = 'save_connection'
     const { error } = await bingStore(event).from('bing_connections').upsert({
       owner_id: pending.user, generation: randomUUID(), status: 'connected', updated_at: new Date().toISOString(),
