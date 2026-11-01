@@ -27,6 +27,17 @@ test('indexed inspection observations are append-only, bounded and owner/hostnam
     await assert.rejects(()=>db.query('select * from public.search_inspection_observations'),/permission denied/)
     await assert.rejects(()=>db.query("update public.search_inspection_observations set data='{}'"),/permission denied/)
     await assert.rejects(()=>db.query('delete from public.search_inspection_observations'),/permission denied/)
+    // Incompressible long paths used to overflow the composite B-tree tuple.
+    const { createHash } = await import('node:crypto')
+    const longPath = Array.from({length: 28}, (_, i) => createHash('sha256').update(String(i)).digest('hex')).join('')
+    const longProperty = `https://example.com/${longPath}/`
+    const longUrl = `${longProperty}child`
+    const longSaved = await save('example.com', longProperty, longUrl)
+    const longHistory = (await db.query('select public.search_inspection_history($1,$2,$3,null) as data', [site,longProperty,longUrl])).rows[0].data
+    assert.equal(longHistory.observations[0].id, longSaved.id)
+    assert.equal(longHistory.observations[0].url, longUrl)
+    const differentUrl = (await db.query('select public.search_inspection_history($1,$2,$3,null) as data', [site,longProperty,`${longProperty}other`])).rows[0].data
+    assert.equal(differentUrl.observations.length, 0)
     const first=await save(); const second=await save()
     assert.ok(second.id>first.id)
     assert.equal(first.provenance,'owner_submitted_indexed_inspection')

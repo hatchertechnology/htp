@@ -131,19 +131,30 @@ fn valid_property(site: &str, fqdn: &str) -> bool {
             && site.ends_with('/')
     })
 }
-fn valid_url(value: &str, site: &str, fqdn: &str) -> bool {
-    if value.len() > 2048 || !valid_property(site, fqdn) {
-        return false;
+fn normalized_inspection(value: &str, site: &str, fqdn: &str) -> Option<(String, String)> {
+    if value.len() > 2048 || site.len() > 2048 || !valid_property(site, fqdn) {
+        return None;
     }
-    reqwest::Url::parse(value).is_ok_and(|u| {
-        matches!(u.scheme(), "http" | "https")
-            && u.host_str() == Some(fqdn)
-            && u.username().is_empty()
-            && u.password().is_none()
-            && u.port().is_none()
-            && u.fragment().is_none()
-            && (site.starts_with("sc-domain:") || u.as_str().starts_with(site))
-    })
+    // Use the same parsed representation for provider requests, persistence and
+    // history keys. URL parsing lowercases hosts and removes default ports.
+    let site = if site.starts_with("sc-domain:") {
+        site.to_owned()
+    } else {
+        reqwest::Url::parse(site).ok()?.to_string()
+    };
+    let u = reqwest::Url::parse(value).ok()?;
+    (matches!(u.scheme(), "http" | "https")
+        && u.host_str() == Some(fqdn)
+        && u.username().is_empty()
+        && u.password().is_none()
+        && u.port().is_none()
+        && u.fragment().is_none()
+        && (site.starts_with("sc-domain:") || u.as_str().starts_with(&site)))
+    .then(|| (u.to_string(), site))
+}
+#[cfg(test)]
+fn valid_url(value: &str, site: &str, fqdn: &str) -> bool {
+    normalized_inspection(value, site, fqdn).is_some()
 }
 fn token(headers: &HeaderMap) -> Result<&str, SearchError> {
     let values = headers.get_all("x-google-access-token");
@@ -234,19 +245,18 @@ async fn inspect(
         .find(id, &headers)
         .await
         .map_err(SearchError::Website)?;
-    if !valid_url(&input.url, &input.site_url, &website.fqdn) {
-        return Err(SearchError::Invalid(
-            "Enter a URL on this website within the selected property, without a fragment.",
-        ));
-    }
+    let (inspection_url, site_url) =
+        normalized_inspection(&input.url, &input.site_url, &website.fqdn).ok_or(
+            SearchError::Invalid(
+                "Enter a URL on this website within the selected property, without a fragment.",
+            ),
+        )?;
     let data = google
         .send(
             token(&headers)?,
             reqwest::Method::POST,
             url(&google.inspection, "/v1/urlInspection/index:inspect")?,
-            Some(
-                json!({"inspectionUrl":input.url,"siteUrl":input.site_url,"languageCode":"en-US"}),
-            ),
+            Some(json!({"inspectionUrl":inspection_url,"siteUrl":site_url,"languageCode":"en-US"})),
         )
         .await?;
     if !data["inspectionResult"].is_object() {
@@ -258,7 +268,7 @@ async fn inspect(
             "save_search_inspection",
             json!({
                 "p_website_id": id, "p_fqdn": website.fqdn,
-                "p_site_url": input.site_url, "p_url": input.url, "p_data": data
+                "p_site_url": site_url, "p_url": inspection_url, "p_data": data
             }),
         )
         .await
@@ -284,9 +294,11 @@ async fn inspection_history(
         .find(id, &headers)
         .await
         .map_err(SearchError::Website)?;
-    if !valid_url(&input.url, &input.site_url, &website.fqdn)
-        || input.before_id.is_some_and(|id| id <= 0)
-    {
+    let (inspection_url, site_url) =
+        normalized_inspection(&input.url, &input.site_url, &website.fqdn).ok_or(
+            SearchError::Invalid("Choose a URL within this website and a valid history cursor."),
+        )?;
+    if input.before_id.is_some_and(|id| id <= 0) {
         return Err(SearchError::Invalid(
             "Choose a URL within this website and a valid history cursor.",
         ));
@@ -296,8 +308,8 @@ async fn inspection_history(
             &headers,
             "search_inspection_history",
             json!({
-                "p_website_id": id, "p_site_url": input.site_url,
-                "p_url": input.url, "p_before_id": input.before_id
+                "p_website_id": id, "p_site_url": site_url,
+                "p_url": inspection_url, "p_before_id": input.before_id
             }),
         )
         .await
@@ -489,6 +501,19 @@ mod tests {
                 .status(),
             StatusCode::OK
         );
+        let normalized = json!({"site_url":"https://EXAMPLE.com:443/jobs/", "url":"https://EXAMPLE.com:443/jobs/1"});
+        assert_eq!(
+            call(app.clone(), "inspect", normalized.clone())
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            call(app.clone(), "inspection-history", normalized)
+                .await
+                .status(),
+            StatusCode::OK
+        );
         let mut other = base;
         other["url"] = json!("https://other.com/jobs/1");
         assert_eq!(
@@ -522,6 +547,21 @@ mod tests {
                 .any(|r| r.1 == "/rest/v1/rpc/save_search_inspection"
                     && r.2["p_fqdn"] == "example.com"
                     && r.2["p_data"]["inspectionResult"]["indexStatusResult"]["verdict"] == "PASS")
+        );
+        for path in [
+            "/rest/v1/rpc/save_search_inspection",
+            "/rest/v1/rpc/search_inspection_history",
+        ] {
+            assert!(requests.iter().any(|r| r.1 == path
+                && r.2["p_site_url"] == "https://example.com/jobs/"
+                && r.2["p_url"] == "https://example.com/jobs/1"));
+        }
+        assert!(
+            requests
+                .iter()
+                .any(|r| r.1 == "/v1/urlInspection/index:inspect"
+                    && r.2["siteUrl"] == "https://example.com/jobs/"
+                    && r.2["inspectionUrl"] == "https://example.com/jobs/1")
         );
         server.abort();
     }

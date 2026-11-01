@@ -11,7 +11,10 @@ create table public.search_inspection_observations (
   provenance text not null default 'owner_submitted_indexed_inspection',
   data jsonb not null check (jsonb_typeof(data->'inspectionResult')='object')
 );
-create index search_inspection_observations_history on public.search_inspection_observations(website_id,fqdn,site_url,url,id desc);
+-- Keep potentially 2,048-character property/URL values out of B-tree tuples.
+-- Exact source predicates below still isolate records; this index supplies the
+-- website/hostname scope and descending cursor order without tuple-size failures.
+create index search_inspection_observations_history on public.search_inspection_observations(website_id,fqdn,id desc);
 alter table public.search_inspection_observations enable row level security;
 revoke all on public.search_inspection_observations from public,anon,authenticated;
 revoke all on sequence public.search_inspection_observations_id_seq from public,anon,authenticated;
