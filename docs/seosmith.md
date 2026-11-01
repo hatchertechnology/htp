@@ -185,7 +185,7 @@ and after test cleanup; no historical audit documents were rewritten.
 
 ### Crawl policy exclusions and finding resolution
 
-The follow-up migration `20261101055407_seosmith_policy_exclusions.sql` corrects
+The follow-up migration `20261101060006_seosmith_policy_exclusions.sql` corrects
 PR #4's P2 review finding. It treats deliberately unfetched navigation as outside
 the configured frontier when external link checking is disabled, rel contains
 nofollow/sponsored/UGC, a document has robots nofollow/none, or the source is
@@ -208,3 +208,15 @@ remain comparable.
 Summary version 3 is cached for new reports. History and detail reads recalculate
 older cached summaries without altering reports, raw bytes, digests or immutable
 rows. The comparison key and engine/ruleset compatibility rules are unchanged.
+
+Deployed the policy correction on 2026-11-01: frontend application commit
+`67e993e` (`deployment-01M6AV0GDXS289K6EPCT29YDRX`) was deployed and healthy before
+applying the policy migration. Supabase recorded migration version
+`20261101060006`, matching the local filename. No Rust API changes were needed.
+All 106 frontend tests and 9 PGlite integration tests passed; frontend typecheck
+and production build passed. Live tests confirmed that version-2 cached reports
+become comparable through version-3 summaries without changing their bytes, a
+corrected title resolves, and an unchecked external target remains unverified.
+External checking enabled, unexpected missing targets, resource limits and
+truncation still prevent comparisons. The isolated test website and its six
+reports were removed after verification.

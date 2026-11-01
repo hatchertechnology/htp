@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { PGlite } from '@electric-sql/pglite'
 const fixture=JSON.parse(await readFile(new URL('fixtures/seosmith-expanded.json',import.meta.url),'utf8'))
-const migration='20261101055407_seosmith_policy_exclusions.sql'
+const migration='20261101060006_seosmith_policy_exclusions.sql'
 test('crawl policy exclusions preserve configured coverage without losing target uncertainty or immutable history',async()=>{
  const db=new PGlite()
  try {
