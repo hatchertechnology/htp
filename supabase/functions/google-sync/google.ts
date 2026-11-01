@@ -1,3 +1,5 @@
+import { analyzeSearch } from "./search-analysis.ts";
+
 // Raw provider metadata is deliberately preserved alongside the known fields.
 // deno-lint-ignore no-explicit-any
 export type Json = Record<string, any>;
@@ -134,51 +136,180 @@ export async function fetchReport(
     if (!validProperty(job.property_id, job.fqdn)) {
       throw new SyncError("invalid_report");
     }
-    const shapes: [string[], number][] = [[[], 1], [["date"], 366], [
-      ["query"],
-      10,
-    ], [["page"], 10]];
-    const reports = await Promise.all(
-      shapes.map(([dimensions, rowLimit]) =>
-        google(
-          `https://www.googleapis.com/webmasters/v3/sites/${
-            encodeURIComponent(job.property_id)
-          }/searchAnalytics/query`,
-          {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              startDate: job.start_date,
-              endDate: job.end_date,
-              dimensions,
-              rowLimit,
-              type: "web",
-              dataState: "final",
-              dimensionFilterGroups: [{
-                filters: [{
-                  dimension: "page",
-                  operator: "includingRegex",
-                  expression: `^https?://${
-                    job.fqdn.replace(/\./g, "\\.")
-                  }(:[0-9]+)?/`,
-                }],
-              }],
-            }),
-          },
-          fetcher,
-        )
-      ),
-    );
-    return {
+    const deadline = AbortSignal.timeout(55_000);
+    const boundedFetcher: typeof fetch = (url, options) =>
+      fetcher(url, {
+        ...options,
+        signal: options?.signal
+          ? AbortSignal.any([deadline, options.signal])
+          : deadline,
+      });
+    // Keep totals separate: query dimensions omit anonymized queries and the
+    // provider only exposes top rows, even when pagination reaches its end.
+    const shapes: [string, string[], number][] = [
+      ["summary", [], 1],
+      ["daily", ["date"], 366],
+      ["queries", ["query"], 5000],
+      ["pages", ["page"], 5000],
+      ["query_pages", ["query", "page"], 5000],
+      ["devices", ["device"], 10],
+      ["countries", ["country"], 300],
+    ];
+    const collect = async (
+      startDate: string,
+      endDate: string,
+      selectedShapes = shapes,
+    ) =>
+      Object.fromEntries(
+        await Promise.all(
+          selectedShapes.map(async ([name, dimensions, limit]) => {
+            const rows: Json[] = [];
+            let requests = 0;
+            let exhausted = false;
+            let first: Json = {};
+            while (rows.length < limit) {
+              const rowLimit = Math.min(1000, limit - rows.length);
+              const result = await google(
+                `https://www.googleapis.com/webmasters/v3/sites/${
+                  encodeURIComponent(job.property_id)
+                }/searchAnalytics/query`,
+                {
+                  method: "POST",
+                  headers,
+                  body: JSON.stringify({
+                    startDate,
+                    endDate,
+                    dimensions,
+                    rowLimit,
+                    startRow: rows.length,
+                    type: "web",
+                    dataState: "final",
+                    dimensionFilterGroups: [{
+                      filters: [{
+                        dimension: "page",
+                        operator: "includingRegex",
+                        expression: `^https?://${
+                          job.fqdn.replace(/\./g, "\\.")
+                        }(:[0-9]+)?/`,
+                      }],
+                    }],
+                  }),
+                },
+                boundedFetcher,
+              );
+              requests++;
+              if (requests === 1) first = result;
+              if (result.rows !== undefined && !Array.isArray(result.rows)) {
+                throw new SyncError("google_unavailable");
+              }
+              const batch: Json[] = result.rows ?? [];
+              if (batch.length > rowLimit) {
+                throw new SyncError("google_unavailable");
+              }
+              rows.push(...batch);
+              if (batch.length < rowLimit) {
+                exhausted = true;
+                break;
+              }
+            }
+            return [name, {
+              ...first,
+              rows,
+              collection: {
+                dimensions,
+                row_limit: limit,
+                page_size: Math.min(1000, limit),
+                requests,
+                returned_rows: rows.length,
+                truncated: !exhausted && dimensions.length > 0,
+                coverage: "bounded_top_rows",
+                anonymized_queries: dimensions.includes("query")
+                  ? "excluded"
+                  : "not_applicable",
+                data_state: "final",
+              },
+            }] as const;
+          }),
+        ),
+      );
+    const start = Date.parse(`${job.start_date}T00:00:00Z`);
+    const end = Date.parse(`${job.end_date}T00:00:00Z`);
+    const day = 86_400_000;
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(job.start_date) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(job.end_date) ||
+      !Number.isFinite(start) || !Number.isFinite(end) || end < start ||
+      new Date(start).toISOString().slice(0, 10) !== job.start_date ||
+      new Date(end).toISOString().slice(0, 10) !== job.end_date
+    ) {
+      throw new SyncError("invalid_report");
+    }
+    const previousStart = new Date(start - (end - start + day)).toISOString()
+      .slice(0, 10);
+    const previousEnd = new Date(start - day).toISOString().slice(0, 10);
+    const [datasets, previousDatasets] = await Promise.all([
+      collect(job.start_date, job.end_date),
+      collect(
+        previousStart,
+        previousEnd,
+        shapes.filter(([name]) => ["summary", "daily", "pages"].includes(name)),
+      ).catch(() => ({
+        summary: { collection: { truncated: true } },
+        daily: { rows: [] },
+        pages: { rows: [], collection: { truncated: true } },
+        unavailable: true,
+        reason: "previous_period_unavailable",
+      })),
+    ]);
+    const latestDate = (data: Json) =>
+      data.daily.rows.flatMap((row: Json) =>
+        typeof row.keys?.[0] === "string" &&
+          /^\d{4}-\d{2}-\d{2}$/.test(row.keys[0])
+          ? [row.keys[0]]
+          : []
+      ).sort().at(-1) ?? null;
+    const report: Json = {
       site_url: job.property_id,
       start_date: job.start_date,
       end_date: job.end_date,
-      summary: reports[0],
-      daily: reports[1],
-      queries: reports[2],
-      pages: reports[3],
+      ...datasets,
+      previous_period: {
+        site_url: job.property_id,
+        start_date: previousStart,
+        end_date: previousEnd,
+        ...previousDatasets,
+        measurement: {
+          version: 1,
+          source: "google_search_console",
+          search_type: "web",
+          data_state: "final",
+          date_timezone: "America/Los_Angeles",
+          filters: { hostname: job.fqdn },
+          provider_completeness: "not_guaranteed",
+          latest_observed_date: latestDate(previousDatasets),
+          observed_at: new Date().toISOString(),
+          anonymized_queries: "excluded_from_query_dimensions",
+        },
+      },
+      measurement: {
+        version: 1,
+        source: "google_search_console",
+        search_type: "web",
+        data_state: "final",
+        date_timezone: "America/Los_Angeles",
+        observed_at: new Date().toISOString(),
+        latest_observed_date: latestDate(datasets),
+        provider_completeness: "not_guaranteed",
+        anonymized_queries: "excluded_from_query_dimensions",
+        filters: { hostname: job.fqdn },
+      },
+    };
+    return {
+      ...report,
+      analysis: analyzeSearch(report, report.previous_period),
     };
   }
+
   if (!/^[1-9][0-9]{0,19}$/.test(job.property_id)) {
     throw new SyncError("invalid_report");
   }
@@ -272,7 +403,18 @@ export async function fetchReport(
   if (reports.some((r) => !r || !Array.isArray(r.metricHeaders))) {
     throw new SyncError("google_unavailable");
   }
-  return {
+  const result: Json = {
+    start_date: job.start_date,
+    end_date: job.end_date,
+    property_id: job.property_id,
+    fqdn: job.fqdn,
+    measurement: {
+      version: 1,
+      source: "google_analytics",
+      observed_at: new Date().toISOString(),
+      filters: { hostname: job.fqdn },
+      provider_completeness: "not_guaranteed",
+    },
     summary: reports[0],
     daily: reports[1],
     pages: reports[2],
@@ -281,4 +423,12 @@ export async function fetchReport(
       ? { events: reports[4] }
       : { devices: reports[4] }),
   };
+  if (job.kind === "conversions") {
+    result.analysis = {
+      version: 1,
+      landing_outcomes:
+        analyzeSearch(result, undefined, result).landing_outcomes,
+    };
+  }
+  return result;
 }

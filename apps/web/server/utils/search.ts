@@ -1,7 +1,7 @@
 import type { H3Event } from 'h3'
 import { googleAccessToken, requireDashboardUser } from './google'
 
-export async function proxySearch(event: H3Event, action: 'properties' | 'dashboard' | 'inspect') {
+export async function proxySearch(event: H3Event, action: 'properties' | 'dashboard' | 'inspect' | 'inspection-history') {
   const user = await requireDashboardUser(event)
   const id = getRouterParam(event, 'id')
   if (!id || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) throw createError({ statusCode: 400, message: 'Choose a valid website.' })
