@@ -18,6 +18,7 @@ export default defineNuxtConfig({
     bingCookieKey: '',
     supabaseServiceRoleKey: '',
     public: {
+      pagePerformanceSamples: false,
       apiBaseUrl,
       supabaseUrl: 'https://raxuvdbdfmmtpqjcafcq.supabase.co',
       // Publishable client key; never a service-role key or signing secret.

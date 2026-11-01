@@ -326,3 +326,12 @@ h1{font-size:30px} h2{font-size:21px} .desk-rail{flex-wrap:wrap;gap:10px;padding
 @media (max-width: 650px) { .seo-filters { grid-template-columns: 1fr; } .seo-trend-panel header { align-items: start; flex-wrap: wrap; } .seo-trend-panel, .seo-findings { padding: 16px; } .seo-pagination { flex-wrap: wrap; } }
 .seo-pages td { max-width: 360px; overflow-wrap: anywhere; vertical-align: top; }
 .seosmith-section .refresh-control { font-size: 12px; min-height: 44px; }
+
+.performance-sampling { display: grid; gap: 12px; margin: 20px 0; }
+.performance-sampling select { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sample-url label { display: block; margin-bottom: 8px; font-size: 14px; }
+.sample-url > div { display: flex; gap: 12px; flex-wrap: wrap; }
+.sample-url input { flex: 1 1 260px; min-width: 0; min-height: 42px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--ui-bg); color: var(--ink); }
+.performance-environment { max-height: 240px; overflow: auto; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.performance-sampling + .health-layout .report-caption { overflow-wrap: anywhere; }
+@media (max-width: 650px) { .performance-sampling .insight-control { display: grid; } .performance-sampling select { width: 100%; } }

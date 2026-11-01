@@ -559,3 +559,7 @@ time, and provides searchable findings and checked URLs. Complete runs with
 matching settings support finding-change comparisons.
 See [Seosmith ingestion and history](docs/seosmith.md) for API, access controls,
 migrations, worker provisioning and verification.
+
+## Priority-page performance investigation
+
+Site health can sample priority URLs using the existing daily PageSpeed and CrUX collectors, with explicit URL/origin scope, lab/field evidence, and device-specific history. The sample UI is disabled until the coordinated rollout is complete. See [contracts, bounds and rollout](docs/page-performance.md).
