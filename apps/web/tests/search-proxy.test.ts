@@ -37,3 +37,9 @@ it('rejects route injection and missing consent before contacting the API', asyn
   await expect(proxySearch(event, 'inspect')).rejects.toMatchObject({ statusCode: 403 })
   expect(mocks.raw).not.toHaveBeenCalled()
 })
+
+it('reads retained inspection history using only the owner session', async () => {
+  await proxySearch(event, 'inspection-history')
+  expect(mocks.token).not.toHaveBeenCalled()
+  expect(mocks.raw).toHaveBeenCalledWith(`https://api.example/websites/${id}/search/inspection-history`, expect.objectContaining({ headers: { Authorization: 'Bearer app-token' } }))
+})

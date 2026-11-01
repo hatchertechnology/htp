@@ -162,6 +162,10 @@ pub(crate) fn router(store: WebsiteStore, client: SearchClient) -> Router {
         .route("/websites/{id}/search/properties", post(properties))
         .route("/websites/{id}/search/dashboard", post(dashboard))
         .route("/websites/{id}/search/inspect", post(inspect))
+        .route(
+            "/websites/{id}/search/inspection-history",
+            post(inspection_history),
+        )
         .with_state((store, client))
 }
 async fn properties(
@@ -235,7 +239,7 @@ async fn inspect(
             "Enter a URL on this website within the selected property, without a fragment.",
         ));
     }
-    google
+    let data = google
         .send(
             token(&headers)?,
             reqwest::Method::POST,
@@ -244,8 +248,61 @@ async fn inspect(
                 json!({"inspectionUrl":input.url,"siteUrl":input.site_url,"languageCode":"en-US"}),
             ),
         )
+        .await?;
+    if !data["inspectionResult"].is_object() {
+        return Err(SearchError::Upstream);
+    }
+    let saved = store
+        .rpc(
+            &headers,
+            "save_search_inspection",
+            json!({
+                "p_website_id": id, "p_fqdn": website.fqdn,
+                "p_site_url": input.site_url, "p_url": input.url, "p_data": data
+            }),
+        )
+        .await
+        .map_err(SearchError::Website)?;
+    let mut result = data;
+    result["saved_observation"] = saved;
+    Ok(Json(result))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InspectionHistoryInput {
+    site_url: String,
+    url: String,
+    before_id: Option<i64>,
+}
+async fn inspection_history(
+    State((store, _)): State<(WebsiteStore, SearchClient)>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(input): Json<InspectionHistoryInput>,
+) -> Result<Json<Value>, SearchError> {
+    let website = store
+        .find(id, &headers)
+        .await
+        .map_err(SearchError::Website)?;
+    if !valid_url(&input.url, &input.site_url, &website.fqdn)
+        || input.before_id.is_some_and(|id| id <= 0)
+    {
+        return Err(SearchError::Invalid(
+            "Choose a URL within this website and a valid history cursor.",
+        ));
+    }
+    store
+        .rpc(
+            &headers,
+            "search_inspection_history",
+            json!({
+                "p_website_id": id, "p_site_url": input.site_url,
+                "p_url": input.url, "p_before_id": input.before_id
+            }),
+        )
         .await
         .map(Json)
+        .map_err(SearchError::Website)
 }
 enum SearchError {
     Invalid(&'static str),
@@ -366,6 +423,15 @@ mod tests {
                     if input["p_kind"] == "properties" { return Json(json!({"data":{"properties":[{"siteUrl":"sc-domain:example.com","permissionLevel":"siteOwner"}]},"sync":{"state":"ready"}})); }
                     return Json(json!({"data":{"site_url":input["p_property_id"],"summary":{"rows":[{"clicks":12}]},"daily":{},"queries":{},"pages":{}},"sync":{"state":"ready"}}));
                 }
+                if uri.path() == "/rest/v1/rpc/save_search_inspection" {
+                    assert_eq!(headers["authorization"], "Bearer owner-token");
+                    assert!(headers.get("x-google-access-token").is_none());
+                    return Json(json!({"id":1,"observed_at":"2026-11-01T00:00:00Z"}));
+                }
+                if uri.path() == "/rest/v1/rpc/search_inspection_history" {
+                    assert_eq!(headers["authorization"], "Bearer owner-token");
+                    return Json(json!({"observations":[],"has_more":false}));
+                }
                 assert_eq!(headers["authorization"], "Bearer google-token");
                 if uri.path().ends_with("/sites") { return Json(json!({"siteEntry":[{"siteUrl":"sc-domain:example.com","permissionLevel":"siteOwner"},{"siteUrl":"https://other.com/","permissionLevel":"siteOwner"},{"siteUrl":"https://example.com/","permissionLevel":"siteUnverifiedUser"}]})); }
                 if uri.path().ends_with("/query") { return Json(json!({"rows":[{"clicks":12,"impressions":100,"ctr":0.12,"position":3.5}]})); }
@@ -417,6 +483,12 @@ mod tests {
             call(app.clone(), "inspect", base.clone()).await.status(),
             StatusCode::OK
         );
+        assert_eq!(
+            call(app.clone(), "inspection-history", base.clone())
+                .await
+                .status(),
+            StatusCode::OK
+        );
         let mut other = base;
         other["url"] = json!("https://other.com/jobs/1");
         assert_eq!(
@@ -444,6 +516,13 @@ mod tests {
         assert!(requests.iter().any(|r| r.0 == "POST"
             && r.1 == "/v1/urlInspection/index:inspect"
             && r.2["inspectionUrl"] == "https://example.com/jobs/1"));
+        assert!(
+            requests
+                .iter()
+                .any(|r| r.1 == "/rest/v1/rpc/save_search_inspection"
+                    && r.2["p_fqdn"] == "example.com"
+                    && r.2["p_data"]["inspectionResult"]["indexStatusResult"]["verdict"] == "PASS")
+        );
         server.abort();
     }
     #[tokio::test]

@@ -140,8 +140,8 @@ Deno.test("Search preserves separate totals, finalized data, hostname filters an
       });
     }) as typeof fetch,
   );
-  assert(requests.length === 4 && result.summary.rows[0].clicks === 12);
-  assert(requests.find((r) => r.dimensions[0] === "query")?.rowLimit === 10);
+  assert(requests.length === 10 && result.summary.rows[0].clicks === 12);
+  assert(requests.find((r) => r.dimensions[0] === "query")?.rowLimit === 1000);
   assert(validProperty("sc-domain:example.com", "www.example.com"));
   assert(!validProperty("sc-domain:example.com", "badexample.com"));
   assert(!validProperty("https://other.com/", "www.example.com"));
@@ -278,5 +278,98 @@ Deno.test("initial sync drains multiple websites and respects batch and time bud
       "must not claim a job that cannot start within the time budget",
     );
     assert(result.completed === completed && result.failed === 0);
+  }
+});
+
+Deno.test("Search pages through bounded datasets and marks query omissions explicitly", async () => {
+  const offsets: number[] = [];
+  const result = await fetchReport(
+    { ...job, kind: "search", property_id: "sc-domain:example.com" },
+    "token",
+    (async (_url, options) => {
+      const body = JSON.parse(String(options?.body));
+      if (body.dimensions.join(",") === "query,page") {
+        offsets.push(body.startRow);
+        return Response.json({
+          rows: Array.from(
+            { length: body.rowLimit },
+            (_, i) => ({
+              keys: [`q${body.startRow + i}`, "https://www.example.com/"],
+              clicks: 1,
+              impressions: 10,
+            }),
+          ),
+        });
+      }
+      return Response.json({
+        rows: body.dimensions[0] === "date"
+          ? [{ keys: ["2026-10-25"], clicks: 1 }]
+          : [],
+      });
+    }) as typeof fetch,
+  );
+  assert(JSON.stringify(offsets) === "[0,1000,2000,3000,4000]");
+  assert(result.query_pages.rows.length === 5000);
+  assert(result.query_pages.collection.truncated === true);
+  assert(result.query_pages.collection.anonymized_queries === "excluded");
+  assert(result.pages.collection.truncated === false);
+  assert(result.measurement.latest_observed_date === "2026-10-25");
+  assert(result.measurement.provider_completeness === "not_guaranteed");
+  assert(result.previous_period.start_date === "2026-09-04");
+  assert(result.previous_period.end_date === "2026-09-30");
+});
+Deno.test("Search fails closed on malformed pagination rather than saving a partial success", async () => {
+  for (const rows of [{}, Array.from({ length: 1001 }, () => ({}))]) {
+    await rejects(() =>
+      fetchReport(
+        { ...job, kind: "search", property_id: "sc-domain:example.com" },
+        "token",
+        (async () => Response.json({ rows })) as typeof fetch,
+      ), "google_unavailable");
+  }
+});
+
+Deno.test("Search retains current evidence when the previous period is unavailable", async () => {
+  const result = await fetchReport(
+    { ...job, kind: "search", property_id: "sc-domain:example.com" },
+    "token",
+    (async (_url, options) => {
+      const body = JSON.parse(String(options?.body));
+      assert(options?.signal instanceof AbortSignal);
+      return body.endDate === "2026-09-30"
+        ? Response.json({ error: { status: "INVALID_ARGUMENT" } }, {
+          status: 400,
+        })
+        : Response.json({ rows: [] });
+    }) as typeof fetch,
+  );
+  assert(result.previous_period.unavailable === true);
+  assert(result.pages.collection.truncated === false);
+  assert(result.analysis.comparison.available === false);
+});
+Deno.test("Search rejects rollover and reversed dates before fetching", async () => {
+  for (
+    const [start_date, end_date] of [["2026-02-30", "2026-03-02"], [
+      "2026-10-28",
+      "2026-10-01",
+    ]]
+  ) {
+    await rejects(
+      () =>
+        fetchReport(
+          {
+            ...job,
+            kind: "search",
+            property_id: "sc-domain:example.com",
+            start_date,
+            end_date,
+          },
+          "token",
+          (async () => {
+            throw new Error("must not fetch");
+          }) as typeof fetch,
+        ),
+      "invalid_report",
+    );
   }
 });

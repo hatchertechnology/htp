@@ -3,8 +3,9 @@
 Google Analytics dashboards and Search Console reports are collected by the
 `google-sync` Supabase Edge Function and retained in Postgres. The Rust API reads
 snapshots using the signed-in user's identity. Neither Fly application runs a
-scheduler. URL Inspection remains an explicit live diagnostic; the CLI's existing
-daily report endpoint also remains live and does not create snapshots.
+scheduler. URL Inspection remains an explicit diagnostic of Google's indexed
+version, with successful observations retained in append-only history. The CLI's
+existing daily report endpoint remains live and does not create snapshots.
 
 ## What is collected
 
@@ -12,8 +13,10 @@ daily report endpoint also remains live and does not create snapshots.
   UTC calendar days collected automatically, including summary, daily, top pages,
   channels, and devices. Google's property timezone still determines its metrics.
 - Search Console properties are discovered hourly. The default matching property
-  gets a trailing 28-day report: aggregate totals, daily rows, top 10 queries, and
-  top 10 pages. Exact domain properties are preferred, then property URL order.
+  gets a trailing 28-day report: separate aggregate totals, daily rows, bounded
+  query/page/query+page datasets, and device/country breakdowns. Each large
+  dataset requests 1,000 rows at a time up to 5,000 retained rows. Exact domain
+  properties are preferred, then property URL order.
   Search results use finalized web-search data and Google's Pacific Time dates.
 - Opening a different property/date range queues that exact report. It is refreshed
   hourly for seven days after its last request. At most 100 ranges can be active
@@ -229,3 +232,49 @@ After approval, add a migration replacing that function to return true, set
 OAuth consent test, and deploy the web app. This restores the existing dashboard,
 navigation, connection details, permission requests, and collection without
 rebuilding the integration. Confirm nonzero API quotas before re-enabling it.
+
+## Search and outcome evidence (H05)
+
+Search snapshots add versioned `measurement`, per-dataset `collection`,
+`previous_period`, and `analysis` fields while preserving the existing report
+keys. The preceding adjacent period has the same inclusive duration. Comparison
+requires matching property, hostname policy, finalized data, confirmed observed
+end dates, and usable aggregate evidence; otherwise it carries an unavailable
+reason. A missing final daily row is inconclusive, because Google can omit days
+without data. These comparisons do not establish seasonality or causal effects.
+
+Search Console returns bounded top rows and excludes anonymized queries from
+query dimensions. Reaching the end of pagination does not establish a complete
+URL/query inventory. `truncated` identifies the local row ceiling; provider
+completeness remains `not_guaranteed`. Separate aggregate totals must not be
+reconstructed by summing query/page rows. Dates use Google's Pacific Time.
+Device and country datasets are independent breakdowns, not a joint segment.
+See the [Search Analytics API contract](https://developers.google.com/webmaster-tools/v1/searchanalytics/query).
+
+Analysis semantics version 1 emits review candidates with the original observed
+rows: low CTR/zero clicks at 100+ impressions and CTR below 2%; query overlap when
+two observed pages each have 10+ impressions; and aggregate click decay of 20%+
+from a preceding period with 20+ clicks. These thresholds are review heuristics,
+not defects, ranking guarantees, or evidence of harmful competition. Legacy
+snapshots remain readable; absent provenance must not be interpreted as complete
+coverage or zero outcomes. GA4 landing outcomes retain source metrics and their
+collection limits, with no attribution to individual Search Console queries.
+
+URL inspection records Google's indexed version, never a live indexability test
+or indexing request. Successful observations preserve the property, requested
+URL, collection time, and response. History is owner-scoped and hostname-scoped;
+renames isolate earlier observations. Records submitted through an authenticated
+RPC have explicit owner-submitted provenance, not a cryptographic Google
+attestation. See the [URL Inspection API contract](https://developers.google.com/webmaster-tools/v1/urlInspection.index/inspect).
+
+Deploy the inspection-history migration before the Rust API, then deploy the
+updated `google-sync` worker. Collection uses the existing Google scopes, leases,
+and hourly refresh; no new external credentials or automatic inspections are
+introduced. Roll back application/worker binaries to stop producing additive
+fields while retaining immutable history and the additive schema. No production
+deployment or provider-volume validation is implied by local fixtures.
+
+This delivery is a foundation for issue #10. Device/country filters are not yet
+caller-selectable; the new datasets are aggregate breakdowns. Cross-source
+search-to-GA4 attribution, page-level decay scoring, and crawl correlations remain
+follow-up work. Current landing outcomes are the bounded GA4 landing-page report.
