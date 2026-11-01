@@ -152,7 +152,7 @@ export async function fetchReport(
       ["queries", ["query"], 5000],
       ["pages", ["page"], 5000],
       ["query_pages", ["query", "page"], 5000],
-      ["devices", ["device"], 3],
+      ["devices", ["device"], 10],
       ["countries", ["country"], 300],
     ];
     const collect = async (

@@ -88,6 +88,15 @@ Deno.test("legacy, malformed and empty observations remain unavailable instead o
     result.comparison.reason === "summary_unavailable" &&
       result.candidates.length === 0,
   );
+  const unavailable = {
+    ...previous,
+    unavailable: true,
+    reason: "previous_period_unavailable",
+  };
+  assert(
+    analyzeSearch(current, unavailable).comparison.reason ===
+      "previous_period_unavailable",
+  );
   delete current.measurement;
   assert(
     analyzeSearch(current, previous).comparison.reason ===

@@ -344,6 +344,7 @@ Deno.test("Search retains current evidence when the previous period is unavailab
     }) as typeof fetch,
   );
   assert(result.previous_period.unavailable === true);
+  assert(result.analysis.comparison.reason === "previous_period_unavailable");
   assert(result.pages.collection.truncated === false);
   assert(result.analysis.comparison.available === false);
 });
@@ -372,4 +373,28 @@ Deno.test("Search rejects rollover and reversed dates before fetching", async ()
       "invalid_report",
     );
   }
+});
+
+Deno.test("Search device coverage is complete for all three supported device categories", async () => {
+  const result = await fetchReport(
+    { ...job, kind: "search", property_id: "sc-domain:example.com" },
+    "token",
+    (async (_url, options) => {
+      const body = JSON.parse(String(options?.body));
+      if (body.dimensions[0] === "device") {
+        assert(body.rowLimit === 10);
+        return Response.json({
+          rows: ["DESKTOP", "MOBILE", "TABLET"].map((device) => ({
+            keys: [device],
+            clicks: 1,
+            impressions: 10,
+          })),
+        });
+      }
+      return Response.json({ rows: [] });
+    }) as typeof fetch,
+  );
+  assert(result.devices.rows.length === 3);
+  assert(result.devices.collection.truncated === false);
+  assert(result.devices.collection.returned_rows === 3);
 });

@@ -278,3 +278,11 @@ This delivery is a foundation for issue #10. Device/country filters are not yet
 caller-selectable; the new datasets are aggregate breakdowns. Cross-source
 search-to-GA4 attribution, page-level decay scoring, and crawl correlations remain
 follow-up work. Current landing outcomes are the bounded GA4 landing-page report.
+
+The Search dashboard polling response projects summary/daily data, measurement
+provenance and ten query/page rows; each table records presentation truncation.
+Full datasets, prior-period evidence and analysis remain in immutable snapshots
+available through owner-scoped saved-data API/MCP reads. A default range ending
+yesterday may lack finalized observations and correctly remains inconclusive;
+request an older finalized range for comparison rather than silently shortening
+one period or treating absent days as zero traffic.

@@ -24,7 +24,7 @@ function rows(report: Json, name: string, dimensions: number): Json[] {
     .filter((row: Json) => row && validRow(row, dimensions));
 }
 function comparisonReason(current: Json, previous?: Json): string | null {
-  if (!previous) return "previous_period_unavailable";
+  if (!previous || previous.unavailable) return "previous_period_unavailable";
   const starts = [date(previous.start_date), date(current.start_date)];
   const ends = [date(previous.end_date), date(current.end_date)];
   if ([...starts, ...ends].some((value) => value === null)) {

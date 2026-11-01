@@ -233,9 +233,41 @@ async fn dashboard(
         .await
         .map_err(SearchError::Website)?;
     Ok(crate::websites::saved_response(
-        saved["data"].clone(),
+        dashboard_projection(&saved["data"]),
         &saved["sync"],
     ))
+}
+// Polling dashboards need small presentation datasets. Full immutable evidence
+// remains available through the owner-scoped saved-data API/MCP snapshot reads.
+fn dashboard_projection(data: &Value) -> Value {
+    if !data.is_object() {
+        return data.clone();
+    }
+    let mut projected = serde_json::Map::new();
+    for key in [
+        "site_url",
+        "start_date",
+        "end_date",
+        "summary",
+        "daily",
+        "measurement",
+    ] {
+        if let Some(value) = data.get(key) {
+            projected.insert(key.to_owned(), value.clone());
+        }
+    }
+    for key in ["queries", "pages"] {
+        if let Some(dataset) = data.get(key) {
+            let mut dataset = dataset.clone();
+            if let Some(rows) = dataset.get_mut("rows").and_then(Value::as_array_mut) {
+                let returned = rows.len();
+                rows.truncate(10);
+                dataset["presentation"] = json!({"row_limit":10,"truncated":returned>10});
+            }
+            projected.insert(key.to_owned(), dataset);
+        }
+    }
+    Value::Object(projected)
 }
 async fn inspect(
     State((store, google)): State<(WebsiteStore, SearchClient)>,
@@ -422,6 +454,23 @@ mod tests {
             normalized_inspection(&permitted, "sc-domain:example.com", "example.com").unwrap();
         assert!(normalized.len() <= 2048);
         assert!(normalized.contains("%C3%A9"));
+    }
+    #[test]
+    fn dashboard_polling_projects_only_bounded_presentation_rows() {
+        let data = json!({"site_url":"sc-domain:example.com", "summary":{"rows":[{"clicks":1}]},
+            "daily":{"rows":[]},"queries":{"rows":(0..5000).collect::<Vec<_>>()},
+            "pages":{"rows":[1]},"query_pages":{"rows":[2]},"previous_period":{},"analysis":{},
+            "measurement":{"provider_completeness":"not_guaranteed"}});
+        let result = dashboard_projection(&data);
+        assert_eq!(result["queries"]["rows"].as_array().unwrap().len(), 10);
+        assert_eq!(result["queries"]["presentation"]["truncated"], true);
+        assert_eq!(result["pages"]["presentation"]["truncated"], false);
+        assert_eq!(result["measurement"], data["measurement"]);
+        assert!(result.get("query_pages").is_none());
+        assert!(result.get("previous_period").is_none());
+        assert!(result.get("analysis").is_none());
+        assert_eq!(data["queries"]["rows"].as_array().unwrap().len(), 5000);
+        assert!(dashboard_projection(&Value::Null).is_null());
     }
     #[test]
     fn token_headers_are_unambiguous() {
