@@ -97,3 +97,135 @@ website (removed afterward), verifying owner import, idempotent retry, original
 bytes, real zero counts, history/detail, no-store responses, anonymous API/RPC
 rejection and cross-owner rejection. Worker token provisioning remains an
 operational step for each crawler/website binding.
+
+## Expanded extraction contract (SEOsmith 0.2.0)
+
+Issue #3 is supported by `20261101054016_seosmith_expanded_evidence.sql`.
+Apply this migration after the three audit migrations above before using expanded
+reports. The production rollout and verification are recorded below.
+Schema version stays 1; engine `0.2.0` uses ruleset `2026-11-01.1`.
+
+Ingestion and imports retain the entire JSON document, including relationships,
+header canonical/hreflang, refresh/encoding/language observations, JSON-LD and
+nested microdata/itemref evidence, repeated Open Graph/Twitter values, link rel
+flags, and finding `evidence_items`/`details`. Detail reads expose the original
+parsed report and exact `report_json`; downloads use those original bytes.
+Historical reports can omit the additions: missing `is_resource` means a page,
+and absent extraction collections mean no recorded observations. Shared frontend
+types mark those fields optional rather than rewriting historical documents.
+The Rust API forwards opaque JSON without projecting away additive fields.
+
+The common SQL validator permits at most **20,000 page observations plus 20,000
+resource observations**, **40,000 combined records**, and **400,000 findings**.
+Explicit request budgets must be within 1–20,000 pages and 0–20,000 resources.
+These are independent of the unchanged **16 MiB exact-report byte limit**;
+inventories that fit the record counts can still exceed the byte limit and must
+use smaller crawl scopes. Both worker ingestion and manual import reject a report
+before returning an accepted receipt when any limit fails. Raising the byte limit
+requires a future coordinated chunk/object-storage protocol that preserves digest
+verification, idempotent retry and immutable finalization.
+
+Summaries now separate `pages` and `resources`, each with `checked`, `html`,
+`images`, `http_errors`, `fetch_errors` and `blocked` counts. Successful HTML means
+any 2xx response with text/html, application/xhtml+xml or
+application/vnd.wap.xhtml+xml, ignoring case and charset parameters. Resource
+HTML contributes only to `resources.html`. HTP preserves the collector's findings;
+it does not apply page metadata or duplicate-content rules to resource HTML.
+Historical summaries are derived on read without modifying stored reports, raw
+bytes, receipt digests or immutable rows. New summaries carry `summary_version: 3`
+and are read from the stored summary to avoid repeating extraction work.
+
+Comparisons still require matching complete coverage, engine, ruleset and the
+request comparison key (including `max_resources`). Resource/page limits, legacy
+checkpoint metadata, extraction truncation/limit flags, failed or blocked
+observations, and relationships whose targets were not observed prevent complete
+coverage. Even a claimed `checked` relationship needs a target HTTP response in
+the report. Out-of-scope/unfetched targets do not prove successful checks or
+resolution of previous findings. Intentional navigation exclusions preserve
+configured-frontier coverage; the per-finding safeguards below keep their target
+state unknown.
+
+Regression coverage lives in `supabase/tests/seosmith-expanded.test.mjs` with the
+shared `supabase/tests/fixtures/seosmith-expanded.json` fixture. The PGlite suite
+executes the migration and tests both ingestion paths, legacy reads, role grants,
+exact bytes/digests and retries, immutable rows, independent budgets, findings
+limits, XHTML/2xx counts and incomplete coverage. Frontend tests verify shared
+types and comparison guards; API tests check exact report forwarding and rejected
+RPC responses without a successful receipt.
+
+### Production verification — 2026-11-01
+
+Deployed application commit `51cddd5` to both existing Fly apps and applied the
+expanded-evidence migration to the HTP Supabase project. Supabase recorded the
+migration as version `20261101054016`; the local migration filename matches that
+recorded version. The collector was outside this HTP rollout.
+
+- API image: `deployment-01M6ASZHHB80ZXPXTEGW5PMYM4`.
+- Frontend image: `deployment-01M6ASZM8W3HFY47QTQE4KWZHK`.
+- Both Fly service health checks passed after deployment.
+- Re-ran 51 Rust tests, 99 frontend tests and all 8 PGlite integration tests;
+  all passed. Frontend typecheck/build and strict API/shared Clippy had also
+  passed. Workspace Clippy still reports three pre-existing
+  `clippy::assert_is_empty` warnings in `apps/cli/tests/http.rs` with Rust 1.99.1.
+
+Live checks used the existing test account and an isolated temporary website.
+Owner import, website-scoped worker ingestion and authenticated frontend proxy
+import/history/detail reads preserved all expanded fixture evidence, original
+bytes and SHA-256 receipts. Duplicate retries deduplicated; conflicting bytes,
+bad digests and over-budget reports failed without accepted receipts. A combined
+40,000-record inventory (20,000 pages and 20,000 resources) imported successfully
+and remained readable. Page/resource HTML and error counts were separate;
+resource limits, extraction truncation and unobserved targets produced incomplete
+coverage. Anonymous requests and cross-owner reads were denied.
+
+The temporary website, six test reports and its worker binding were removed.
+All seven pre-existing audits remained readable. Their combined fingerprint of
+run IDs, checksums, parsed reports and original bytes matched before migration
+and after test cleanup; no historical audit documents were rewritten.
+
+### Crawl policy exclusions and finding resolution
+
+The follow-up migration `20261101060006_seosmith_policy_exclusions.sql` corrects
+PR #4's P2 review finding. It treats deliberately unfetched navigation as outside
+the configured frontier when external link checking is disabled, rel contains
+nofollow/sponsored/UGC, a document has robots nofollow/none, or the source is
+resource HTML (which does not expand navigation). Relationships retain their
+original `outside_scope`/`not_fetched` state. Checked relationships with a missing
+response, unexplained missing in-scope targets, blocked/failed targets, and actual
+partial/truncated runs remain ineligible for comparisons.
+
+Completeness of the configured frontier does not prove every target was checked.
+Finding comparisons now require the current source observation before resolving
+an absent finding. Target-dependent rules also require every previously observed
+target instance to have a current response. A navigation edge conclusively
+removed from complete source extraction can resolve its previous finding without
+fetching the former target. Historical findings without recoverable target
+URLs stay unverified, and current redirect chains must be fully observed.
+The dashboard reports unverified findings separately from resolved findings, so
+skipped targets cannot appear fixed while source-only metadata improvements
+remain comparable.
+
+Resolution eligibility follows the rule's analysis requirements. HTML metadata,
+content and navigation findings require a successful 2xx HTML/XHTML page with
+usable, untruncated extraction; a 403, 404, PDF response or resource-only HTML
+observation does not verify that an old missing title was fixed. Rules that read
+HTML metadata from another URL also require successful target HTML extraction.
+HTTP-status rules retain response-based eligibility, while dependency rules can
+use successfully extracted CSS or resource HTML. Findings whose required analysis
+was not eligible stay unverified instead of being counted as resolved.
+
+Summary version 3 is cached for new reports. History and detail reads recalculate
+older cached summaries without altering reports, raw bytes, digests or immutable
+rows. The comparison key and engine/ruleset compatibility rules are unchanged.
+
+Deployed the policy correction on 2026-11-01: frontend application commit
+`67e993e` (`deployment-01M6AV0GDXS289K6EPCT29YDRX`) was deployed and healthy before
+applying the policy migration. Supabase recorded migration version
+`20261101060006`, matching the local filename. No Rust API changes were needed.
+All 106 frontend tests and 9 PGlite integration tests passed; frontend typecheck
+and production build passed. Live tests confirmed that version-2 cached reports
+become comparable through version-3 summaries without changing their bytes, a
+corrected title resolves, and an unchecked external target remains unverified.
+External checking enabled, unexpected missing targets, resource limits and
+truncation still prevent comparisons. The isolated test website and its six
+reports were removed after verification.

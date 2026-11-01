@@ -7,7 +7,7 @@ const { runs, selected, busy, detailBusy, importing, error, notice, cursor, load
 const urlPage = ref(1), urlSearch = ref(''), urlStatus = ref('all')
 const metric = ref<AuditMetric>('findings'), severity = ref('all'), rule = ref('all'), search = ref(''), page = ref(1)
 const fileInput = ref<HTMLInputElement | null>(null), comparisonBusy = ref(false), comparisonError = ref('')
-const changes = ref<{ added: number; resolved: number; persistent: number } | null>(null)
+const changes = ref<{ added: number; resolved: number; persistent: number; unverified: number } | null>(null)
 let comparisonGeneration = 0
 const summary = computed(() => selected.value?.summary)
 const findings = computed(() => selected.value?.report.findings ?? [])
@@ -30,7 +30,7 @@ async function compareRuns() {
   comparisonBusy.value = true; comparisonError.value = ''
   try {
     const detail = await ws.request<AuditDetail>(`/api/websites/${ws.selectedId.value}/seo/audits/${older.delivery_id}`)
-    if (gen === comparisonGeneration) changes.value = findingChanges(current, older, current.report.findings, detail.report.findings)
+    if (gen === comparisonGeneration) changes.value = findingChanges(current, older, current.report.findings, detail.report.findings, current.report.pages)
   } catch (cause) { if (gen === comparisonGeneration) comparisonError.value = failureMessage(cause) }
   finally { if (gen === comparisonGeneration) comparisonBusy.value = false }
 }
@@ -56,7 +56,7 @@ function download() {
         <p class="report-caption">{{ stamp(selected.scan_at) }} · {{ summary.outcome }} · {{ summary.pages.html }} successful HTML pages · {{ summary.pages.images }} images · {{ summary.pages.fetch_errors }} fetch errors.<span>Engine {{ summary.engine_version || 'unknown' }} · Ruleset {{ summary.ruleset_version || 'unknown' }} · {{ selected.report.request.max_pages }}-URL cap · {{ selected.ingestion_source === 'import' ? 'Imported report' : 'Worker delivery' }} · Received {{ stamp(selected.received_at) }}.</span></p>
         <div class="seo-actions"><button class="refresh-control" @click="download">Download run JSON</button><button v-if="canCompare" class="refresh-control" :disabled="comparisonBusy" @click="compareRuns">{{ comparisonBusy ? 'Comparing…' : 'Compare findings with previous run' }}</button></div>
         <p v-if="previous && !canCompare" class="report-caption">Finding changes are unavailable against the previous run because coverage or crawl settings, engine, or ruleset differ. Both observations remain in the chart.</p>
-        <p v-if="changes" class="form-notice" role="status">Compared with the previous complete run: {{ changes.added }} new · {{ changes.resolved }} resolved · {{ changes.persistent }} persistent findings.</p><p v-if="comparisonError" class="form-error" role="alert">{{ comparisonError }}</p>
+        <p v-if="changes" class="form-notice" role="status">Compared with the previous complete run: {{ changes.added }} new · {{ changes.resolved }} resolved · {{ changes.persistent }} persistent findings.<span v-if="changes.unverified"> {{ changes.unverified }} could not be verified from the current observations.</span></p><p v-if="comparisonError" class="form-error" role="alert">{{ comparisonError }}</p>
         <div class="report-panel seo-findings"><header><h3>Findings</h3><span>{{ filtered.length.toLocaleString() }} matching</span></header><div class="seo-filters"><label>Severity<select v-model="severity" aria-label="Severity"><option value="all">All severities</option><option value="critical">Critical</option><option value="alert">Alerts</option><option value="warning">Warnings</option></select></label><label>Rule<select v-model="rule" aria-label="Rule"><option value="all">All rules</option><option v-for="id in ruleOptions" :key="id" :value="id">{{ label(id) }}</option></select></label><label>Find a URL or issue<input v-model="search" type="search" placeholder="Search findings" /></label></div>
           <div class="table-scroll"><table><caption class="sr-only">Seosmith findings for the selected run</caption><thead><tr><th scope="col">Severity</th><th scope="col">Finding</th><th scope="col">Affected URL</th><th scope="col">Evidence</th></tr></thead><tbody><tr v-for="(finding, index) in displayed" :key="`${finding.key}-${index}`"><td><span class="seo-severity" :class="`seo-${finding.severity}`">{{ finding.severity }}</span></td><td>{{ label(finding.rule) }}</td><td><a v-if="safeAuditUrl(finding.url)" :href="safeAuditUrl(finding.url)" target="_blank" rel="noopener noreferrer">{{ finding.url }}</a><span v-else>{{ finding.url }}</span></td><td>{{ finding.evidence }}</td></tr></tbody></table></div><p v-if="!filtered.length" class="compact-empty">No findings match these filters.</p><div v-if="filtered.length > 50" class="seo-pagination"><button class="refresh-control" :disabled="page === 1" @click="page--">Previous findings</button><span>Page {{ page }} of {{ Math.ceil(filtered.length / 50) }}</span><button class="refresh-control" :disabled="page * 50 >= filtered.length" @click="page++">Next findings</button></div>
         </div>
