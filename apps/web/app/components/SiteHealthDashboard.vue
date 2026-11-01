@@ -12,7 +12,12 @@ const samples = ref<string[]>([])
 function chooseSample() {
   const url = sampledUrl(draft.value.trim(), ws.selected.value?.fqdn ?? '')
   if (!url || !draft.value.trim()) { targetError.value = 'Enter an HTTPS URL or path on the selected website, without a fragment or credentials.'; return }
-  targetError.value = ''; target.value = url
+  targetError.value = ''
+  if (target.value === url) {
+    // Assigning the same ref does not trigger source watchers. Retry failed
+    // requests explicitly, including CrUX (which has no separate reload button).
+    void speed.load(); void crux.load(); void readHistory()
+  } else target.value = url
   if (!samples.value.includes(url)) samples.value.push(url)
 }
 watch(() => [ws.selectedId.value, ws.selected.value?.fqdn], () => { target.value = ''; draft.value = ''; targetError.value = ''; samples.value = [] })
