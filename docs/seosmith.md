@@ -97,3 +97,57 @@ website (removed afterward), verifying owner import, idempotent retry, original
 bytes, real zero counts, history/detail, no-store responses, anonymous API/RPC
 rejection and cross-owner rejection. Worker token provisioning remains an
 operational step for each crawler/website binding.
+
+## Expanded extraction contract (SEOsmith 0.2.0)
+
+Issue #3 is supported by `20261101052410_seosmith_expanded_evidence.sql`.
+Apply this migration after the three audit migrations above before using expanded
+reports. This source change does not deploy the collector, API, frontend or database.
+Schema version stays 1; engine `0.2.0` uses ruleset `2026-11-01.1`.
+
+Ingestion and imports retain the entire JSON document, including relationships,
+header canonical/hreflang, refresh/encoding/language observations, JSON-LD and
+nested microdata/itemref evidence, repeated Open Graph/Twitter values, link rel
+flags, and finding `evidence_items`/`details`. Detail reads expose the original
+parsed report and exact `report_json`; downloads use those original bytes.
+Historical reports can omit the additions: missing `is_resource` means a page,
+and absent extraction collections mean no recorded observations. Shared frontend
+types mark those fields optional rather than rewriting historical documents.
+The Rust API forwards opaque JSON without projecting away additive fields.
+
+The common SQL validator permits at most **20,000 page observations plus 20,000
+resource observations**, **40,000 combined records**, and **400,000 findings**.
+Explicit request budgets must be within 1–20,000 pages and 0–20,000 resources.
+These are independent of the unchanged **16 MiB exact-report byte limit**;
+inventories that fit the record counts can still exceed the byte limit and must
+use smaller crawl scopes. Both worker ingestion and manual import reject a report
+before returning an accepted receipt when any limit fails. Raising the byte limit
+requires a future coordinated chunk/object-storage protocol that preserves digest
+verification, idempotent retry and immutable finalization.
+
+Summaries now separate `pages` and `resources`, each with `checked`, `html`,
+`images`, `http_errors`, `fetch_errors` and `blocked` counts. Successful HTML means
+any 2xx response with text/html, application/xhtml+xml or
+application/vnd.wap.xhtml+xml, ignoring case and charset parameters. Resource
+HTML contributes only to `resources.html`. HTP preserves the collector's findings;
+it does not apply page metadata or duplicate-content rules to resource HTML.
+Historical summaries are derived on read without modifying stored reports, raw
+bytes, receipt digests or immutable rows. New summaries carry `summary_version: 2`
+and are read from the stored summary to avoid repeating extraction work.
+
+Comparisons still require matching complete coverage, engine, ruleset and the
+request comparison key (including `max_resources`). Resource/page limits, legacy
+checkpoint metadata, extraction truncation/limit flags, failed or blocked
+observations, and relationships whose targets were not observed prevent complete
+coverage. Even a claimed `checked` relationship needs a target HTTP response in
+the report. Out-of-scope/unfetched targets do not prove successful checks or
+resolution of previous findings. This policy is conservative: the presence of
+unknown target evidence disables finding-resolution comparisons for that run.
+
+Regression coverage lives in `supabase/tests/seosmith-expanded.test.mjs` with the
+shared `supabase/tests/fixtures/seosmith-expanded.json` fixture. The PGlite suite
+executes the migration and tests both ingestion paths, legacy reads, role grants,
+exact bytes/digests and retries, immutable rows, independent budgets, findings
+limits, XHTML/2xx counts and incomplete coverage. Frontend tests verify shared
+types and comparison guards; API tests check exact report forwarding and rejected
+RPC responses without a successful receipt.

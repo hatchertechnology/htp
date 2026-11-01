@@ -7,7 +7,12 @@ export function auditValue(run: AuditRun, metric: AuditMetric): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 }
 export function comparable(a: AuditRun, b: AuditRun): boolean {
-  return a.summary.coverage_complete === true && b.summary.coverage_complete === true && !!a.summary.engine_version && !!b.summary.engine_version && !!a.summary.ruleset_version && !!b.summary.ruleset_version && a.summary.comparison_key === b.summary.comparison_key
+  return [a, b].every(run => run.summary.coverage_complete === true
+    && run.summary.outcome === 'completed'
+    && (!run.summary.stop_reason || run.summary.stop_reason === 'frontier_exhausted'))
+    && !!a.summary.engine_version && a.summary.engine_version === b.summary.engine_version
+    && !!a.summary.ruleset_version && a.summary.ruleset_version === b.summary.ruleset_version
+    && a.summary.comparison_key === b.summary.comparison_key
 }
 export function auditPoints(runs: AuditRun[], metric: AuditMetric) {
   return [...runs].filter(r => !!r.summary.finished_at && Number.isFinite(Date.parse(r.summary.finished_at))).sort((a, b) => Date.parse(a.scan_at) - Date.parse(b.scan_at) || a.delivery_id.localeCompare(b.delivery_id)).map(run => ({ run, time: Date.parse(run.scan_at), value: auditValue(run, metric) }))

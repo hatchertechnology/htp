@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "engine_version": "0.2.0",
+  "ruleset_version": "2026-11-01.1",
+  "request": {"request_id":"00000000-0000-0000-0000-000000000010","website_id":"00000000-0000-0000-0000-000000000003","binding_generation":1,"url":"https://example.com/","max_pages":20000,"max_resources":20000,"check_external_links":false},
+  "started_at":"2026-11-01T01:00:00Z",
+  "finished_at":"2026-11-01T01:10:00Z",
+  "outcome":"completed",
+  "stop_reason":"frontier_exhausted",
+  "coverage_complete":true,
+  "pages":[
+    {
+      "url":"https://example.com/","status":201,"error":null,"content_type":"Text/HTML; charset=utf-8","is_resource":false,
+      "encoding":"UTF-8","language":"en","language_source":"http_header","header_canonical":"https://example.com/","refresh_delay":0,"refresh_target":"https://example.com/next",
+      "links":[{"url":"https://example.com/next","nofollow":false,"sponsored":true,"ugc":true,"rel":["sponsored","ugc"],"text":"Next"}],
+      "alternates":[{"language":"fr","url":"https://example.com/fr"}],
+      "relationships":[
+        {"kind":"hreflang_header","url":"https://example.com/fr","descriptor":"fr","resource":false,"state":"checked"},
+        {"kind":"image_candidate","url":"https://cdn.example/a.webp","descriptor":"1200w","resource":true,"state":"checked"},
+        {"kind":"stylesheet","url":"https://cdn.example/main.css","descriptor":"","resource":true,"state":"checked"}
+      ],
+      "structured_data":[
+        {"format":"json_ld","data":{"@context":"https://schema.org","@graph":[{"@type":"LocalBusiness","name":"Client"}]},"error":null},
+        {"format":"json_ld","data":null,"error":"invalid JSON at line 1 column 2"},
+        {"format":"microdata","data":{"types":["https://schema.org/LocalBusiness"],"id":null,"properties":{"name":["Client","Itemref name"],"address":[{"types":["https://schema.org/PostalAddress"],"id":null,"properties":{"streetAddress":["123 Main"]}}]}},"error":null}
+      ],
+      "open_graph":{"og:image":["/a.webp","/b.webp"],"og:image:width":["1200","800"]},
+      "twitter":{"twitter:image":["/a.webp","/b.webp"]},"extraction_truncated":false
+    },
+    {"url":"https://example.com/fr","status":299,"error":null,"content_type":"application/xhtml+xml; charset=utf-8"},
+    {"url":"https://cdn.example/a.webp","status":404,"error":null,"content_type":"image/webp","is_resource":true},
+    {"url":"https://cdn.example/main.css","status":200,"error":null,"content_type":"text/css","is_resource":true,"relationships":[{"kind":"css_url","url":"https://cdn.example/font.woff2","descriptor":"","resource":true,"state":"checked"}]},
+    {"url":"https://cdn.example/font.woff2","status":404,"error":null,"content_type":"font/woff2","is_resource":true},
+    {"url":"https://cdn.example/frame","status":200,"error":null,"content_type":"application/vnd.wap.xhtml+xml; charset=utf-8","is_resource":true,"title":"Resource HTML"}
+  ],
+  "findings":[{"key":"broken-resource-home","rule":"broken_resource","severity":"critical","url":"https://example.com/","evidence":"2 broken dependencies","evidence_items":["https://cdn.example/a.webp","https://cdn.example/font.woff2"],"details":{"status":201,"bytes":1024,"ttfb_ms":5,"words":50,"dom_nodes":20,"observation_count":2}}]
+}

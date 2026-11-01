@@ -171,12 +171,52 @@ mod tests {
         let rpc=Router::new().route("/rest/v1/rpc/ingest_seosmith_audit",post(|headers:HeaderMap,Json(body):Json<serde_json::Value>|async move {
             assert_eq!(headers["apikey"],"publishable");assert!(!headers.contains_key("authorization"));
             assert_eq!(body["p_token"],"x".repeat(32));
+            assert_eq!(body["p_report_json"], include_str!("../../../supabase/tests/fixtures/seosmith-expanded.json"));
             Json(json!({"delivery_id":body["p_delivery_id"],"sha256":body["p_sha256"],"accepted":true}))
         }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, rpc).await.unwrap() });
         let app = ingest_router(WebsiteStore::new(&url, "publishable"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/integrations/seosmith/audits")
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", id)
+                    .header("authorization", format!("Bearer {}", "x".repeat(32)))
+                    .body(Body::from(
+                        json!({"delivery_id":id,"sha256":"a".repeat(64),"report_json":include_str!("../../../supabase/tests/fixtures/seosmith-expanded.json")})
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(body["accepted"], true);
+        server.abort();
+    }
+    #[tokio::test]
+    async fn database_rejection_never_becomes_a_successful_receipt() {
+        let rpc = Router::new().route(
+            "/rest/v1/rpc/ingest_seosmith_audit",
+            post(|| async {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"code":"22023","message":"report_limit"})),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, rpc).await.unwrap() });
+        let app = ingest_router(WebsiteStore::new(&url, "publishable"));
+        let id = "00000000-0000-0000-0000-000000000001";
         let response = app
             .oneshot(
                 Request::builder()
@@ -193,11 +233,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body: serde_json::Value =
             serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
-        assert_eq!(body["accepted"], true);
+        assert!(body.get("accepted").is_none());
         server.abort();
     }
 }

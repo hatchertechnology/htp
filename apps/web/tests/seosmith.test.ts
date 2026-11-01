@@ -36,3 +36,21 @@ it('keeps reports with unknown original scan times out of the timestamp chart', 
   const r = run('a', '2026-10-31T01:00:00Z'); r.summary.finished_at = null
   expect(auditPoints([r], 'findings')).toEqual([])
 })
+it('refuses resource-limited or truncated runs even when coverage was claimed complete', () => {
+  const a = run('a', '2026-10-31T01:00:00Z'), b = run('b', '2026-10-31T02:00:00Z')
+  for (const stop_reason of ['resource_limit', 'legacy_checkpoint_metadata', 'discovery_or_extraction_limit']) {
+    expect(findingChanges({ ...a, summary: { ...a.summary, stop_reason } }, b, [], [{ rule: 'broken_resource', url: 'https://example.com/' }] as AuditFinding[])).toBeNull()
+  }
+  for (const property of ['engine_version', 'ruleset_version'] as const) {
+    expect(comparable({ ...a, summary: { ...a.summary, [property]: 'changed' } }, b)).toBe(false)
+  }
+})
+it('retains repeated metadata and multi-instance evidence through the shared report contract', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const fixture: import('../shared/types/seosmith').AuditReport = JSON.parse(await readFile(new URL('../../../supabase/tests/fixtures/seosmith-expanded.json', import.meta.url), 'utf8'))
+  expect(fixture.pages[0]?.open_graph?.['og:image']).toEqual(['/a.webp', '/b.webp'])
+  expect(fixture.pages[0]?.structured_data?.[2]?.format).toBe('microdata')
+  expect(fixture.pages[0]?.relationships?.[0]?.kind).toBe('hreflang_header')
+  expect(fixture.findings[0]?.evidence_items).toHaveLength(2)
+  expect(fixture.request.max_resources).toBe(20000)
+})
