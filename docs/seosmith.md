@@ -132,7 +132,7 @@ application/vnd.wap.xhtml+xml, ignoring case and charset parameters. Resource
 HTML contributes only to `resources.html`. HTP preserves the collector's findings;
 it does not apply page metadata or duplicate-content rules to resource HTML.
 Historical summaries are derived on read without modifying stored reports, raw
-bytes, receipt digests or immutable rows. New summaries carry `summary_version: 2`
+bytes, receipt digests or immutable rows. New summaries carry `summary_version: 3`
 and are read from the stored summary to avoid repeating extraction work.
 
 Comparisons still require matching complete coverage, engine, ruleset and the
@@ -141,8 +141,9 @@ checkpoint metadata, extraction truncation/limit flags, failed or blocked
 observations, and relationships whose targets were not observed prevent complete
 coverage. Even a claimed `checked` relationship needs a target HTTP response in
 the report. Out-of-scope/unfetched targets do not prove successful checks or
-resolution of previous findings. This policy is conservative: the presence of
-unknown target evidence disables finding-resolution comparisons for that run.
+resolution of previous findings. Intentional navigation exclusions preserve
+configured-frontier coverage; the per-finding safeguards below keep their target
+state unknown.
 
 Regression coverage lives in `supabase/tests/seosmith-expanded.test.mjs` with the
 shared `supabase/tests/fixtures/seosmith-expanded.json` fixture. The PGlite suite
@@ -181,3 +182,29 @@ The temporary website, six test reports and its worker binding were removed.
 All seven pre-existing audits remained readable. Their combined fingerprint of
 run IDs, checksums, parsed reports and original bytes matched before migration
 and after test cleanup; no historical audit documents were rewritten.
+
+### Crawl policy exclusions and finding resolution
+
+The follow-up migration `20261101055407_seosmith_policy_exclusions.sql` corrects
+PR #4's P2 review finding. It treats deliberately unfetched navigation as outside
+the configured frontier when external link checking is disabled, rel contains
+nofollow/sponsored/UGC, a document has robots nofollow/none, or the source is
+resource HTML (which does not expand navigation). Relationships retain their
+original `outside_scope`/`not_fetched` state. Checked relationships with a missing
+response, unexplained missing in-scope targets, blocked/failed targets, and actual
+partial/truncated runs remain ineligible for comparisons.
+
+Completeness of the configured frontier does not prove every target was checked.
+Finding comparisons now require the current source observation before resolving
+an absent finding. Target-dependent rules also require every previously observed
+target instance to have a current response. A navigation edge conclusively
+removed from complete source extraction can resolve its previous finding without
+fetching the former target. Historical findings without recoverable target
+URLs stay unverified, and current redirect chains must be fully observed.
+The dashboard reports unverified findings separately from resolved findings, so
+skipped targets cannot appear fixed while source-only metadata improvements
+remain comparable.
+
+Summary version 3 is cached for new reports. History and detail reads recalculate
+older cached summaries without altering reports, raw bytes, digests or immutable
+rows. The comparison key and engine/ruleset compatibility rules are unchanged.

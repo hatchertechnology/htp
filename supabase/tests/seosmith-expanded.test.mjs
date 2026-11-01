@@ -37,6 +37,7 @@ test('expanded schema-1 evidence round-trips through workers, imports and histor
     await identity(); await save(legacy)
     await db.exec('reset role')
     await db.exec(await readFile(new URL('../migrations/'+migration, import.meta.url), 'utf8'))
+    await db.exec(await readFile(new URL('../migrations/20261101055407_seosmith_policy_exclusions.sql', import.meta.url), 'utf8'))
     await identity()
     const old = await detail(legacy.request.request_id)
     assert.equal(old.summary.pages.html,1); assert.equal(old.summary.pages.checked,1)
