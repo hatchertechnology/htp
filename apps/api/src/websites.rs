@@ -330,6 +330,7 @@ fn one(rows: Vec<Website>) -> Result<Website, WebsiteError> {
 }
 
 pub(crate) enum WebsiteError {
+    GitHub(&'static str),
     Invalid(&'static str),
     Unauthorized,
     Forbidden,
@@ -341,6 +342,7 @@ pub(crate) enum WebsiteError {
 impl IntoResponse for WebsiteError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
+            Self::GitHub(message) => (StatusCode::BAD_GATEWAY, message),
             Self::Invalid(message) => (StatusCode::BAD_REQUEST, message),
             Self::Unauthorized => (
                 StatusCode::UNAUTHORIZED,

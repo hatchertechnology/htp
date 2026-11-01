@@ -66,7 +66,7 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); generation++; controller?.abort
     <div class="overview-heading"><div><h1>Website overview</h1><p>{{ ws.selected.value?.fqdn || 'A clearer view of your websites.' }}</p></div></div>
     <p v-if="ws.error.value" role="alert" class="form-error">{{ ws.error.value }} <button @click="ws.load">Try again</button></p>
     <nav class="report-navigation" aria-label="Website reports">
-      <a href="#combined-title">Combined timeline</a><a href="#search-heading">Google Search</a><a href="#bing-heading">Bing</a><a href="#onsite-heading">Visitors</a><a href="#conversions-title">Conversions &amp; revenue</a><a href="#health-title">PageSpeed &amp; Core Web Vitals</a><a href="#seosmith-title">Technical SEO</a><a href="#repository-title">Website changes</a><a v-if="businessProfileEnabled" href="#business-title">Business Profile &amp; changes</a>
+      <a href="#combined-title">Combined timeline</a><a href="#search-heading">Google Search</a><a href="#bing-heading">Bing</a><a href="#onsite-heading">Visitors</a><a href="#conversions-title">Conversions &amp; revenue</a><a href="#health-title">PageSpeed &amp; Core Web Vitals</a><a href="#seosmith-title">Technical SEO</a><a href="#issues-title">HTP issues</a><a href="#repository-title">Website changes</a><a v-if="businessProfileEnabled" href="#business-title">Business Profile &amp; changes</a>
     </nav>
     <CombinedPerformance :search="searchSnapshot.report" :onsite="report" :search-loading="searchSnapshot.loading" :onsite-loading="busy" :search-error="searchSnapshot.error" :onsite-error="error" />
     <SearchDashboard @snapshot="searchSnapshot = $event" />
@@ -89,6 +89,7 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); generation++; controller?.abort
     <ConversionDashboard />
     <SiteHealthDashboard />
     <SeosmithDashboard />
+    <RepositoryIssues />
     <RepositoryHistory />
     <BusinessDashboard v-if="businessProfileEnabled" />
     <p v-if="report" class="report-caption">Google Analytics · Property {{ report.property_id }} · {{ report.report.summary.metadata?.timeZone || 'Property timezone' }} · Exact hostname: {{ report.website.fqdn }}<span v-if="warning">Google reports sampling, thresholding, or grouped rows; some small counts may be withheld.</span></p>

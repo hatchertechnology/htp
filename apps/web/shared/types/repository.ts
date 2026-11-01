@@ -9,3 +9,7 @@ export interface RepositoryCommit {
   repository_url: string; branch: string | null;
 }
 export interface RepositoryHistory { fqdn: string; repository: RepositoryBinding | null; commits: RepositoryCommit[]; has_more: boolean }
+export interface RepositoryIssue {
+  number: number; title: string; state: 'open' | 'closed'; url: string; updated_at: string;
+}
+export interface RepositoryIssues { repository_url: string | null; issues: RepositoryIssue[]; has_more: boolean }

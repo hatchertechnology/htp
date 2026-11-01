@@ -253,6 +253,11 @@ h1{font-size:30px} h2{font-size:21px} .desk-rail{flex-wrap:wrap;gap:10px;padding
 .repository-settings p { max-width: 70ch; color: var(--text-muted, #53677e); }
 .repository-enabled { display: flex; align-items: center; gap: 8px; }
 .repository-history-table td { vertical-align: top; }
+.issues-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.repository-issues-table td { vertical-align: top; }
+.repository-issues-table td:first-child { min-width: 220px; overflow-wrap: anywhere; }
+.repository-issues-table td:nth-child(2), .repository-issues-table td:last-child { white-space: nowrap; }
+.issues-load-more { margin-top: 16px; }
 .repository-history-table td:nth-child(2) { min-width: 240px; overflow-wrap: anywhere; }
 .repository-history-table small { display: block; margin-top: 6px; color: var(--text-muted, #53677e); }
 .repository-history-table th:first-child, .repository-history-table td:first-child, .repository-history-table td:last-child { white-space: nowrap; }

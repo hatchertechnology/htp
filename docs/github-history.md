@@ -32,7 +32,21 @@ differ. These are trend comparisons, not precisely synchronized hourly reports;
 commits do not establish deployment or causation. Include today to view current-day
 commits. Backfill and collection errors are shown rather than claiming completeness.
 
-## Collection
+## HTP issues on the overview
+
+The Overview includes issues labeled `HTP` from the website's latest linked public
+repository. Open issues appear first by default; choose Closed or All issues to
+change the filter. Rows link to GitHub and show status and last update date, sorted
+by most recently updated. Load more issues retrieves the next page. Pull requests
+are excluded, following [GitHub's issues API contract](https://docs.github.com/en/rest/issues/issues#list-repository-issues).
+
+Issues load live through the authenticated API, independently of Google connections,
+reporting dates, tracked branches, and paused commit collection. They are not saved
+as historical snapshots. Refresh issues reads GitHub again. Missing repository links,
+GitHub failures, and request limits have explicit messages. Public unauthenticated
+GitHub quotas apply; dashboard credentials are never sent to GitHub.
+
+## Commit collection
 
 The existing minute Cron invokes the secret-authenticated `google-sync` worker,
 which now drains at most two repository pages per invocation before Google jobs.
@@ -72,8 +86,14 @@ by the API authentication middleware.
   within the owning website; observation timestamps remain separate.
   Default range is the last 29 calendar dates including today.
 
-The same routes are proxied under `/api` on the web host; every request reads or
-writes the database, without making a GitHub request.
+- `GET /websites/{id}/repository/issues` — optional `state=open|closed|all`
+  (default `open`) and `page` (default `1`, maximum `10000`). Verifies website
+  ownership through the saved repository RPC before requesting GitHub. Returns
+  `repository_url`, `issues` (`number`, `title`, `state`, `url`, `updated_at`), and
+  `has_more`. Pages contain up to 100 GitHub records before pull requests are excluded.
+
+The same routes are proxied under `/api` on the web host. Configuration and commit
+history use saved database records; the issues endpoint makes a live GitHub request.
 
 ## MCP
 

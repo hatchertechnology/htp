@@ -31,3 +31,15 @@ it('rejects invalid website IDs before reaching the API', async () => {
   await expect(proxyRepository(event)).rejects.toMatchObject({ statusCode: 400 })
   expect(mocks.raw).not.toHaveBeenCalled()
 })
+it('forwards issue filters to the owner-scoped issues endpoint', async () => {
+  vi.stubGlobal('getQuery', () => ({ state: 'closed', page: '2' }))
+  await proxyRepository(event, 'issues')
+  expect(mocks.raw).toHaveBeenCalledWith(`https://api.example.test/websites/${id}/repository/issues`, expect.objectContaining({
+    headers: { Authorization: 'Bearer current.user.token' }, query: { state: 'closed', page: '2' },
+  }))
+})
+it('does not allow writing through the issues proxy', async () => {
+  vi.stubGlobal('getMethod', () => 'PUT')
+  await expect(proxyRepository(event, 'issues')).rejects.toMatchObject({ statusCode: 405 })
+  expect(mocks.raw).not.toHaveBeenCalled()
+})

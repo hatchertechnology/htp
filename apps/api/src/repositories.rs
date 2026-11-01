@@ -12,6 +12,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+#[path = "repository_issues.rs"]
+mod issues;
+
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RepositoryInput {
@@ -110,6 +113,7 @@ pub(crate) fn router(store: WebsiteStore) -> Router {
     Router::new()
         .route("/websites/{id}/repository", get(history).put(set))
         .route("/websites/{id}/repository/history", get(history))
+        .route("/websites/{id}/repository/issues", get(issues::list))
         .with_state(store)
 }
 async fn set(

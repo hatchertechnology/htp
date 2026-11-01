@@ -533,6 +533,10 @@ async fn every_website_operation_requires_authentication() {
     let app = htp_api::app();
     for (method, path) in [
         ("GET", "/websites"),
+        (
+            "GET",
+            "/websites/00000000-0000-0000-0000-000000000001/repository/issues",
+        ),
         ("POST", "/websites"),
         (
             "POST",
@@ -1584,4 +1588,58 @@ async fn mcp_audit_import_accepts_large_envelopes_but_bounds_report_bytes() {
         }
     }
     assert_eq!(hits.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn repository_issues_check_owner_and_handle_missing_binding() {
+    let auth = TestAuth::with_routes(Router::new().route(
+        "/rest/v1/rpc/website_repository_history",
+        axum::routing::post(
+            |headers: axum::http::HeaderMap, Json(body): Json<Value>| async move {
+                assert!(
+                    headers["authorization"]
+                        .to_str()
+                        .unwrap()
+                        .starts_with("Bearer ")
+                );
+                assert_eq!(headers["apikey"], "publishable-fixture-key");
+                if body["p_website_id"] == "00000000-0000-0000-0000-000000000001" {
+                    (StatusCode::OK, Json(json!({"repository":null})))
+                } else {
+                    (
+                        StatusCode::FORBIDDEN,
+                        Json(json!({"message":"private database detail"})),
+                    )
+                }
+            },
+        ),
+    ))
+    .await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    for (id, expected) in [(1, StatusCode::OK), (2, StatusCode::FORBIDDEN)] {
+        let response = auth
+            .app
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/websites/00000000-0000-0000-0000-{id:012}/repository/issues"
+                ))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let body = response_json(response).await;
+        if id == 1 {
+            assert_eq!(
+                body,
+                json!({"repository_url":null,"issues":[],"has_more":false})
+            );
+        } else {
+            assert!(!body.to_string().contains("private database detail"));
+        }
+    }
 }
