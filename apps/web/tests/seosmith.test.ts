@@ -110,3 +110,82 @@ it('requires observation of the current redirect chain, including targets beyond
   expect(findingChanges(current, previous, [], before, [source!, target!])?.unverified).toBe(1)
   expect(findingChanges(current, previous, [], before, [source!, target!, ...measured('https://outside.example/')])?.resolved).toBe(1)
 })
+it.each([
+  { status: 403, content_type: 'text/html' },
+  { status: 404, content_type: 'text/html' },
+  { status: 200, content_type: 'application/pdf' },
+  { status: 302, content_type: 'text/html' },
+  { status: 200, content_type: 'text/html-invalid' },
+])('keeps HTML findings unverified for $status $content_type', observation => {
+  const current = run('new', '2026-11-01T02:00:00Z'), previous = run('old', '2026-11-01T01:00:00Z')
+  const page = { ...measured('https://example.com/')[0]!, ...observation }
+  const before = ['missing_title', 'missing_description', 'missing_h1', 'invalid_json_ld', 'duplicate_content', 'missing_csp', 'noindex', 'canonical_mismatch'].map(rule => ({ rule, url: page.url, evidence: 'Previously observed' })) as AuditFinding[]
+  expect(findingChanges(current, previous, [], before, [page])).toEqual({ added: 0, resolved: 0, persistent: 0, unverified: before.length })
+})
+it.each([
+  { status: 200, content_type: 'text/html' },
+  { status: 201, content_type: ' TEXT/HTML ; charset=UTF-8' },
+  { status: 299, content_type: 'application/xhtml+xml; charset=utf-8' },
+  { status: 200, content_type: 'application/vnd.wap.xhtml+xml' },
+])('resolves a missing title after successful $status $content_type extraction', observation => {
+  const current = run('new', '2026-11-01T02:00:00Z'), previous = run('old', '2026-11-01T01:00:00Z')
+  const page = { ...measured('https://example.com/')[0]!, ...observation, title: 'Corrected document title' }
+  const before = [{ rule: 'missing_title', url: page.url, evidence: 'Empty' }] as AuditFinding[]
+  expect(findingChanges(current, previous, [], before, [page])).toEqual({ added: 0, resolved: 1, persistent: 0, unverified: 0 })
+})
+it.each([
+  { error: 'extraction_failed' }, { extraction_truncated: true }, { blocked_by_robots: true },
+  { flags: ['extraction_limit'] }, { flags: ['legacy_checkpoint_metadata'] }, { is_resource: true },
+])('requires usable page extraction before resolving HTML metadata: %j', observation => {
+  const current = run('new', '2026-11-01T02:00:00Z'), previous = run('old', '2026-11-01T01:00:00Z')
+  const page = { ...measured('https://example.com/')[0]!, ...observation }
+  const before = [{ rule: 'missing_title', url: page.url, evidence: 'Empty' }] as AuditFinding[]
+  expect(findingChanges(current, previous, [], before, [page])?.unverified).toBe(1)
+})
+it.each([
+  { rule: 'http_client_error', status: 200, content_type: 'application/pdf' },
+  { rule: 'http_server_error', status: 403, content_type: 'text/html' },
+  { rule: 'http_redirect', status: 404, content_type: 'text/html' },
+])('retains HTTP observation eligibility for $rule on $status $content_type', ({ rule, ...observation }) => {
+  const current = run('new', '2026-11-01T02:00:00Z'), previous = run('old', '2026-11-01T01:00:00Z')
+  const page = { ...measured('https://example.com/')[0]!, ...observation }
+  const before = [{ rule, url: page.url, evidence: 'Previously observed HTTP status' }] as AuditFinding[]
+  expect(findingChanges(current, previous, [], before, [page])).toEqual({ added: 0, resolved: 1, persistent: 0, unverified: 0 })
+})
+it('requires extracted source HTML for navigation findings even when the old target was checked', () => {
+  const current = run('new', '2026-11-01T02:00:00Z'), previous = run('old', '2026-11-01T01:00:00Z')
+  const [source, target] = measured('https://example.com/', 'https://outside.example/')
+  source!.status = 403
+  const before = [{ rule: 'external_link_broken', url: source!.url, evidence: target!.url }] as AuditFinding[]
+  expect(findingChanges(current, previous, [], before, [source!, target!])?.unverified).toBe(1)
+})
+it.each(['nofollow_indexable', 'canonical_to_noindex', 'canonical_chain', 'hreflang_to_noindex', 'hreflang_noncanonical', 'hreflang_return_missing'])('requires extracted target HTML for %s', rule => {
+  const current = run('new', '2026-11-01T02:00:00Z'), previous = run('old', '2026-11-01T01:00:00Z')
+  const [source, target] = measured('https://example.com/', 'https://example.com/target')
+  source!.links = [{ url: target!.url, text: 'Target', nofollow: true }]
+  source!.relationships = [{ url: target!.url, kind: 'navigation', descriptor: 'nofollow', resource: false, state: 'checked' }]
+  const before = [{ rule, url: source!.url, evidence: target!.url }] as AuditFinding[]
+  for (const observation of [{ status: 403, content_type: 'text/html' }, { status: 404, content_type: 'text/html' }, { status: 200, content_type: 'application/pdf' }, { extraction_truncated: true }]) {
+    expect(findingChanges(current, previous, [], before, [source!, { ...target!, ...observation }])?.unverified).toBe(1)
+  }
+  expect(findingChanges(current, previous, [], before, [source!, { ...target!, content_type: 'application/xhtml+xml; charset=utf-8', is_resource: true }])?.resolved).toBe(1)
+})
+it('keeps successful CSS dependency findings comparable and rejects failed extraction', () => {
+  const current = run('new', '2026-11-01T02:00:00Z'), previous = run('old', '2026-11-01T01:00:00Z')
+  const [source, target] = measured('https://cdn.example/main.css', 'https://cdn.example/font.woff2')
+  source!.is_resource = true; source!.content_type = 'text/css; charset=utf-8'
+  const before = [{ rule: 'broken_resource', url: source!.url, evidence: target!.url }] as AuditFinding[]
+  expect(findingChanges(current, previous, [], before, [source!, target!])?.resolved).toBe(1)
+  for (const observation of [{ status: 404 }, { content_type: 'application/pdf' }, { extraction_truncated: true }]) {
+    expect(findingChanges(current, previous, [], before, [{ ...source!, ...observation }, target!])?.unverified).toBe(1)
+  }
+})
+it('does not use a changed media type to resolve image or media-type findings', () => {
+  const current = run('new', '2026-11-01T02:00:00Z'), previous = run('old', '2026-11-01T01:00:00Z')
+  const page = measured('https://example.com/image.jpg')[0]!
+  const before = [{ rule: 'large_image', url: page.url, evidence: '200000 bytes' }] as AuditFinding[]
+  expect(findingChanges(current, previous, [], before, [{ ...page, content_type: 'application/pdf' }])?.unverified).toBe(1)
+  expect(findingChanges(current, previous, [], before, [{ ...page, content_type: 'image/jpeg', is_resource: true }])?.resolved).toBe(1)
+  before[0]!.rule = 'incorrect_media_type'
+  expect(findingChanges(current, previous, [], before, [{ ...page, status: 404 }])?.unverified).toBe(1)
+})

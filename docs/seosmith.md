@@ -205,6 +205,15 @@ The dashboard reports unverified findings separately from resolved findings, so
 skipped targets cannot appear fixed while source-only metadata improvements
 remain comparable.
 
+Resolution eligibility follows the rule's analysis requirements. HTML metadata,
+content and navigation findings require a successful 2xx HTML/XHTML page with
+usable, untruncated extraction; a 403, 404, PDF response or resource-only HTML
+observation does not verify that an old missing title was fixed. Rules that read
+HTML metadata from another URL also require successful target HTML extraction.
+HTTP-status rules retain response-based eligibility, while dependency rules can
+use successfully extracted CSS or resource HTML. Findings whose required analysis
+was not eligible stay unverified instead of being counted as resolved.
+
 Summary version 3 is cached for new reports. History and detail reads recalculate
 older cached summaries without altering reports, raw bytes, digests or immutable
 rows. The comparison key and engine/ruleset compatibility rules are unchanged.
