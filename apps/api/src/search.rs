@@ -143,7 +143,9 @@ fn normalized_inspection(value: &str, site: &str, fqdn: &str) -> Option<(String,
         reqwest::Url::parse(site).ok()?.to_string()
     };
     let u = reqwest::Url::parse(value).ok()?;
-    (matches!(u.scheme(), "http" | "https")
+    (u.as_str().len() <= 2048
+        && site.len() <= 2048
+        && matches!(u.scheme(), "http" | "https")
         && u.host_str() == Some(fqdn)
         && u.username().is_empty()
         && u.password().is_none()
@@ -402,6 +404,24 @@ mod tests {
                 "example.com"
             ));
         }
+    }
+    #[test]
+    fn inspection_lengths_apply_after_percent_encoding() {
+        let expanded = format!("https://example.com/{}", "é".repeat(500));
+        assert!(expanded.len() < 2048);
+        assert!(normalized_inspection(&expanded, "sc-domain:example.com", "example.com").is_none());
+        let property = format!("{expanded}/");
+        assert!(
+            normalized_inspection(&format!("{property}child"), &property, "example.com").is_none()
+        );
+        let boundary = format!("https://example.com/{}", "a".repeat(2028));
+        assert_eq!(boundary.len(), 2048);
+        assert!(normalized_inspection(&boundary, "sc-domain:example.com", "example.com").is_some());
+        let permitted = format!("https://example.com/{}", "é".repeat(300));
+        let (normalized, _) =
+            normalized_inspection(&permitted, "sc-domain:example.com", "example.com").unwrap();
+        assert!(normalized.len() <= 2048);
+        assert!(normalized.contains("%C3%A9"));
     }
     #[test]
     fn token_headers_are_unambiguous() {
