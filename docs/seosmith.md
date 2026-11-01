@@ -100,9 +100,9 @@ operational step for each crawler/website binding.
 
 ## Expanded extraction contract (SEOsmith 0.2.0)
 
-Issue #3 is supported by `20261101052410_seosmith_expanded_evidence.sql`.
+Issue #3 is supported by `20261101054016_seosmith_expanded_evidence.sql`.
 Apply this migration after the three audit migrations above before using expanded
-reports. This source change does not deploy the collector, API, frontend or database.
+reports. The production rollout and verification are recorded below.
 Schema version stays 1; engine `0.2.0` uses ruleset `2026-11-01.1`.
 
 Ingestion and imports retain the entire JSON document, including relationships,
@@ -151,3 +151,33 @@ exact bytes/digests and retries, immutable rows, independent budgets, findings
 limits, XHTML/2xx counts and incomplete coverage. Frontend tests verify shared
 types and comparison guards; API tests check exact report forwarding and rejected
 RPC responses without a successful receipt.
+
+### Production verification — 2026-11-01
+
+Deployed application commit `51cddd5` to both existing Fly apps and applied the
+expanded-evidence migration to the HTP Supabase project. Supabase recorded the
+migration as version `20261101054016`; the local migration filename matches that
+recorded version. The collector was outside this HTP rollout.
+
+- API image: `deployment-01M6ASZHHB80ZXPXTEGW5PMYM4`.
+- Frontend image: `deployment-01M6ASZM8W3HFY47QTQE4KWZHK`.
+- Both Fly service health checks passed after deployment.
+- Re-ran 51 Rust tests, 99 frontend tests and all 8 PGlite integration tests;
+  all passed. Frontend typecheck/build and strict API/shared Clippy had also
+  passed. Workspace Clippy still reports three pre-existing
+  `clippy::assert_is_empty` warnings in `apps/cli/tests/http.rs` with Rust 1.99.1.
+
+Live checks used the existing test account and an isolated temporary website.
+Owner import, website-scoped worker ingestion and authenticated frontend proxy
+import/history/detail reads preserved all expanded fixture evidence, original
+bytes and SHA-256 receipts. Duplicate retries deduplicated; conflicting bytes,
+bad digests and over-budget reports failed without accepted receipts. A combined
+40,000-record inventory (20,000 pages and 20,000 resources) imported successfully
+and remained readable. Page/resource HTML and error counts were separate;
+resource limits, extraction truncation and unobserved targets produced incomplete
+coverage. Anonymous requests and cross-owner reads were denied.
+
+The temporary website, six test reports and its worker binding were removed.
+All seven pre-existing audits remained readable. Their combined fingerprint of
+run IDs, checksums, parsed reports and original bytes matched before migration
+and after test cleanup; no historical audit documents were rewritten.

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { PGlite } from '@electric-sql/pglite'
-const migration = '20261101052410_seosmith_expanded_evidence.sql'
+const migration = '20261101054016_seosmith_expanded_evidence.sql'
 const hash = value => createHash('sha256').update(value).digest('hex')
 const owner='00000000-0000-0000-0000-000000000001',site='00000000-0000-0000-0000-000000000003'
 const fixture = JSON.parse(await readFile(new URL('fixtures/seosmith-expanded.json', import.meta.url), 'utf8'))
