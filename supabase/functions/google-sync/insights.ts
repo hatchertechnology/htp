@@ -1,4 +1,5 @@
 import { google, type Job, type Json, SyncError } from "./google.ts";
+import { performanceSource } from "./performance.ts";
 
 export interface InsightKeys {
   pagespeedKey?: string;
@@ -80,15 +81,13 @@ export async function fetchInsight(
   };
   if (job.kind === "pagespeed") {
     if (!keys.pagespeedKey) throw new SyncError("integration_not_configured");
-    if (!["mobile", "desktop"].includes(job.property_id)) {
-      throw new SyncError("invalid_report");
-    }
+    const source = performanceSource(job.kind, job.fqdn, job.property_id);
     const url = new URL(
       "https://www.googleapis.com/pagespeedonline/v5/runPagespeed",
     );
-    url.searchParams.set("url", `https://${job.fqdn}/`);
+    url.searchParams.set("url", source.target);
     url.searchParams.set("key", keys.pagespeedKey);
-    url.searchParams.set("strategy", job.property_id);
+    url.searchParams.set("strategy", source.device);
     for (
       const category of [
         "performance",
@@ -110,8 +109,21 @@ export async function fetchInsight(
       ),
     );
     return {
-      url: `https://${job.fqdn}/`,
-      strategy: job.property_id,
+      url: source.target,
+      strategy: source.device,
+      measurement: {
+        ...source,
+        mode: "lab",
+        sample_count: 1,
+        metrics: Object.fromEntries(
+          [
+            "largest-contentful-paint",
+            "cumulative-layout-shift",
+            "first-contentful-paint",
+            "total-blocking-time",
+          ].map((id) => [id, lighthouse.audits?.[id]?.numericValue ?? null]),
+        ),
+      },
       analysisUTCTimestamp: data.analysisUTCTimestamp,
       lighthouseResult: {
         ...lighthouse,
@@ -122,9 +134,7 @@ export async function fetchInsight(
   }
   if (job.kind === "crux") {
     if (!keys.cruxKey) throw new SyncError("integration_not_configured");
-    if (!["PHONE", "DESKTOP"].includes(job.property_id)) {
-      throw new SyncError("invalid_report");
-    }
+    const source = performanceSource(job.kind, job.fqdn, job.property_id);
     const data = await google(
       `https://chromeuxreport.googleapis.com/v1/records:queryRecord?key=${
         encodeURIComponent(keys.cruxKey)
@@ -133,8 +143,8 @@ export async function fetchInsight(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          origin: `https://${job.fqdn}`,
-          formFactor: job.property_id,
+          [source.scope]: source.target,
+          formFactor: source.device,
           metrics: [
             "largest_contentful_paint",
             "interaction_to_next_paint",
@@ -154,10 +164,11 @@ export async function fetchInsight(
       ? {
         available: false,
         reason: "insufficient_data",
-        origin: `https://${job.fqdn}`,
-        formFactor: job.property_id,
+        [source.scope]: source.target,
+        formFactor: source.device,
+        measurement: { ...source, mode: "field" },
       }
-      : { available: true, ...data };
+      : { ...data, available: true, measurement: { ...source, mode: "field" } };
   }
   if (job.kind === "business_locations") {
     const accounts = await pages(

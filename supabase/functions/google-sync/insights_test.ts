@@ -51,7 +51,8 @@ Deno.test("PageSpeed uses fixed homepage, device and full audit categories, with
     }) as typeof fetch,
   );
   assert(result.lighthouseResult.audits["render-blocking-insight"].score === 0);
-  assert(!JSON.stringify(result).includes("large"));
+  assert(!result.lighthouseResult.audits["final-screenshot"]);
+  assert(!result.lighthouseResult.fullPageScreenshot);
 });
 Deno.test("CrUX preserves collection period and treats absent traffic as a successful observation", async () => {
   for (const absent of [false, true]) {
@@ -280,4 +281,94 @@ Deno.test("malformed successful profile responses cannot become false deletion o
     rejected = (error as { code: string }).code === "google_unavailable";
   }
   assert(rejected);
+});
+
+Deno.test("priority page reports retain URL/device/lab provenance and never substitute origin field data", async () => {
+  for (const kind of ["pagespeed", "crux"] as const) {
+    const device = kind === "pagespeed" ? "desktop" : "DESKTOP";
+    const target = "https://example.com/services?area=macon";
+    let calls = 0;
+    const result = await fetchInsight(
+      { ...job, kind, property_id: `${device}|${target}` },
+      "",
+      { pagespeedKey: "key", cruxKey: "key" },
+      (async (input, options) => {
+        calls++;
+        if (kind === "pagespeed") {
+          assert(new URL(String(input)).searchParams.get("url") === target);
+          assert(
+            new URL(String(input)).searchParams.get("strategy") === device,
+          );
+          return Response.json({
+            lighthouseResult: {
+              categories: { performance: { score: 0.8 } },
+              lighthouseVersion: "13",
+              configSettings: { formFactor: "desktop" },
+              audits: { "total-blocking-time": { numericValue: 0 } },
+            },
+          });
+        }
+        const body = JSON.parse(String(options?.body));
+        assert(
+          body.url === target && !body.origin && body.formFactor === device,
+        );
+        return Response.json({ error: { status: "NOT_FOUND" } }, {
+          status: 404,
+        });
+      }) as typeof fetch,
+    );
+    assert(
+      calls === 1 && result.measurement.target === target &&
+        result.measurement.scope === "url",
+    );
+    assert(
+      result.measurement.device === device &&
+        result.measurement.semantics_version === 1,
+    );
+    if (kind === "crux") assert(result.available === false && !result.record);
+    else {assert(
+        result.measurement.sample_count === 1 &&
+          result.measurement.metrics["total-blocking-time"] === 0 &&
+          result.measurement.metrics["largest-contentful-paint"] === null,
+      );}
+  }
+});
+
+Deno.test("invalid sampled URLs never reach a provider", async () => {
+  for (
+    const url of [
+      "https://other.example/a",
+      "http://example.com/a",
+      "https://example.com:8443/a",
+      "https://user@example.com/a",
+      "https://example.com/a#fragment",
+      "https://example.com/a#",
+      "https://example.com/a|b",
+      "https://example.com/a b",
+      "https://example.com:443/a",
+    ]
+  ) {
+    for (const kind of ["pagespeed", "crux"] as const) {
+      let called = false;
+      try {
+        await fetchInsight(
+          {
+            ...job,
+            kind,
+            property_id: `${kind === "crux" ? "PHONE" : "mobile"}|${url}`,
+          },
+          "",
+          { pagespeedKey: "key", cruxKey: "key" },
+          (async () => {
+            called = true;
+            return Response.json({});
+          }) as typeof fetch,
+        );
+        throw new Error("Expected rejection");
+      } catch (error) {
+        assert((error as { code: string }).code === "invalid_report");
+      }
+      assert(!called);
+    }
+  }
 });
