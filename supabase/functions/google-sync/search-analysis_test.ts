@@ -123,6 +123,17 @@ Deno.test("landing outcomes preserve zero values and reject unrelated periods or
     result.landing_outcomes.collection.returned_rows === 1 &&
       result.landing_outcomes.collection.truncated === null,
   );
+  // Net totalRevenue subtracts refunds; valid signed revenue is preserved.
+  conversions.pages.rows[0].metricValues[2].value = "-25";
+  result = analyzeSearch(current, undefined, conversions);
+  assert(result.landing_outcomes.available);
+  assert(result.landing_outcomes.rows[0].metrics.totalRevenue === -25);
+  conversions.pages.rows[0].metricValues[0].value = "-1";
+  assert(
+    analyzeSearch(current, undefined, conversions).landing_outcomes.reason ===
+      "invalid_landing_rows",
+  );
+  conversions.pages.rows[0].metricValues[0].value = "10";
   conversions.pages.rowCount = 20;
   result = analyzeSearch(current, undefined, conversions);
   assert(

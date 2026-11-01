@@ -197,7 +197,10 @@ export function analyzeSearch(
           if (
             typeof landing !== "string" || !Array.isArray(values) ||
             values.length !== names.length ||
-            values.some((value: number) => !Number.isFinite(value) || value < 0)
+            values.some((value: number, i: number) =>
+              !Number.isFinite(value) ||
+              (value < 0 && names[i] !== "totalRevenue")
+            )
           ) return [];
           return [{
             landing_page: landing,
