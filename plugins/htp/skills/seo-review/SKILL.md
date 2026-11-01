@@ -29,7 +29,8 @@ For each relevant FQDN:
 1. Call `website_saved_data` with `dataset: sources`. Follow `next_cursor` as
    `before_id` until `has_more` is false. Identify kinds, property/device IDs,
    report ranges, latest snapshot times, current bindings, connection status and
-   collection errors. Inventory sources before choosing ranges or properties.
+   collection errors. Also inspect `bing_sources` and `bing_snapshots` when Bing
+   evidence is relevant. Inventory sources before choosing ranges or properties.
 2. Read `dataset: snapshots`, optionally restricting `job_id` to a discovered
    source UUID. Start with `limit: 1` for PageSpeed/Lighthouse audits. Follow every
    page needed for the requested scope. Each item contains complete stored data,
@@ -38,7 +39,10 @@ For each relevant FQDN:
 3. Read `dataset: profile_changes` when local SEO or Business Profile history is
    relevant. Paginate independently; an absence of changes is not proof the
    profile never changed outside HTP's observation history.
-4. Read `website_repository_history` to correlate changes with traffic, search,
+4. Read `website_audit_history` for Seosmith technical SEO runs and use
+   `website_audit_detail` for complete findings. Follow both scan timestamp and
+   delivery UUID cursors. No runs means no saved audit, not a passing website.
+5. Read `website_repository_history` to correlate changes with traffic, search,
    conversions or health. Supply explicit UTC date ranges of up to 366 inclusive
    days; split longer periods into contiguous ranges. Follow commit `before_id`
    cursors while `has_more`. Commit times do not establish deployment times.

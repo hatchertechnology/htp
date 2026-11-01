@@ -20,7 +20,7 @@ scopes do not make database access read-only. Ownership checks remain in effect.
 | Tool | Inputs and behavior |
 | --- | --- |
 | `list_websites` | Optional `limit` (1–100, default 50), `offset` (default 0). Returns `items`, `has_more`, `next_offset`. |
-| `website_saved_data` | Required `fqdn`, `dataset` (`sources`, `snapshots`, `profile_changes`). Optional `job_id` UUID, opaque string `before_id`, `limit` (1–100, default 20). Returns `items`, `has_more`, `next_cursor`. Keep filters unchanged during pagination. |
+| `website_saved_data` | Required `fqdn`, `dataset` (`sources`, `snapshots`, `profile_changes`, `bing_sources`, `bing_snapshots`). Optional `job_id` UUID, opaque string `before_id`, `limit` (1–100, default 20). Returns `items`, `has_more`, `next_cursor`. Keep filters unchanged during pagination. |
 | `website_repository_history` | Required `fqdn`; optional `start_date`, `end_date` (`YYYY-MM-DD`, UTC) and integer `before_id`. Defaults to a recent range; specify ranges for historical research. Follow `has_more` using the last commit ID. |
 | `set_website_repository` | Writes configuration; use only for a requested repository change, through the repository-settings skill. |
 | `hello_world_secured` | Authentication greeting; use a real data read to verify research access. |
@@ -45,3 +45,10 @@ status describe collection, not the success or failure of the website itself.
 Snapshot JSON can be large. Read narrowly by discovered `job_id` and small page
 sizes rather than repeatedly loading entire portfolios. Preserve provider metadata
 and explain limits when data exceeds the available context.
+
+
+Account management tools are documented in the
+[website management skill](../../website-management/SKILL.md). They support
+website CRUD, GA4 and Business Profile bindings, background report registration,
+and Seosmith audit history, detail and import, using the same validation and
+ownership checks as HTP's REST API. OAuth consent remains interactive.

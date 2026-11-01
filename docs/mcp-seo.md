@@ -1,4 +1,4 @@
-# Agent access to saved website evidence
+# Agent access to website data
 
 Connect a Streamable HTTP MCP client to:
 
@@ -214,3 +214,44 @@ a successful empty list. Bing daily traffic and weekly query/page reports have
 different coverage from Google web-search reports. Query/page dates are provider
 periods, not an arbitrary requested date range. Full rows remain available in MCP
 when dashboard tables show only the first 20. See [Bing setup](bing-sync.md).
+
+
+## Account management through MCP
+
+The protected endpoint also exposes these owner-scoped tools. All mutations use
+existing REST handlers in process, forwarding only the authenticated caller's
+bearer token. Inputs cannot select arbitrary routes, RPCs, ownership or credentials.
+No database migration or new privileged key is required. Provider operations use
+the existing HTP web service at its fixed HTTPS origin with redirects disabled;
+only the authenticated caller identity is forwarded. The web service retains
+provider grants and performs the same checks as dashboard operations.
+
+| Tool | Inputs | Result |
+| --- | --- | --- |
+| `get_provider_connection` | `provider`: google or bing | Account connection metadata, never credentials |
+| `disconnect_provider` | `provider`: google or bing | Account-wide disconnect; saved evidence retained |
+| `inspect_website_url` | `website_id`, `site_url`, `url` | Google indexed-version inspection using the existing grant |
+| `create_website` | `fqdn` | New website; duplicate FQDN returns 409 |
+| `get_website` | `website_id` UUID | Website and GA4 binding |
+| `update_website` | `website_id`, `fqdn` | Renamed website; existing hostname reset rules apply |
+| `delete_website` | `website_id` | Permanent deletion including associated records; `{deleted:true}` on success |
+| `set_website_ga4_property` | `website_id`, explicit `property_id` string or null | Updated website |
+| `set_website_business_location` | `website_id`, `location_id`, `linked` | Current location configuration; feature flag enforced |
+| `request_website_report` | `website_id`, `kind`, optional source `property_id` and inclusive `start_date`/`end_date` | Latest report and sync metadata, or pending; registers background refresh |
+| `website_audit_history` | `website_id`, optional `limit`, `before`, `before_id` | Paginated Seosmith summaries/trends |
+| `website_audit_detail` | `website_id`, `delivery_id` UUID | Full saved Seosmith report |
+| `import_website_audit` | `website_id`, `report_json` string | Validated, deduplicated Seosmith import (16 MiB report limit) |
+
+See the packaged [management workflow](../plugins/htp/skills/website-management/SKILL.md)
+for report kinds and source formats. Reads of saved data do not fetch providers;
+`request_website_report` explicitly registers collection. Pending is a successful
+queue response, never proof that new data is ready. Failed operations return MCP
+`isError:true`; handler errors retain sanitized messages and HTTP status in the
+structured content. Delete is marked destructive; create is non-idempotent.
+MCP request bodies allow 32 MiB to accommodate JSON-encoded audit imports, while
+the audit handler still enforces the 16 MiB report limit.
+
+Provider authorization/consent, authorized-app revocation and Seosmith worker
+credential provisioning remain outside these tools. They are authorization or infrastructure operations,
+not generic data writes. Never work around them using privileged database access.
+Business Profile is currently feature-paused; MCP honors that pause.

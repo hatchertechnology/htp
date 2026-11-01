@@ -61,7 +61,8 @@ async function decide(approve: boolean) {
         <p>Only approve apps you recognize and trust. This app will act as <strong>{{ user?.email }}</strong>.</p>
         <ul class="oauth-permissions">
           <li>Read saved reports, complete SEO audits, profile changes, and repository history for your websites.</li>
-          <li>Manage your website records and repository settings using your account’s existing permissions.</li>
+          <li>Add, rename or permanently delete website records and saved evidence; manage GA4, Business Profile and repository settings using your account’s existing permissions.</li>
+          <li>Request background reports, import technical SEO audits, inspect indexed URLs, and view or disconnect your Google and Bing connections. Provider credentials stay on the HTP server.</li>
           <li v-for="scope in scopes" :key="scope">{{ scopeDescription(scope) }}</li>
         </ul>
         <dl class="service-access"><div><dt>App ID</dt><dd>{{ details.client.id }}</dd></div><div><dt>Return address</dt><dd>{{ details.redirect_uri }}</dd></div></dl>

@@ -142,8 +142,8 @@ async fn official_mcp_client_authenticates_every_request() {
         );
         let client = ClientConfig::default().serve(transport).await.unwrap();
         let tools = client.list_tools(None).await.unwrap();
-        assert_eq!(tools.tools.len(), 5);
-        assert_eq!(tools.tools[0].name, "hello_world_secured");
+        assert_eq!(tools.tools.len(), 18);
+        assert!(tools.tools.iter().any(|tool| tool.name == "create_website"));
         let result = client
             .call_tool(CallToolRequestParams::new("hello_world_secured"))
             .await
@@ -1302,4 +1302,286 @@ async fn bing_reports_use_only_owned_saved_data_and_preserve_pending_state() {
         StatusCode::NOT_FOUND
     );
     assert_eq!(hits.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn mcp_management_crud_reuses_rest_validation_and_owner_identity() {
+    let auth = TestAuth::with_routes(
+        Router::new()
+            .route("/rest/v1/websites", axum::routing::any(data_api_fixture))
+            .with_state(WebsiteFixture::default()),
+    )
+    .await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let create = json!({"fqdn":" WWW.VoteHatcher.COM. "});
+    let result = response_json(
+        research_mcp_call(&auth, Some(&token), "create_website", create.clone()).await,
+    )
+    .await;
+    assert_eq!(result["result"]["isError"], false);
+    let website = &result["result"]["structuredContent"];
+    assert_eq!(website["fqdn"], "www.votehatcher.com");
+    let id = website["id"].as_str().unwrap();
+    let target = json!({"website_id":id});
+    let read =
+        response_json(research_mcp_call(&auth, Some(&token), "get_website", target.clone()).await)
+            .await;
+    assert_eq!(&read["result"]["structuredContent"], website);
+    let conflict =
+        response_json(research_mcp_call(&auth, Some(&token), "create_website", create).await).await;
+    assert_eq!(conflict["result"]["isError"], true);
+    assert_eq!(conflict["result"]["structuredContent"]["status"], 409);
+    for property in [json!("12345"), Value::Null] {
+        let bound = response_json(
+            research_mcp_call(
+                &auth,
+                Some(&token),
+                "set_website_ga4_property",
+                json!({"website_id":id,"property_id":property}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(bound["result"]["isError"], false);
+        assert_eq!(
+            bound["result"]["structuredContent"]["ga4_property_id"],
+            property
+        );
+    }
+    for (name, args) in [
+        ("create_website", json!({"fqdn":"https://example.com/path"})),
+        (
+            "set_website_ga4_property",
+            json!({"website_id":id,"property_id":"0invalid"}),
+        ),
+    ] {
+        let invalid = response_json(research_mcp_call(&auth, Some(&token), name, args).await).await;
+        assert_eq!(invalid["result"]["isError"], true);
+        assert_eq!(invalid["result"]["structuredContent"]["status"], 400);
+    }
+    let renamed = response_json(
+        research_mcp_call(
+            &auth,
+            Some(&token),
+            "update_website",
+            json!({"website_id":id,"fqdn":"renamed.example.com"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        renamed["result"]["structuredContent"]["fqdn"],
+        "renamed.example.com"
+    );
+    let deleted = response_json(
+        research_mcp_call(&auth, Some(&token), "delete_website", target.clone()).await,
+    )
+    .await;
+    assert_eq!(deleted["result"]["structuredContent"]["deleted"], true);
+    let missing =
+        response_json(research_mcp_call(&auth, Some(&token), "get_website", target.clone()).await)
+            .await;
+    assert_eq!(missing["result"]["isError"], true);
+    assert_eq!(missing["result"]["structuredContent"]["status"], 404);
+    for (name, args) in [
+        ("create_website", json!({"fqdn":"example.com"})),
+        ("delete_website", target.clone()),
+        (
+            "request_website_report",
+            json!({"website_id":id,"kind":"bing"}),
+        ),
+        (
+            "import_website_audit",
+            json!({"website_id":id,"report_json":"{}"}),
+        ),
+    ] {
+        assert_eq!(
+            research_mcp_call(&auth, None, name, args).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    // Unknown ownership fields and path injection are rejected by MCP argument decoding.
+    for args in [
+        json!({"fqdn":"example.com","owner_id":"attacker"}),
+        json!({"website_id":"../other"}),
+    ] {
+        let name = if args.get("fqdn").is_some() {
+            "create_website"
+        } else {
+            "delete_website"
+        };
+        let invalid = response_json(research_mcp_call(&auth, Some(&token), name, args).await).await;
+        assert!(invalid.get("error").is_some() || invalid["result"]["isError"] == true);
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
+    let fixture = WebsiteFixture::default();
+    fixture.0.lock().await.push(htp_shared::Website {
+        id: uuid::Uuid::from_u128(1),
+        fqdn: "example.com".into(),
+        ga4_property_id: Some("123".into()),
+    });
+    let hits = Arc::new(AtomicUsize::new(0));
+    let capture = hits.clone();
+    let rpc = Router::new().route(
+        "/rest/v1/rpc/{name}",
+        axum::routing::post(
+            move |axum::extract::Path(name): axum::extract::Path<String>,
+                  headers: axum::http::HeaderMap,
+                  Json(body): Json<Value>| {
+                let capture = capture.clone();
+                async move {
+                    capture.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(headers["apikey"], "publishable-fixture-key");
+                    assert!(
+                        headers["authorization"]
+                            .to_str()
+                            .unwrap()
+                            .starts_with("Bearer ")
+                    );
+                    assert!(!headers.contains_key("x-google-access-token"));
+                    assert!(matches!(
+                        name.as_str(),
+                        "request_google_report"
+                            | "request_bing_report"
+                            | "set_business_location"
+                            | "seosmith_audit_history"
+                            | "seosmith_audit_detail"
+                            | "import_seosmith_audit"
+                    ));
+                    if body["p_website_id"] != uuid::Uuid::from_u128(1).to_string() {
+                        return (
+                            StatusCode::FORBIDDEN,
+                            Json(json!({"error":"PRIVATE DATABASE DETAIL"})),
+                        );
+                    }
+                    (
+                        StatusCode::OK,
+                        Json(
+                            json!({"data":null,"sync":{"state":"pending"},"input":body,"rpc":name}),
+                        ),
+                    )
+                }
+            },
+        ),
+    );
+    let auth = TestAuth::with_routes(
+        Router::new()
+            .route("/rest/v1/websites", axum::routing::any(data_api_fixture))
+            .with_state(fixture)
+            .merge(rpc),
+    )
+    .await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let id = uuid::Uuid::from_u128(1).to_string();
+    for kind in [
+        "analytics",
+        "search",
+        "properties",
+        "pagespeed",
+        "crux",
+        "conversions",
+        "business_locations",
+        "business_profile",
+        "business_performance",
+        "bing",
+    ] {
+        let property = if kind == "search" {
+            "sc-domain:example.com"
+        } else {
+            "123"
+        };
+        let result = response_json(research_mcp_call(&auth, Some(&token), "request_website_report", json!({"website_id":id,"kind":kind,"property_id":property,"start_date":"2026-10-01","end_date":"2026-10-28"})).await).await;
+        assert_eq!(result["result"]["isError"], false, "{kind}: {result}");
+        let body = &result["result"]["structuredContent"];
+        assert!(body["code"] == "report_pending" || body["sync"]["state"] == "pending");
+    }
+    for (name, args, rpc) in [
+        (
+            "set_website_business_location",
+            json!({"website_id":id,"location_id":"locations/123","linked":true}),
+            "set_business_location",
+        ),
+        (
+            "website_audit_history",
+            json!({"website_id":id,"limit":1,"before":"2026-10-01T00:00:00Z","before_id":id}),
+            "seosmith_audit_history",
+        ),
+        (
+            "website_audit_detail",
+            json!({"website_id":id,"delivery_id":id}),
+            "seosmith_audit_detail",
+        ),
+        (
+            "import_website_audit",
+            json!({"website_id":id,"report_json":"{}"}),
+            "import_seosmith_audit",
+        ),
+    ] {
+        let result = response_json(research_mcp_call(&auth, Some(&token), name, args).await).await;
+        assert_eq!(result["result"]["isError"], false, "{result}");
+        assert_eq!(result["result"]["structuredContent"]["rpc"], rpc);
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), 14);
+    for args in [
+        json!({"website_id":id,"kind":"analytics","property_id":"123","start_date":"2026-02-30","end_date":"2026-10-01"}),
+        json!({"website_id":id,"kind":"search","property_id":"sc-domain:other.com","start_date":"2026-10-01","end_date":"2026-10-28"}),
+        json!({"website_id":uuid::Uuid::from_u128(999).to_string(),"kind":"bing"}),
+    ] {
+        let result = response_json(
+            research_mcp_call(&auth, Some(&token), "request_website_report", args).await,
+        )
+        .await;
+        assert_eq!(result["result"]["isError"], true);
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), 14);
+    let denied = response_json(
+        research_mcp_call(
+            &auth,
+            Some(&token),
+            "website_audit_detail",
+            json!({"website_id":uuid::Uuid::from_u128(999).to_string(),"delivery_id":id}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(denied["result"]["isError"], true);
+    assert!(!denied.to_string().contains("PRIVATE DATABASE DETAIL"));
+}
+
+#[tokio::test]
+async fn mcp_audit_import_accepts_large_envelopes_but_bounds_report_bytes() {
+    let hits = Arc::new(AtomicUsize::new(0));
+    let capture = hits.clone();
+    let auth = TestAuth::with_routes(
+        Router::new().route(
+            "/rest/v1/rpc/import_seosmith_audit",
+            axum::routing::post(move |Json(body): Json<Value>| {
+                let capture = capture.clone();
+                async move {
+                    capture.fetch_add(1, Ordering::SeqCst);
+                    assert!(body["p_report_json"].as_str().unwrap().len() > 4 * 1024 * 1024);
+                    Json(json!({"accepted":true}))
+                }
+            })
+            .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024)),
+        ),
+    )
+    .await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    for (size, accepted) in [(4 * 1024 * 1024 + 1, true), (16 * 1024 * 1024 + 1, false)] {
+        let result = response_json(research_mcp_call(&auth, Some(&token), "import_website_audit",
+            json!({"website_id":uuid::Uuid::from_u128(1).to_string(),"report_json":"x".repeat(size)})).await).await;
+        assert_eq!(result["result"]["isError"], !accepted, "{result}");
+        if accepted {
+            assert_eq!(result["result"]["structuredContent"]["accepted"], true);
+        } else {
+            assert_eq!(result["result"]["structuredContent"]["status"], 413);
+        }
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
 }
