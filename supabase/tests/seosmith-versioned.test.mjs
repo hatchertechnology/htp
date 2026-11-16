@@ -22,7 +22,10 @@ async function setup() {
   await db.query('insert into public.seosmith_bindings(website_id,token_sha256) values($1,$2)',[site,hash('x'.repeat(64))])
   return db
 }
-const upgrade = async db => db.exec(await readFile(new URL('../migrations/'+migration, import.meta.url), 'utf8'))
+const upgrade = async db => {
+  await db.exec(await readFile(new URL('../migrations/'+migration, import.meta.url), 'utf8'))
+  await db.exec(await readFile(new URL('../migrations/20261116221958_seosmith_summary_target_lookup.sql', import.meta.url), 'utf8'))
+}
 const identity = async db => {
   await db.exec('reset role;set role authenticated')
   await db.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({sub:owner,is_anonymous:false})])
@@ -251,5 +254,29 @@ test('token-heavy schema-2 input at the 16 MiB bound stays bounded', async () =>
     const start=performance.now()
     await db.query('select public.seosmith_check_raw_report($1)',[raw])
     assert.ok(performance.now()-start<120000,'bounded token scan exceeded two minutes')
+  } finally { await db.close() }
+})
+
+
+test('target lookup preserves coverage and summaries across checked, missing, duplicate, and excluded relationships', async () => {
+  const db=await setup()
+  try {
+    await db.exec(await readFile(new URL('../migrations/'+migration, import.meta.url), 'utf8'))
+    const samples=[]
+    for (const kind of ['checked','missing','unknown','excluded','duplicate','null-url']) {
+      const r=structuredClone(legacy)
+      const rel=r.pages[0].relationships[0]
+      if (kind==='missing') rel.url='https://example.com/missing'
+      if (kind==='unknown') rel.state='not_fetched'
+      if (kind==='excluded') Object.assign(rel,{kind:'navigation',url:'https://outside.example/',state:'outside_scope',resource:false})
+      if (kind==='duplicate') r.pages.push(structuredClone(r.pages[1]))
+      if (kind==='null-url') rel.url=null
+      samples.push(r)
+    }
+    const summarize=async r=>(await db.query('select public.seosmith_summary($1) as s',[r])).rows[0].s
+    const expected=[]
+    for (const r of samples) expected.push(await summarize(r))
+    await db.exec(await readFile(new URL('../migrations/20261116221958_seosmith_summary_target_lookup.sql', import.meta.url), 'utf8'))
+    for (let i=0;i<samples.length;i++) assert.deepEqual(await summarize(samples[i]),expected[i])
   } finally { await db.close() }
 })
