@@ -142,7 +142,7 @@ async fn official_mcp_client_authenticates_every_request() {
         );
         let client = ClientConfig::default().serve(transport).await.unwrap();
         let tools = client.list_tools(None).await.unwrap();
-        assert_eq!(tools.tools.len(), 18);
+        assert_eq!(tools.tools.len(), 20);
         assert!(tools.tools.iter().any(|tool| tool.name == "create_website"));
         let result = client
             .call_tool(CallToolRequestParams::new("hello_world_secured"))
@@ -1484,6 +1484,9 @@ async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
                         "request_google_report"
                             | "read_bing_history"
                             | "register_report_collection"
+                            | "register_provider_report_request"
+                            | "get_provider_report_request"
+                            | "cancel_provider_report_request"
                             | "set_business_location"
                             | "seosmith_audit_history"
                             | "seosmith_audit_detail"
@@ -1491,6 +1494,13 @@ async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
                     ));
                     if name == "read_bing_history" {
                         saved_ranges.lock().await.push(body.clone());
+                    }
+                    if name.ends_with("provider_report_request") {
+                        return (StatusCode::OK, Json(if body["p_request_key"] == "conflict" {
+                            json!({"code":"CONFLICT"})
+                        } else {
+                            json!({"collection":{"requestKey":body["p_request_key"],"status":if name.starts_with("cancel") {"withdrawn"} else {"accepted"}}})
+                        }));
                     }
                     if body["p_website_id"] != uuid::Uuid::from_u128(1).to_string() {
                         return (
@@ -1616,6 +1626,41 @@ async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
     .await;
     assert_eq!(denied["result"]["isError"], true);
     assert!(!denied.to_string().contains("PRIVATE DATABASE DETAIL"));
+    for (name, args, status) in [
+        (
+            "request_website_report",
+            json!({"website_id":id,"kind":"bing","request_key":"intent"}),
+            "accepted",
+        ),
+        (
+            "get_website_report_request",
+            json!({"website_id":id,"request_key":"intent"}),
+            "accepted",
+        ),
+        (
+            "cancel_website_report_request",
+            json!({"website_id":id,"request_key":"intent"}),
+            "withdrawn",
+        ),
+    ] {
+        let result = response_json(research_mcp_call(&auth, Some(&token), name, args).await).await;
+        assert_eq!(
+            result["result"]["structuredContent"]["collection"]["status"], status,
+            "{result}"
+        );
+    }
+    let conflict = response_json(
+        research_mcp_call(
+            &auth,
+            Some(&token),
+            "get_website_report_request",
+            json!({"website_id":id,"request_key":"conflict"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(conflict["result"]["isError"], true);
+    assert_eq!(conflict["result"]["structuredContent"]["code"], "CONFLICT");
 }
 
 #[tokio::test]
