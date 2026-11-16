@@ -1,0 +1,751 @@
+{
+  "contractVersion": "1.0.0",
+  "kind": "offline-normalized-contract",
+  "live": false,
+  "scenarios": [
+    {
+      "id": "htp.saved_reads.no_collection",
+      "operation": "htp.website_saved_data",
+      "context": {
+        "mode": "htp",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "complete",
+        "outcome": "unknown",
+        "source": "stored",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "htp.disconnected.saved_history",
+      "operation": "htp.website_saved_data",
+      "context": {
+        "mode": "htp",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "providerConnected": false
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "partial",
+        "outcome": "unknown",
+        "source": "stored",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "htp.auth.expired",
+      "operation": "htp.website_saved_data",
+      "context": {
+        "mode": "htp",
+        "authorized": false,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true
+      },
+      "expected": {
+        "status": "error",
+        "code": "auth_required",
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "none",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "htp.cross_website.denied",
+      "operation": "htp.website_audit_detail",
+      "context": {
+        "mode": "htp",
+        "authorized": false,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "websiteOwned": false
+      },
+      "expected": {
+        "status": "error",
+        "code": "forbidden",
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "none",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "htp.partial_coverage",
+      "operation": "htp.website_saved_data",
+      "context": {
+        "mode": "htp",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "partial",
+        "outcome": "unknown",
+        "source": "stored",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "htp.report.collect",
+      "operation": "htp.request_website_report",
+      "context": {
+        "mode": "htp",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true
+      },
+      "expected": {
+        "status": "pending",
+        "code": null,
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "provider-collection",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "htp.missing_capability",
+      "operation": "htp.website_saved_data",
+      "context": {
+        "mode": "htp",
+        "authorized": true,
+        "capability": false,
+        "contractMajor": 1,
+        "explicit": true
+      },
+      "expected": {
+        "status": "unsupported",
+        "code": "unsupported_capability",
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "none",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "htp.repository.read",
+      "operation": "htp.website_repository_history",
+      "context": {
+        "mode": "htp",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "complete",
+        "outcome": "unknown",
+        "source": "stored",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "contract.major_mismatch",
+      "operation": "seosmith.start",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 2,
+        "explicit": true
+      },
+      "expected": {
+        "status": "unsupported",
+        "code": "unsupported_version",
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "none",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.start.bounded",
+      "operation": "seosmith.start",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "requestId": "11111111-1111-4111-8111-111111111111",
+        "pages": 100,
+        "seconds": 60,
+        "resources": 100,
+        "delayMs": 1000
+      },
+      "expected": {
+        "status": "accepted",
+        "code": null,
+        "jobsCreated": 1,
+        "requestId": "11111111-1111-4111-8111-111111111111",
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "local",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.retry.same_request",
+      "operation": "seosmith.start",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "requestId": "11111111-1111-4111-8111-111111111111",
+        "priorRequestId": "11111111-1111-4111-8111-111111111111",
+        "samePayload": true
+      },
+      "expected": {
+        "status": "accepted",
+        "code": null,
+        "jobsCreated": 0,
+        "requestId": "11111111-1111-4111-8111-111111111111",
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "local",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.retry.conflict",
+      "operation": "seosmith.start",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "requestId": "11111111-1111-4111-8111-111111111111",
+        "priorRequestId": "11111111-1111-4111-8111-111111111111",
+        "samePayload": false
+      },
+      "expected": {
+        "status": "error",
+        "code": "identity_conflict",
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "none",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.status.running",
+      "operation": "seosmith.status",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "requestId": "11111111-1111-4111-8111-111111111111"
+      },
+      "expected": {
+        "status": "running",
+        "code": null,
+        "jobsCreated": 0,
+        "requestId": "11111111-1111-4111-8111-111111111111",
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "local",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.cancel.accepted",
+      "operation": "seosmith.cancel",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "requestId": "11111111-1111-4111-8111-111111111111"
+      },
+      "expected": {
+        "status": "cancelling",
+        "code": null,
+        "jobsCreated": 0,
+        "requestId": "11111111-1111-4111-8111-111111111111",
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "local",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.cancel.terminal",
+      "operation": "seosmith.status",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "requestId": "11111111-1111-4111-8111-111111111111"
+      },
+      "expected": {
+        "status": "cancelled",
+        "code": null,
+        "jobsCreated": 0,
+        "requestId": "11111111-1111-4111-8111-111111111111",
+        "coverage": "partial",
+        "outcome": "unknown",
+        "source": "local",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.report.complete",
+      "operation": "seosmith.report",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "requestId": "11111111-1111-4111-8111-111111111111"
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "complete",
+        "outcome": "unknown",
+        "source": "stored",
+        "reportSchema": 1,
+        "bytes": 512,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.report.partial",
+      "operation": "seosmith.report",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "requestId": "11111111-1111-4111-8111-111111111111"
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "partial",
+        "outcome": "unknown",
+        "source": "stored",
+        "reportSchema": 1,
+        "bytes": 512,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.report.truncated",
+      "operation": "seosmith.report",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "requestId": "11111111-1111-4111-8111-111111111111"
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "truncated",
+        "outcome": "unknown",
+        "source": "stored",
+        "reportSchema": 1,
+        "bytes": 512,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.report.not_ready",
+      "operation": "seosmith.report",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true
+      },
+      "expected": {
+        "status": "pending",
+        "code": "not_ready",
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "none",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.report.export",
+      "operation": "seosmith.export",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "requestId": "11111111-1111-4111-8111-111111111111"
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "complete",
+        "outcome": "unknown",
+        "source": "stored",
+        "reportSchema": 1,
+        "bytes": 512,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.standalone.offline",
+      "operation": "seosmith.cli.crawl",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "htpConnected": false,
+        "requestId": "11111111-1111-4111-8111-111111111111"
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "jobsCreated": 1,
+        "requestId": "11111111-1111-4111-8111-111111111111",
+        "coverage": "complete",
+        "outcome": "unknown",
+        "source": "local",
+        "reportSchema": 1,
+        "bytes": 512,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.invalid_scope",
+      "operation": "seosmith.start",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "scopeValid": false
+      },
+      "expected": {
+        "status": "error",
+        "code": "invalid_scope",
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "none",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.unconfigured_worker",
+      "operation": "seosmith.start",
+      "context": {
+        "mode": "private-worker",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "configured": false
+      },
+      "expected": {
+        "status": "unsupported",
+        "code": "configuration_required",
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "none",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.missing_binary",
+      "operation": "seosmith.cli.crawl",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "binaryPresent": false
+      },
+      "expected": {
+        "status": "unsupported",
+        "code": "missing_binary",
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "none",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.worker_outage",
+      "operation": "seosmith.status",
+      "context": {
+        "mode": "private-worker",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true
+      },
+      "expected": {
+        "status": "error",
+        "code": "unavailable",
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "none",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": true
+      }
+    },
+    {
+      "id": "seosmith.oversized_report",
+      "operation": "seosmith.export",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "reportedBytes": 16777217
+      },
+      "expected": {
+        "status": "error",
+        "code": "budget_exceeded",
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "none",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.bounds.rejected",
+      "operation": "seosmith.start",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "pages": 20001
+      },
+      "expected": {
+        "status": "error",
+        "code": "invalid_bounds",
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "none",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.htp_scheduling.gated",
+      "operation": "seosmith.start",
+      "context": {
+        "mode": "htp",
+        "authorized": true,
+        "capability": false,
+        "contractMajor": 1,
+        "explicit": true
+      },
+      "expected": {
+        "status": "unsupported",
+        "code": "unsupported_capability",
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "none",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.v2.gated",
+      "operation": "seosmith.report",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "requestedSchema": 2,
+        "receiverV2": false
+      },
+      "expected": {
+        "status": "unsupported",
+        "code": "unsupported_version",
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "none",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.v2.partial",
+      "operation": "seosmith.report",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "requestedSchema": 2,
+        "receiverV2": true
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "partial",
+        "outcome": "unknown",
+        "source": "stored",
+        "reportSchema": 2,
+        "bytes": 1024,
+        "retryable": false
+      }
+    },
+    {
+      "id": "seosmith.ci.gated",
+      "operation": "seosmith.ci.baseline",
+      "context": {
+        "mode": "local",
+        "authorized": true,
+        "capability": false,
+        "contractMajor": 1,
+        "explicit": true
+      },
+      "expected": {
+        "status": "unsupported",
+        "code": "unsupported_capability",
+        "jobsCreated": 0,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "none",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false
+      }
+    }
+  ]
+}
