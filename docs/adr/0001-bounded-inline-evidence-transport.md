@@ -5,13 +5,13 @@
 - **Related:** SEOsmith #1 (S01 observation/evaluation contract v2); HTP #6 and PR #37 (H01 versioned receiver, not merged); HTP #5 (full research and sources); HTP #26 (primary bundle).
 - **Date:** 2026-11-16
 - **Sources of truth (as cited below):**
-  - HTP `origin/main` at `0f704cf` (v1 pipeline).
-  - SEOsmith S01 at `1070262` (`docs/contracts/s01-v2.md`). The H01 copy at `4ca092a` is byte-identical.
-  - HTP H01 (PR #37) at `4ca092a`. Earlier review snapshot: `4d63d3a`, an ancestor of `4ca092a`.
+  - HTP `origin/main` at `4259aeb` (v1 citations unchanged since `0f704cf`).
+  - SEOsmith S01 at `bc6210f` (`docs/contracts/s01-v2.md`), text identical to `1070262`. The H01 copy at `d4dd085` is byte-identical to `bc6210f`.
+  - HTP H01 (PR #37) candidate at `d4dd085`: Sonnet code approval; exact-head independent recheck in progress; not merged. Earlier snapshots `4ca092a` and `4d63d3a` are ancestors.
 
 ## Context
 
-Seosmith (the crawler) delivers one JSON report per run to HTP. HTP stores it as an immutable audit row. The v1 pipeline on `main` (`0f704cf`):
+Seosmith (the crawler) delivers one JSON report per run to HTP. HTP stores it as an immutable audit row. The v1 pipeline on `main` (`4259aeb`; the cited files are unchanged since `0f704cf`):
 
 - **Exact-byte cap.** The ingest RPC rejects `octet_length(report_json) > 16777216` (`supabase/migrations/20261101054016_seosmith_expanded_evidence.sql`, ingest function, line 84). The import RPC does the same (`supabase/migrations/20261031053413_seosmith_history.sql`, line 51). The API repeats the check before the RPC (`apps/api/src/seosmith.rs:51` for worker ingest, `:98` for import).
 - **Record budgets.** `seosmith_summary` rejects more than 40,000 pages, more than 400,000 findings, or more than 20,000 pages with `is_resource` set or unset (`supabase/migrations/20261101060006_seosmith_policy_exclusions.sql`, lines 28-48). Explicit request budgets must be 1-20,000 pages and 0-20,000 resources (same file, lines 51-56).
@@ -19,7 +19,7 @@ Seosmith (the crawler) delivers one JSON report per run to HTP. HTP stores it as
 - **Schema gate.** The ingest RPC checks `schema_version` directly (`20261101054016`, line 92). `seosmith_summary` checks it too (`20261101060006`, line 28). Both paths reject v2 on `main`. This is the intended receiver-first gate.
 - **Immutability.** Insert computes the summary through the `seosmith_prepare_audit` trigger. Update is rejected (`20261031053413`, lines 35-43).
 
-S01 v2 (`docs/contracts/s01-v2.md`, identical at `1070262` and `4ca092a`) adds `evidence_contract` inside a report whose original bytes are retained. Its bounds are 128 observations, 512 evaluations, and a compact extension of at most 1,048,576 bytes, all inside the 16,777,216-byte report cap.
+S01 v2 (`docs/contracts/s01-v2.md`, identical at `1070262`, `bc6210f` and H01's `d4dd085`) adds `evidence_contract` inside a report whose original bytes are retained. Its bounds are 128 observations, 512 evaluations, and a compact extension of at most 1,048,576 bytes, all inside the 16,777,216-byte report cap.
 
 The Wave 0 question is whether the pilot can carry v2 evidence inline, or whether a chunk or object protocol is needed first. This ADR answers that for the pilot and records the requirements for a later protocol.
 
@@ -29,7 +29,7 @@ The Wave 0 question is whether the pilot can carry v2 evidence inline, or whethe
 2. **The 16 MiB exact-report byte cap is retained.** The limit is `octet_length(report_json) <= 16,777,216` in UTF-8, checked at the API and in the database. No body-limit increase is part of this decision.
 3. **The record budgets are retained:** 20,000 pages, 20,000 resources, 40,000 combined page and resource records, and 400,000 findings. Each is checked in SQL.
 4. **The v2 extension must fit inside the 16 MiB cap after framing.** The binding rule is that the final serialized report, measured by a counting serializer, is at most 16,777,216 bytes. S01 states the legacy base must fit within 15,728,640 bytes at maximum extension "before accounting for the additional report field framing". That figure is the base-only budget. The framing for `,"evidence_contract":` is 21 bytes, so with the literal framing the base must be at most **15,728,619 bytes** at maximum extension. Producers measure the full serialized bytes; they do not add two separately measured pieces. If the total does not fit, finalization fails. It must never emit a silently partial or legacy result. The operator reduces crawl limits and resubmits under a new request ID.
-5. **Receiver-side enforcement mirrors the producer.** H01 (PR #37) enforces the extension limits in SQL (`seosmith_validate_evidence`, `20261116210550`, line 125 at `4ca092a`). It does not trust producer counts.
+5. **Receiver-side enforcement mirrors the producer.** H01 (PR #37) enforces the extension limits in SQL (`seosmith_validate_evidence`, `20261116210550`, line 125 at `d4dd085`). It does not trust producer counts.
 6. **No screenshot, object, chunk, or artifact capability is advertised** until a later protocol ships and is verified. The H01 capability declaration must not list one.
 7. **Object or chunk storage is deferred, not rejected.** The "Future protocol requirements" section lists what a later protocol must satisfy. Whether Wave 2 needs it is decided from pilot measurements (see "Pilot exit criteria"), not assumed here.
 
@@ -43,9 +43,10 @@ The Wave 0 question is whether the pilot can carry v2 evidence inline, or whethe
 | Resources | 20,000 | `20261101060006` lines 47-48 | Enforced on `main` |
 | Findings | 400,000 | `20261101060006` line 33 | Enforced on `main` |
 | Explicit `max_pages` / `max_resources` | 1-20,000 / 0-20,000 | `20261101060006` lines 51-56 | Enforced on `main` |
-| Extension: observations / evaluations / compact bytes | 128 / 512 / 1,048,576 | `seosmith_validate_evidence` (H01 PR #37 at `4ca092a`) | Implemented in PR #37, not merged |
-| Schema 2 nesting depth | 64 containers, root = depth 1 | `seosmith_check_raw_report` (H01 at `4ca092a`, line 349 onward; `max_depth>64` at line 383) | Implemented in PR #37, not merged |
-| Duplicate JSON object keys | rejected before parse | `invalid_or_duplicate_json_keys` (H01 at `4ca092a`, line 385) | Implemented in PR #37, not merged |
+| Extension: observations / evaluations / compact bytes | 128 / 512 / 1,048,576 | `seosmith_validate_evidence` (H01 PR #37 at `d4dd085`, line 125) | Implemented in PR #37, not merged |
+| Schema 2 nesting depth | 64 containers, root = depth 1 | `seosmith_check_raw_report` (H01 at `d4dd085`, line 349 onward; depth checks at lines 393-405) | Implemented in PR #37, not merged |
+| Duplicate JSON object keys | rejected before parse (decoded keys, every depth) | `invalid_or_duplicate_json_keys` (H01 at `d4dd085`, line 410) | Implemented in PR #37, not merged |
+| Raw input scan | incremental 16 KiB byte slices; schema 1 keeps prior behaviour | `seosmith_check_raw_report` (H01 at `d4dd085`) | Implemented in PR #37, not merged |
 | Engine/ruleset ≤128 bytes, timestamps ≤64, seed ≤16,384, finding keys 64 lowercase hex | per S01 | H01 validators | Implemented in PR #37, not merged |
 | SEOsmith `/v1/runs` submit body | 16 KiB (`DefaultBodyLimit::max(16 * 1024)`, SEOsmith `src/api.rs:29` at `1070262`) | SEOsmith run-control API | Real, but it limits run submission only. It does not apply to report delivery. |
 | HTP Seosmith route body | 32 MiB | `apps/api/src/seosmith.rs:25,33` | Enforced on `main`; envelope allowance only |
@@ -53,8 +54,8 @@ The Wave 0 question is whether the pilot can carry v2 evidence inline, or whethe
 ## Serialization and amplification bounds for v2
 
 - **Bounded before serialization.** S01 builds metadata from source JSON pointers and bounded scalar strings, with per-rule aggregates. It does not build a page-by-rule vector. Coverage counts all observed entities, even when their metadata is omitted, and records the omission as `contract_limit`.
-- **Nesting depth: 64, root counts as depth 1.** S01 (`1070262`, lines 113-116): "at most 64 nested JSON object/array containers, counting the root as depth 1". The producer checks depth while serializing; over-depth reports fail finalization. Receivers reject over-depth input before parsing. H01 implements this as a raw token scan (`seosmith_check_raw_report`, `max_depth>64`). Required fixtures: depth 64 accepted, depth 65 rejected.
-- **Duplicate keys rejected before parse.** S01 requires "no duplicate object keys". H01 rejects them in the raw scan. Reason: PostgreSQL `jsonb` keeps only the last value of a duplicated key (PostgreSQL's JSON-type documentation; not reproduced in this session), so parsed evidence could otherwise differ from the exact bytes.
+- **Nesting depth: 64, root counts as depth 1.** S01 (`bc6210f`, lines 113-116): "at most 64 nested JSON object/array containers, counting the root as depth 1". The producer checks depth while serializing; over-depth reports fail finalization. Receivers reject over-depth input before parsing. H01 implements this in `seosmith_check_raw_report` (`d4dd085`, lines 349-410). The scan reads 16 KiB byte slices, does not materialize all tokens, and rejects over-depth as soon as v2 is known. A v2 report whose `schema_version` appears late must have its preceding prefix scanned to classify it, so time to rejection grows with that prefix. This is a design property, not a timing claim. Required fixtures: depth 64 accepted, depth 65 rejected, including non-contiguous nesting.
+- **Duplicate keys rejected before parse.** S01 requires unique object keys at every depth. H01 rejects duplicate decoded keys in the raw scan, including escaped spellings of `schema_version`. Reason: PostgreSQL `jsonb` keeps only the last value of a duplicated key (PostgreSQL's JSON-type documentation; not reproduced in this session), so parsed evidence could otherwise differ from the exact bytes.
 - **Validation order (receiver).** Check the exact-byte cap first. Run the raw depth and duplicate-key scan. Parse once. Check schema fields, record counts, extension size, and per-field bounds. Compute the summary last. Reject before any insert.
 - **Summary must accept schema 2 before any v2 insert.** The insert trigger calls `seosmith_summary`, which rejects any `schema_version` other than 1 on `main`. Enabling v2 without updating the summary function fails every v2 insert. PR #37 adds the v2-compatible summary. This ordering is part of rollout.
 
@@ -69,10 +70,10 @@ The 32 MiB route body limit does not guarantee that a worst-case 16 MiB report f
 - Summaries are not cached for legacy rows. History and detail reuse the stored summary only when `summary_version` matches the current version (`'3'` in `20261101060006`, lines 96 and 111). Otherwise they call `seosmith_summary(report)`. The immutability trigger forbids updates, so older rows are recomputed on every read. A history page fetches `p_limit + 1` rows (up to 101) before trimming, and each recomputation makes several full passes over the stored report.
 - Detail returns both the parsed `report` (jsonb) and `raw_report_json` (text). For a near-cap report, one detail response carries roughly two copies of the document.
 
-**In PR #37 (H01 at `4ca092a`):**
+**In PR #37 (H01 at `d4dd085`):**
 
-- A derived cache table `seosmith_summary_cache` keyed by `(delivery_id, summary_version)`, with `on delete cascade` from `seosmith_audits` (`20261116210550`, line 393 onward). New rows are written as version 4. History and detail join the cache for non-v4 rows.
-- The migration backfills the cache for every existing non-v4 row. That backfill recomputes every legacy summary once, so its duration on production-sized tables must be measured before the migration is applied. A derivation that fails during backfill is stored as `evidence_state: legacy_unknown` with `summary_derivation_failed: true` (`seosmith_cached_legacy_summary`). Those rows must never count as complete coverage. `supabase/tests/seosmith-versioned.test.mjs` covers this fallback.
+- A derived cache table `seosmith_summary_cache` keyed by `(delivery_id, summary_version)`, with `on delete cascade` from `seosmith_audits` (`20261116210550`, line 417 onward). New rows are written as version 4. History and detail join the cache for non-v4 rows.
+- The migration backfills the cache for every existing non-v4 row. That backfill recomputes every legacy summary once, so its duration on production-sized tables must be measured before the migration is applied. A derivation that fails during backfill is stored as `evidence_state: legacy_unknown` with `summary_derivation_failed: true` (`seosmith_cached_legacy_summary`, lines 428-435; backfill at line 438). Those rows must never count as complete coverage. `supabase/tests/seosmith-versioned.test.mjs` covers this fallback.
 
 Still required before the pilot:
 
@@ -145,7 +146,8 @@ Negative fixtures:
 - Byte cap: a final report of 16,777,216 octets is accepted; 16,777,217 is rejected.
 - Framing boundary: base + extension + `,"evidence_contract":` framing = 16,777,216 accepted; +1 byte rejected.
 - Envelope expansion: a near-cap, escape-heavy report is rejected at the route (expected 413) with no receipt. The fixture confirms the actual status code.
-- Depth: 64 containers accepted; 65 rejected before parse.
+- Depth: 64 containers accepted; 65 rejected before parse, including non-contiguous nesting.
+- Raw scanner: 16 KiB slice boundaries inside strings and multibyte characters; escaped and duplicate `schema_version` after strings; tab, LF and CR whitespace.
 - Duplicate JSON keys rejected before parse.
 - Record boundaries: 20,000 vs 20,001 pages; 40,000 vs 40,001 combined; 400,000 vs 400,001 findings.
 - Extension: 128 vs 129 observations; 512 vs 513 evaluations; 1,048,576 vs 1,048,577 bytes.
@@ -162,12 +164,23 @@ Existing PGlite coverage these extend (`supabase/tests/seosmith-expanded.test.mj
 
 The pilot passes only when all of these are true. No numeric threshold is set here. Each is set by the pilot owner before measurement and recorded in the pilot report.
 
-1. All required tests pass in both repositories, using the same fixtures. The S01 copies are byte-identical at `1070262` and `4ca092a`. A DeepSeek review checked the shared fixtures as byte-identical at H01 `4d63d3a`; recheck at the final head.
-2. Ingest, import, history, detail, and the cache backfill are measured for maximum-size reports, against thresholds set before the run.
+1. All required tests pass in both repositories, using the same fixtures. The S01 text is identical at `1070262` and `bc6210f`, and the H01 copy at `d4dd085` is byte-identical to `bc6210f`. A DeepSeek review checked the shared fixtures as byte-identical at H01 `4d63d3a`; recheck at the final head.
+2. On native PostgreSQL 17 (management metadata reports 17.11; PGlite is not a substitute), ingest, import, history, detail, the raw scanner and the cache backfill are measured for worst-case 16 MiB reports, against thresholds set before the run.
+   7. A production-sized backfill dry run on an isolated native PG17 copy: cache rows equal non-v4 rows, zero unexpected derivation failures, immutable source rows unchanged by digest, wall time and size recorded. No hosted or production database is used.
 3. The fraction of planned crawl inventories that exceed the byte or record budget is measured. This decides whether a chunk protocol is needed in Wave 2.
 4. A rollback drill in the pilot environment: disable the producer gate, confirm v2 retries still succeed byte-identically, and confirm receiver v2 support remains.
 5. Database growth per website is measured and reported to the operator.
 6. Fixture results are not production evidence. Production readiness is claimed only from a separate production rollout record.
+
+### Native PG17 evidence status (not satisfied)
+
+- The harness `coordination/integration/h01-native-pg17/run.sh` runs in an isolated podman container with tmpfs data, a localhost-only port and synthetic data. It never connects to a hosted database.
+- The partial result `coordination/integration/h01-native-pg17/result-ba2dd58.txt` is not final-head evidence. Its header records htp head `58c745d`, not `ba2dd58` or `d4dd085`.
+- What it recorded: PostgreSQL 17.11; H01 migration 34,172 ms on 303 pre-existing legacy rows (26.3 MB raw); 303 cache rows with 0 derivation failures; immutable source digest unchanged; capabilities returned.
+- Unexplained: 7.2 MB v1 ingests took 58.5 s before the migration and 52.7 s after. This needs a root cause before any pilot timing threshold is set.
+- Invalid phases: history reads returned `forbidden`, and every scanner phase returned `permission denied for schema dry`. These are harness problems. The v2 partial and truncated ingests returned `delivery_conflict` because the harness reused a delivery ID. No valid native timing exists for the raw scanner or for v2 ingest.
+- Required before deployment: a valid native PG17 run at the final H01 head, covering worst-case 16 MiB reports and the production-sized backfill dry run. PostgreSQL 16 or later is needed for the JSON unique-key predicate, which the Sonnet review of `d4dd085` noted.
+- No production database query or deployment was performed.
 
 ## Open decisions (H01 and Wave 2)
 
@@ -184,7 +197,8 @@ The pilot passes only when all of these are true. No numeric threshold is set he
 - **The 16 KiB limit (`src/api.rs:29`).** This limit is real. It is `DefaultBodyLimit::max(16 * 1024)` on SEOsmith's `/v1/runs` run-control router at `1070262`. It limits run submission, not report delivery. An earlier revision of this ADR wrongly called the citation stale, because it looked in HTP's tree (`apps/api/src/api.rs`, which does not exist). HTP's delivery limits are the 32 MiB route body and the 16 MiB exact-byte cap.
 - **Sonnet review, M3 (naming).** S01 `1070262` line 105 keeps the wire name `signature` for H01 compatibility, and says it "denotes a digest only", not authentication. The M3 concern is addressed by that text. A rename would be a separate wire change.
 - **Sonnet review, M7 (rollback).** Addressed by the receiver-first rollout and the rollback rules above.
-- **S01 "keep v2 until drained."** Superseded. The producer S01 (`1070262`) says v2 support is permanent while any v2 audit row is retained. The H01 copy at `4ca092a` is byte-identical. The earlier "correction" in this ADR is withdrawn because it quoted an outdated S01 text.
+- **S01 "keep v2 until drained."** Superseded. The producer S01 (`bc6210f`, same text as `1070262`) says v2 support is permanent while any v2 audit row is retained. The H01 copy at `d4dd085` is byte-identical. The earlier "correction" in this ADR is withdrawn because it quoted an outdated S01 text.
+- **H01 references.** This ADR now cites the candidate `d4dd085`, replacing `4ca092a`. The Sonnet review of `d4dd085` approves the code. It lists native PG timing at 16 MiB, role `statement_timeout`, and the production-size cache dry run as open.
 - **S01 summary-version semantics.** A summary-version bump changes which stored summaries are recomputed on read. The cache in PR #37 addresses this, but its backfill must be measured first.
 
 ## Consequences
