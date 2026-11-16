@@ -64,6 +64,14 @@ test('keyed requests reconcile, conflict and withdraw without changing legacy wo
     await db.exec('set role authenticated')
     assert.equal((await create('over-cap')).code,'LIMIT_EXCEEDED')
     assert.equal((await get('a')).collection.status,'withdrawn')
+    await db.exec('reset role')
+    await db.query("update public.provider_report_requests set expires_at=now()-interval '1 day' where website_id=$1",[site])
+    await db.query(`insert into public.provider_report_requests(website_id,request_key,fqdn,kind,property_id,job_id,expires_at)
+      select $1,'retained-'||n,'example.com','bing','',gen_random_uuid(),now()-interval '1 day'
+      from generate_series(1,1000-(select count(*)::int from public.provider_report_requests where website_id=$1)) n`,[site])
+    await db.exec('set role authenticated')
+    assert.equal((await create('over-retention')).code,'LIMIT_EXCEEDED')
+    assert.equal((await create('a')).collection.status,'withdrawn')
   } finally { await db.close() }
 })
 
