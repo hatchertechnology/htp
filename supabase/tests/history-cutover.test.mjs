@@ -48,7 +48,7 @@ test('disconnected arbitrary ranges use canonical Google and Bing days without r
     await db.exec('reset role'); assert.deepEqual(await counts(),before)
     await db.exec('set role authenticated')
     const register=async()=> (await db.query("select public.register_report_collection($1,'analytics','123','2026-10-02','2026-10-05') r",[site])).rows[0].r
-    for (const property of ['sc-domain:other.example','https://other.example/','https://example.com.evil.test/','https://example.com/?q=1','https://example.com/evil#x','https://example.com/\\evil']) {
+    for (const property of ['sc-domain:other.example','https://other.example/','https://example.com.evil.test/','https://example.com/path','https://example.com/?q=1','https://example.com/evil#x','https://example.com/\\evil']) {
       await assert.rejects(() => db.query("select public.register_report_collection($1,'search',$2,'2026-10-02','2026-10-05')",[site,property]),/Invalid Search property/)
     }
     assert.equal((await db.query("select public.register_report_collection($1,'search','https://example.com/','2026-10-02','2026-10-05') r",[site])).rows[0].r.collectionRegistered,true)
