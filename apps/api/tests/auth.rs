@@ -1483,6 +1483,7 @@ async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
                         name.as_str(),
                         "request_google_report"
                             | "read_bing_history"
+                            | "register_report_collection"
                             | "set_business_location"
                             | "seosmith_audit_history"
                             | "seosmith_audit_detail"
@@ -1537,6 +1538,7 @@ async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
         assert_eq!(result["result"]["isError"], false, "{kind}: {result}");
         let body = &result["result"]["structuredContent"];
         assert!(body["code"] == "report_pending" || body["sync"]["state"] == "pending");
+        assert_eq!(body["collectionRegistered"], true);
     }
     let default_bing = response_json(
         research_mcp_call(
@@ -1589,7 +1591,7 @@ async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
         assert_eq!(result["result"]["isError"], false, "{result}");
         assert_eq!(result["result"]["structuredContent"]["rpc"], rpc);
     }
-    assert_eq!(hits.load(Ordering::SeqCst), 15);
+    assert_eq!(hits.load(Ordering::SeqCst), 26);
     for args in [
         json!({"website_id":id,"kind":"analytics","property_id":"123","start_date":"2026-02-30","end_date":"2026-10-01"}),
         json!({"website_id":id,"kind":"search","property_id":"sc-domain:other.com","start_date":"2026-10-01","end_date":"2026-10-28"}),
@@ -1601,7 +1603,7 @@ async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
         .await;
         assert_eq!(result["result"]["isError"], true);
     }
-    assert_eq!(hits.load(Ordering::SeqCst), 15);
+    assert_eq!(hits.load(Ordering::SeqCst), 26);
     let denied = response_json(
         research_mcp_call(
             &auth,
