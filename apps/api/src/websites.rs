@@ -110,6 +110,26 @@ impl WebsiteStore {
         response.json().await.map_err(|_| WebsiteError::Unavailable)
     }
 
+    /// Read installed receiver support without advertising uninstalled migrations.
+    pub(crate) async fn seosmith_capabilities(&self) -> Result<Value, WebsiteError> {
+        let response = self
+            .client
+            .post(format!(
+                "{}/rpc/seosmith_receiver_capabilities",
+                self.url.trim_end_matches("/websites")
+            ))
+            .header("apikey", &self.publishable_key)
+            .timeout(Duration::from_secs(10))
+            .json(&json!({}))
+            .send()
+            .await
+            .map_err(|_| WebsiteError::Unavailable)?;
+        if !response.status().is_success() {
+            return Err(WebsiteError::Unavailable);
+        }
+        response.json().await.map_err(|_| WebsiteError::Unavailable)
+    }
+
     /// Token-authenticated ingestion. The database binds the credential to one website.
     pub(crate) async fn ingest_seosmith(&self, body: Value) -> Result<Value, WebsiteError> {
         let client = reqwest::Client::builder()

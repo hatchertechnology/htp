@@ -229,3 +229,25 @@ corrected title resolves, and an unchecked external target remains unverified.
 External checking enabled, unexpected missing targets, resource limits and
 truncation still prevent comparisons. The isolated test website and its six
 reports were removed after verification.
+
+## H01 receiver capability and rollout gate
+
+`GET /integrations/seosmith/capabilities` reads the installed database's
+`seosmith_receiver_capabilities()` declaration. A missing migration or unavailable
+database fails closed; the API executable alone does not prove support. The
+response is not cached. Consumers must inspect `schema_versions` before enabling
+a producer contract. Capability discovery grants no ingestion or website access.
+
+The exact UTF-8 `report_json` limit remains 16,777,216 bytes on worker and owner
+import paths. Receipt fields remain `delivery_id`, `sha256`, and `accepted`; the
+digest covers the original string bytes, including whitespace. Retries use those
+same bytes. A different byte sequence under an existing delivery ID conflicts.
+Unknown or invalid contracts must fail before any accepted receipt is returned.
+
+Deploy and verify the receiver migration, API, and read surfaces before activating
+new producer output. Run shared fixtures through both ingestion paths against the
+actual deployed receiver. Disable producer generation first during rollback;
+keep receiver support for every version still present in retained reports and
+retry queues. Never rewrite or regenerate finalized reports to downgrade them.
+Local fixture results do not demonstrate production readiness. H01 development
+and its tests do not authorize a production deployment.

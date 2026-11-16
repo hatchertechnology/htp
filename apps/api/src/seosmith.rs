@@ -22,6 +22,7 @@ struct Envelope {
 pub(crate) fn ingest_router(store: WebsiteStore) -> Router {
     Router::new()
         .route("/integrations/seosmith/audits", post(ingest))
+        .route("/integrations/seosmith/capabilities", get(capabilities))
         .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
         .with_state(store)
 }
@@ -32,6 +33,12 @@ pub(crate) fn read_router(store: WebsiteStore) -> Router {
         .route("/websites/{id}/seo/audits/{run}", get(detail))
         .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
         .with_state(store)
+}
+async fn capabilities(State(store): State<WebsiteStore>) -> Response {
+    match store.seosmith_capabilities().await {
+        Ok(value) => ([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response(),
+        Err(error) => error.into_response(),
+    }
 }
 async fn ingest(
     State(store): State<WebsiteStore>,
@@ -137,6 +144,56 @@ mod tests {
         http::Request,
     };
     use tower::ServiceExt;
+    #[tokio::test]
+    async fn capabilities_reflect_installed_database_and_fail_closed() {
+        for available in [true, false] {
+            let rpc = Router::new().route(
+                "/rest/v1/rpc/seosmith_receiver_capabilities",
+                post(move |headers: HeaderMap| async move {
+                    assert_eq!(headers["apikey"], "publishable");
+                    assert!(!headers.contains_key("authorization"));
+                    if available {
+                        (
+                            StatusCode::OK,
+                            Json(json!({"schema_versions":[1],"max_report_bytes":16777216})),
+                        )
+                    } else {
+                        (
+                            StatusCode::NOT_FOUND,
+                            Json(json!({"message":"missing migration"})),
+                        )
+                    }
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let store = WebsiteStore::new(
+                &format!("http://{}", listener.local_addr().unwrap()),
+                "publishable",
+            );
+            let server = tokio::spawn(async move { axum::serve(listener, rpc).await.unwrap() });
+            let response = ingest_router(store)
+                .oneshot(
+                    Request::builder()
+                        .uri("/integrations/seosmith/capabilities")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            if available {
+                assert_eq!(response.status(), StatusCode::OK);
+                assert_eq!(response.headers()["cache-control"], "no-store");
+                let body: serde_json::Value =
+                    serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap())
+                        .unwrap();
+                assert_eq!(body["schema_versions"], json!([1]));
+            } else {
+                assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            }
+            server.abort();
+        }
+    }
+
     #[tokio::test]
     async fn delivery_requires_worker_credential_and_idempotency_key() {
         let app = ingest_router(WebsiteStore::new("http://127.0.0.1:1", "test"));
