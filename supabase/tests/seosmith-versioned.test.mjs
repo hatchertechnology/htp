@@ -25,6 +25,7 @@ async function setup() {
 const upgrade = async db => {
   await db.exec(await readFile(new URL('../migrations/'+migration, import.meta.url), 'utf8'))
   await db.exec(await readFile(new URL('../migrations/20261116221958_seosmith_summary_target_lookup.sql', import.meta.url), 'utf8'))
+  await db.exec(await readFile(new URL('../migrations/20261116224641_seosmith_summary_compact_input.sql', import.meta.url), 'utf8'))
 }
 const identity = async db => {
   await db.exec('reset role;set role authenticated')
@@ -279,4 +280,24 @@ test('target lookup preserves coverage and summaries across checked, missing, du
     await db.exec(await readFile(new URL('../migrations/20261116221958_seosmith_summary_target_lookup.sql', import.meta.url), 'utf8'))
     for (let i=0;i<samples.length;i++) assert.deepEqual(await summarize(samples[i]),expected[i])
   } finally { await db.close() }
+})
+
+test('compact v2 summary preserves results and rejection errors for unrelated root values and missing fields', async () => {
+  const db=await setup()
+  try {
+    await db.exec(await readFile(new URL('../migrations/'+migration, import.meta.url), 'utf8'))
+    await db.exec(await readFile(new URL('../migrations/20261116221958_seosmith_summary_target_lookup.sql', import.meta.url), 'utf8'))
+    const base=JSON.parse(await readFile(new URL('fixtures/contracts/v2-complete.json',import.meta.url),'utf8'))
+    const cases=[base,{...base,padding:[0,1,{x:'ignored'}]},{...base,padding:null}]
+    for (const name of ['v2-partial','v2-truncated']) cases.push(JSON.parse(await readFile(new URL(`fixtures/contracts/${name}.json`,import.meta.url),'utf8')))
+    for (const key of ['request','started_at','engine_version','pages','findings','coverage_complete','evidence_contract']) {
+      const missing=structuredClone(base); delete missing[key]; cases.push(missing)
+      cases.push({...base,[key]:null})
+    }
+    const invalid=structuredClone(base); invalid.evidence_contract.policy.signature='bad'; cases.push(invalid)
+    const evaluate=async r=>{try {return {value:(await db.query('select public.seosmith_summary($1) s',[r])).rows[0].s}} catch(e) {return {code:e.code,message:e.message}}}
+    const expected=[]; for(const r of cases) expected.push(await evaluate(r))
+    await db.exec(await readFile(new URL('../migrations/20261116224641_seosmith_summary_compact_input.sql',import.meta.url),'utf8'))
+    for(let i=0;i<cases.length;i++) assert.deepEqual(await evaluate(cases[i]),expected[i],`case ${i}`)
+  } finally {await db.close()}
 })
