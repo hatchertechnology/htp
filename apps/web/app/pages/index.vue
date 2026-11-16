@@ -3,7 +3,7 @@ import { businessProfileEnabled } from '#shared/utils/features'
 import type { PendingReport, SyncStatus } from '../../shared/types/sync'
 import type { SearchReport } from '../../shared/types/search'
 import type { DashboardReport } from '../../shared/types/dashboard'
-import { metric, validDateRange } from '#shared/utils/analytics'
+import { metric, metricText, validDateRange } from '#shared/utils/analytics'
 useHead({ title: 'Hatch · Website overview' })
 const ws = useWorkspace()
 const { start, end } = useReportRange()
@@ -19,10 +19,10 @@ let generation = 0
 let controller: AbortController | null = null
 const summary = computed(() => report.value?.report.summary)
 const metrics = computed(() => [
-  { label: 'Active users', name: 'activeUsers', icon: 'i-lucide-users-round', value: metric(summary.value, 'activeUsers').toLocaleString(), help: 'Distinct active users across the selected period.' },
-  { label: 'Sessions', name: 'sessions', icon: 'i-lucide-layers-3', value: metric(summary.value, 'sessions').toLocaleString(), help: 'Sessions matching this website’s hostname.' },
-  { label: 'Page views', name: 'screenPageViews', icon: 'i-lucide-file', value: metric(summary.value, 'screenPageViews').toLocaleString(), help: 'Views of pages on this website.' },
-  { label: 'Engagement rate', name: 'engagementRate', icon: 'i-lucide-chart-no-axes-column-increasing', value: `${(metric(summary.value, 'engagementRate') * 100).toFixed(1)}%`, help: 'The proportion of sessions that were engaged.' },
+  { label: 'Active users', name: 'activeUsers', icon: 'i-lucide-users-round', value: metricText(summary.value, 'activeUsers'), help: 'Distinct active users across the selected period.' },
+  { label: 'Sessions', name: 'sessions', icon: 'i-lucide-layers-3', value: metricText(summary.value, 'sessions'), help: 'Sessions matching this website’s hostname.' },
+  { label: 'Page views', name: 'screenPageViews', icon: 'i-lucide-file', value: metricText(summary.value, 'screenPageViews'), help: 'Views of pages on this website.' },
+  { label: 'Engagement rate', name: 'engagementRate', icon: 'i-lucide-chart-no-axes-column-increasing', value: metricText(summary.value, 'engagementRate', true), help: 'The proportion of sessions that were engaged.' },
 ])
 const needs = computed(() => !ws.user.value ? { title: 'Your websites, in perspective.', body: 'Sign in to see how your websites are performing, with a clear view of the people and pages behind the numbers.', label: 'Sign in to Hatch', to: '/connections' } : !ws.selected.value ? { title: 'Start with a website.', body: 'Add a domain, then connect its Google Analytics property to bring your first performance report into focus.', label: 'Add a website', to: '/websites' } : !ws.selected.value.ga4_property_id ? { title: 'Choose this website’s property.', body: 'Link the numeric GA4 property ID that collects data for this website. You can find it in Google Analytics property settings.', label: 'Link a property', to: '/websites' } : null)
 const devices = computed(() => (report.value?.report.devices.rows ?? []).map((r, i) => ({ label: r.dimensionValues?.[0]?.value || '(not set)', count: metric(report.value?.report.devices, 'sessions', i) })))
@@ -45,7 +45,7 @@ async function load(poll = false) {
   const current = ++generation; controller?.abort(); controller = new AbortController()
   if (!poll) { report.value = null; sync.value = null }
   error.value = ''; busy.value = false
-  if (needs.value || !validDateRange(start.value, end.value) || !ws.connectionReady.value) return
+  if (needs.value || !validDateRange(start.value, end.value)) return
   busy.value = true
   try {
     const data = await ws.request<DashboardReport | PendingReport>(`/api/websites/${ws.selectedId.value}/analytics/dashboard`, { method: 'POST', body: { property_id: ws.selected.value!.ga4_property_id, start_date: start.value, end_date: end.value }, signal: controller.signal })
@@ -77,7 +77,7 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); generation++; controller?.abort
     <div class="traffic-layout" :aria-busy="busy">
       <section class="report-panel traffic-panel"><header><h2>Traffic over time</h2><label class="sr-only" for="chart-metric">Chart metric</label><select id="chart-metric" v-model="selectedMetric" :disabled="!report"><option value="sessions">Sessions</option><option value="activeUsers">Active users</option><option value="screenPageViews">Page views</option></select></header>
         <TrafficChart v-if="report?.report.daily.rows?.length" :report="report.report.daily" :selected-metric="selectedMetric" :start="start" :end="end" />
-        <div v-else class="chart-empty" aria-live="polite"><template v-if="busy"><UIcon name="i-lucide-loader-circle" class="loading-spin" /><h3>Bringing your report together…</h3><p>Reading the latest saved Google Analytics report.</p></template><template v-else-if="needs"><UIcon :name="!ws.user.value ? 'i-lucide-chart-no-axes-combined' : 'i-lucide-link'" /><h3>{{ needs.title }}</h3><p>{{ needs.body }}</p><UButton v-if="ws.user.value && ws.selected.value && !ws.google.value.analytics" :loading="connecting" trailing-icon="i-lucide-arrow-right" @click="connectGoogle">{{ needs.label }}</UButton><UButton v-else :to="needs.to" trailing-icon="i-lucide-arrow-right">{{ needs.label }}</UButton></template><template v-else-if="error"><UIcon name="i-lucide-cloud-off" /><h3>This report could not load.</h3><p>Your website is saved. Try again, or check your Google connection.</p></template><template v-else-if="sync?.state === 'pending'"><UIcon name="i-lucide-clock" /><h3>Waiting for the first sync.</h3><p>Your saved report will appear here automatically.</p></template><template v-else><UIcon name="i-lucide-chart-no-axes-combined" /><h3>No activity in this period.</h3><p>Try a wider date range. This report includes the exact hostname shown above.</p></template></div>
+        <div v-else class="chart-empty" aria-live="polite"><template v-if="busy"><UIcon name="i-lucide-loader-circle" class="loading-spin" /><h3>Bringing your report together…</h3><p>Reading the latest saved Google Analytics report.</p></template><template v-else-if="needs"><UIcon :name="!ws.user.value ? 'i-lucide-chart-no-axes-combined' : 'i-lucide-link'" /><h3>{{ needs.title }}</h3><p>{{ needs.body }}</p><UButton v-if="ws.user.value && ws.selected.value && !ws.google.value.analytics" :loading="connecting" trailing-icon="i-lucide-arrow-right" @click="connectGoogle">{{ needs.label }}</UButton><UButton v-else :to="needs.to" trailing-icon="i-lucide-arrow-right">{{ needs.label }}</UButton></template><template v-else-if="error"><UIcon name="i-lucide-cloud-off" /><h3>This report could not load.</h3><p>Your website is saved. Try again, or check your Google connection.</p></template><template v-else-if="sync?.state === 'pending'"><UIcon name="i-lucide-clock" /><h3>Waiting for the first sync.</h3><p>Your saved report will appear here automatically.</p></template><template v-else><UIcon name="i-lucide-chart-no-axes-combined" /><h3>No saved observations for this period.</h3><p>Missing observations do not establish zero activity. Try a wider date range. This report includes the exact hostname shown above.</p></template></div>
       </section>
       <div class="summary-stack" aria-label="Performance summary"><div v-for="item in metrics" :key="item.name" class="summary-panel"><UIcon :name="item.icon" /><div><span :title="item.help">{{ item.label }}</span><strong>{{ report ? item.value : '—' }}</strong></div></div></div>
     </div>

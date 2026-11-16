@@ -1251,14 +1251,14 @@ async fn bing_reports_use_only_owned_saved_data_and_preserve_pending_state() {
     });
     let hits = Arc::new(AtomicUsize::new(0));
     let calls = hits.clone();
-    let saved = Router::new().route("/rest/v1/rpc/request_bing_report", axum::routing::post(
+    let saved = Router::new().route("/rest/v1/rpc/read_bing_history", axum::routing::post(
         move |headers: axum::http::HeaderMap, Json(body): Json<Value>| {
             let calls = calls.clone();
             async move {
                 assert_eq!(headers["apikey"], "publishable-fixture-key");
                 assert!(headers["authorization"].to_str().unwrap().starts_with("Bearer "));
                 assert!(!headers.contains_key("x-bing-access-token"));
-                assert_eq!(body, json!({"p_website_id":"00000000-0000-0000-0000-000000000001"}));
+                assert_eq!(body, json!({"p_website_id":"00000000-0000-0000-0000-000000000001","p_start_date":"2026-10-01","p_end_date":"2026-10-28"}));
                 let first = calls.fetch_add(1, Ordering::SeqCst) == 0;
                 Json(json!({"data": if first { Value::Null } else { json!({"site_url":"https://example.com/","sections":{"traffic":{"rows":[],"error":null}}}) },"sync":{"state":if first {"pending"} else {"ready"},"cadence":"daily"}}))
             }
@@ -1274,7 +1274,7 @@ async fn bing_reports_use_only_owned_saved_data_and_preserve_pending_state() {
     let token = TestAuth::token(&auth.claims(), "test-key");
     let path = "/websites/00000000-0000-0000-0000-000000000001/bing/dashboard";
     assert_eq!(
-        analytics_request(&auth, path, None, None, json!({}))
+        analytics_request(&auth, path, None, None, json!({"start_date":"2026-10-01","end_date":"2026-10-28"}))
             .await
             .status(),
         StatusCode::UNAUTHORIZED
@@ -1291,16 +1291,16 @@ async fn bing_reports_use_only_owned_saved_data_and_preserve_pending_state() {
         .status(),
         StatusCode::UNPROCESSABLE_ENTITY
     );
-    let pending = analytics_request(&auth, path, Some(&token), None, json!({})).await;
+    let pending = analytics_request(&auth, path, Some(&token), None, json!({"start_date":"2026-10-01","end_date":"2026-10-28"})).await;
     assert_eq!(pending.status(), StatusCode::ACCEPTED);
     assert_eq!(response_json(pending).await["code"], "report_pending");
     let ready =
-        response_json(analytics_request(&auth, path, Some(&token), None, json!({})).await).await;
+        response_json(analytics_request(&auth, path, Some(&token), None, json!({"start_date":"2026-10-01","end_date":"2026-10-28"})).await).await;
     assert_eq!(ready["site_url"], "https://example.com/");
     assert_eq!(ready["sync"]["cadence"], "daily");
     let missing = "/websites/00000000-0000-0000-0000-000000000099/bing/dashboard";
     assert_eq!(
-        analytics_request(&auth, missing, Some(&token), None, json!({}))
+        analytics_request(&auth, missing, Some(&token), None, json!({"start_date":"2026-10-01","end_date":"2026-10-28"}))
             .await
             .status(),
         StatusCode::NOT_FOUND

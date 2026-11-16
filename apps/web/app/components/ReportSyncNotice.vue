@@ -6,7 +6,12 @@ defineProps<{ sync?: SyncStatus | null; label?: string; provider?: string }>()
   <p v-if="sync" class="report-caption" role="status">
     <strong v-if="label">{{ label }} · </strong>
     <template v-if="sync.fetched_at">Last synced {{ new Date(sync.fetched_at).toLocaleString() }} · Updates {{ sync.cadence || 'hourly' }}.</template>
-    <template v-else>First sync queued. Reports usually appear within a few minutes.</template>
+    <template v-else>No saved observations for this selection. Collection runs on its own schedule.</template>
+    <span v-if="sync.coverage">Stored coverage: {{ sync.coverage.state }} · {{ sync.coverage.observed_days }} observed days. Additive totals use available days only.</span>
+    <span v-if="sync.coverage?.missing_dates.length">Missing dates: {{ sync.coverage.missing_dates.join(', ') }}.</span>
+    <span v-if="sync.coverage && !sync.exact_range_available && provider !== 'Bing'">Unique users, rates, rankings and breakdowns are unavailable without an exact-range report.</span>
+    <span v-if="sync.observation_kind === 'lab_run'">Latest saved lab run; independent of the selected dates.</span>
+    <span v-if="sync.observation_kind === 'rolling_period'">Latest saved CrUX rolling collection period; independent of the selected dates.</span>
     <span v-if="sync.connection_status === 'reauthorization_required'">Reconnect {{ provider || 'Google' }} under Connections to resume updates. Saved reports remain available.</span>
     <span v-else-if="!sync.connection_status || sync.connection_status === 'disconnected'">Connect {{ provider || 'Google' }} to start scheduled updates.</span>
     <span v-else-if="sync.last_error === 'integration_not_configured'">An administrator needs to configure this integration’s API key.</span>

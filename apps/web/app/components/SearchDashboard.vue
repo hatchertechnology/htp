@@ -28,14 +28,14 @@ let toolGeneration = 0
 let discoveryAbort: AbortController | null = null
 let reportAbort: AbortController | null = null
 let toolAbort: AbortController | null = null
-const canSearch = computed(() => !!ws.user.value && !!ws.selected.value && ws.connectionReady.value)
+const canSearch = computed(() => !!ws.user.value && !!ws.selected.value)
 const needs = computed(() => !ws.user.value ? { title: 'See how people find your website.', body: 'Sign in, select a website, and connect Google to review your search performance.', label: 'Sign in', to: '/connections' } : !ws.selected.value ? { title: 'Start with a website.', body: 'Add the domain you manage to connect its Google Search data.', label: 'Add a website', to: '/websites' } : null)
 const summary = computed(() => report.value?.summary.rows?.[0])
 const metrics = computed(() => [
-  { label: 'Search clicks', value: summary.value?.clicks?.toLocaleString() ?? '0', icon: 'i-lucide-mouse-pointer-2', help: 'Clicks from Google web search results.' },
-  { label: 'Impressions', value: summary.value?.impressions?.toLocaleString() ?? '0', icon: 'i-lucide-eye', help: 'Appearances in Google web search results.' },
-  { label: 'Click-through rate', value: `${((summary.value?.ctr ?? 0) * 100).toFixed(1)}%`, icon: 'i-lucide-percent', help: 'Clicks divided by impressions, from the aggregate report.' },
-  { label: 'Average position', value: summary.value?.impressions ? summary.value.position.toFixed(1) : '—', icon: 'i-lucide-list-ordered', help: 'Average topmost search position. A lower value is better.' },
+  { label: 'Search clicks', value: summary.value?.clicks?.toLocaleString() ?? '—', icon: 'i-lucide-mouse-pointer-2', help: 'Clicks from Google web search results.' },
+  { label: 'Impressions', value: summary.value?.impressions?.toLocaleString() ?? '—', icon: 'i-lucide-eye', help: 'Appearances in Google web search results.' },
+  { label: 'Click-through rate', value: summary.value?.ctr === undefined ? '—' : `${(summary.value.ctr * 100).toFixed(1)}%`, icon: 'i-lucide-percent', help: 'Clicks divided by impressions, from the aggregate report.' },
+  { label: 'Average position', value: summary.value?.position?.toFixed(1) ?? '—', icon: 'i-lucide-list-ordered', help: 'Average topmost search position. A lower value is better.' },
 ])
 const daily = computed<GoogleReport>(() => ({
   metricHeaders: [{ name: 'clicks' }, { name: 'impressions' }],

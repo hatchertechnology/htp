@@ -13,7 +13,10 @@ use uuid::Uuid;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Empty {}
+struct HistoryRange {
+    start_date: chrono::NaiveDate,
+    end_date: chrono::NaiveDate,
+}
 
 pub(crate) fn router(store: WebsiteStore) -> Router {
     Router::new()
@@ -24,11 +27,11 @@ async fn dashboard(
     State(store): State<WebsiteStore>,
     Path(id): Path<Uuid>,
     headers: HeaderMap,
-    Json(_): Json<Empty>,
+    Json(input): Json<HistoryRange>,
 ) -> Result<Response, WebsiteError> {
     store.find(id, &headers).await?;
     let saved = store
-        .rpc(&headers, "request_bing_report", json!({"p_website_id":id}))
+        .rpc(&headers, "read_bing_history", json!({"p_website_id":id,"p_start_date":input.start_date,"p_end_date":input.end_date}))
         .await?;
     Ok(saved_response(saved["data"].clone(), &saved["sync"]))
 }

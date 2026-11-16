@@ -83,7 +83,7 @@ export async function proxyBing(event: H3Event) {
   const id = getRouterParam(event, 'id')
   if (!id || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) throw createError({ statusCode: 400, message: 'Choose a valid website.' })
   const result = await $fetch.raw(`${useRuntimeConfig(event).apiBaseUrl.replace(/\/$/, '')}/websites/${id}/bing/dashboard`, {
-    method: 'POST', body: {}, headers: { Authorization: user.authorization }, timeout: 15_000, redirect: 'error', retry: 0, ignoreResponseError: true,
+    method: 'POST', body: await readBody(event), headers: { Authorization: user.authorization }, timeout: 15_000, redirect: 'error', retry: 0, ignoreResponseError: true,
   }).catch(() => { throw createError({ statusCode: 502, message: 'Could not load saved Bing data. Try again.' }) })
   setResponseStatus(event, result.status)
   return result._data

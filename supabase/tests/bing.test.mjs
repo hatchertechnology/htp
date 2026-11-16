@@ -33,9 +33,11 @@ test('Bing ownership, automatic collection, leases, retention, pagination and cr
     const first = await claim()
     assert.equal(first.fqdn, 'example.com', 'seeds jobs without a dashboard visit')
     assert.equal(await claim(), null, 'leased work cannot be claimed twice')
-    const report = { sites: [{ Url: 'https://example.com', IsVerified: true }], site_url: 'https://example.com', sections: { traffic: { rows: [{ Clicks: 2, Impressions: 10 }], error: null } } }
+    const report = { sites: [{ Url: 'https://example.com', IsVerified: true }], site_url: 'https://example.com', sections: { traffic: { rows: [{ Date: '2026-10-03T00:00:00-07:00', Clicks: 2, Impressions: 10 }], error: null } } }
     assert.equal(await complete(first, report), true)
     assert.equal(await complete(first, report), false)
+    assert.equal((await db.query("select count(*)::int n from public.provider_daily_history where source='bing_traffic' and day='2026-10-03'")).rows[0].n, 1, 'completion normalizes Bing ISO dates')
+    assert.equal((await db.query("select public.history_day('1899-01-01',true) as d")).rows[0].d, null)
     await identity(owner)
     const saved = (await request()).rows[0].report
     assert.equal(saved.sync.cadence, 'daily'); assert.equal(saved.sync.state, 'ready'); assert.deepEqual(saved.data, report)

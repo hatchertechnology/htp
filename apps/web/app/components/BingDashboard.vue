@@ -38,10 +38,10 @@ async function load(poll = false) {
   controller?.abort(); controller = new AbortController()
   if (!poll) { report.value = null; sync.value = null }
   error.value = ''; busy.value = false
-  if (!ws.user.value || !ws.selected.value || !ws.bingReady.value) return
+  if (!ws.user.value || !ws.selected.value || !validDateRange(start.value, end.value)) return
   busy.value = true
   try {
-    const data = await ws.request<BingReport | PendingReport>(`/api/websites/${ws.selectedId.value}/bing/dashboard`, { method: 'POST', body: {}, signal: controller.signal })
+    const data = await ws.request<BingReport | PendingReport>(`/api/websites/${ws.selectedId.value}/bing/dashboard`, { method: 'POST', body: { start_date: start.value, end_date: end.value }, signal: controller.signal })
     if (current !== generation) return
     sync.value = data.sync ?? null
     if (!('code' in data)) report.value = data
@@ -49,7 +49,7 @@ async function load(poll = false) {
   } catch (cause) { if (current === generation) error.value = failureMessage(cause) }
   finally { if (current === generation) busy.value = false }
 }
-watch(() => [ws.user.value?.id, ws.selectedId.value, ws.selected.value?.fqdn, ws.bingReady.value, ws.bing.value.connected, ws.bing.value.reauthorizationRequired], () => { void load() }, { immediate: true })
+watch(() => [ws.user.value?.id, ws.selectedId.value, ws.selected.value?.fqdn, start.value, end.value], () => { void load() }, { immediate: true })
 onBeforeUnmount(() => { generation++; controller?.abort(); clearTimeout(timer) })
 </script>
 <template>

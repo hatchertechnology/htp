@@ -34,6 +34,8 @@ test('insight collection preserves profile diffs, ownership, bindings, observati
     async function claim(kind, property = null) {
       await db.exec('reset role');
       await db.exec("update public.google_report_jobs set lease=null,leased_until=null,next_run_at=now()+interval '2 days'");
+      await db.exec('set role service_role'); await db.query('select public.claim_google_report()'); await db.exec('reset role');
+      await db.exec("update public.google_report_jobs set lease=null,leased_until=null,next_run_at=now()+interval '2 days'");
       await db.query("update public.google_report_jobs set next_run_at=now()-interval '1 day' where kind=$1 and ($2::text is null or property_id=$2)", [kind, property]);
       await db.exec('set role service_role');
       return (await db.query('select public.claim_google_report() as data')).rows[0].data
