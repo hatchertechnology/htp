@@ -95,4 +95,3 @@ begin
     raise exception 'invalid_or_duplicate_json_keys' using errcode='22023';
   end if;
 end $$;
-
