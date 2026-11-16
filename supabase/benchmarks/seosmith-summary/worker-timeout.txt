@@ -1,0 +1,14 @@
+Timing is on.
+SET
+Time: 2.494 ms
+SET
+Time: 2.207 ms
+BEGIN
+Time: 0.623 ms
+ERROR:  canceling statement due to statement timeout
+CONTEXT:  PL/pgSQL function public.seosmith_validate_evidence(jsonb) line 171 at IF
+SQL statement "SELECT public.seosmith_validate_evidence(compact)"
+PL/pgSQL function public.seosmith_summary(jsonb) line 17 at PERFORM
+SQL statement "SELECT public.seosmith_summary(r)"
+PL/pgSQL function public.ingest_seosmith_audit(text,uuid,text,text) line 21 at PERFORM
+Time: 3015.547 ms (00:03.016)
