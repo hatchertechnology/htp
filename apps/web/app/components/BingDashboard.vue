@@ -49,7 +49,7 @@ async function load(poll = false) {
   } catch (cause) { if (current === generation) error.value = failureMessage(cause) }
   finally { if (current === generation) busy.value = false }
 }
-watch(() => [ws.user.value?.id, ws.selectedId.value, ws.selected.value?.fqdn, start.value, end.value, ws.bing.value.connected, ws.bing.value.reauthorizationRequired], () => { void load() }, { immediate: true })
+useConnectionReload(() => [ws.user.value?.id, ws.selectedId.value, ws.selected.value?.fqdn, start.value, end.value, ws.bing.value.connected, ws.bing.value.reauthorizationRequired], () => { void load() })
 onBeforeUnmount(() => { generation++; controller?.abort(); clearTimeout(timer) })
 </script>
 <template>

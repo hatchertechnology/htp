@@ -83,5 +83,24 @@ test('scheduled recovery is bounded and does not starve another site', async () 
     assert.notEqual(first.start_date?.slice(0,10),'2020-01-01','legacy range is not claimed')
     const jobs=(await db.query("select website_id,kind,property_id,count(*)::int n,max(end_date-start_date)::int span from public.google_report_jobs where collection_class='recovery' and refresh_until>now() group by website_id,kind,property_id")).rows
     assert.ok(jobs.length>0); assert.ok(jobs.every(j=>j.n===1 && j.span<=27),'one bounded recovery range per source')
+    // Release the first leases and drain repeatedly: recovery should progress
+    // across both sites even when older current work remains due.
+    await db.query("update public.google_report_jobs set lease=null,leased_until=null where id in ($1,$2)",[first.id,second.id])
+    const served=new Set(), recoveries=new Set()
+    for (let i=0;i<30;i++) {
+      const j=await claim(); if (!j) break
+      served.add(j.website_id)
+      if (j.collection_class==='recovery') recoveries.add(j.website_id)
+      assert.equal((await db.query('select public.complete_google_report($1,$2,$3,$4,null) ok',[j.id,j.lease,j.generation,{}])).rows[0].ok,true)
+    }
+    assert.equal(served.size,2); assert.equal(recoveries.size,2,'recovery makes progress on both sites under sustained load')
+    assert.equal((await db.query("select count(*)::int n from public.google_report_jobs where collection_class='legacy' and lease is not null")).rows[0].n,0)
+    // Simulate a rolling date boundary by leaving prior windows expired and
+    // verifying current date jobs are recreated from retained discovery.
+    await db.exec("update public.google_report_jobs set start_date=start_date-1,end_date=end_date-1,refresh_until=now()-interval '1 day' where kind='search' and collection_class='current'")
+    await db.exec(`insert into public.google_report_snapshots(job_id,data) select id,'{"properties":[{"siteUrl":"sc-domain:one.example"},{"siteUrl":"https://one.example/"}]}'::jsonb from public.google_report_jobs where kind='properties' and fqdn='one.example'`)
+    await claim()
+    const rolled=(await db.query("select count(distinct property_id)::int n from public.google_report_jobs where kind='search' and start_date=current_date-28 and end_date=current_date-1")).rows[0].n
+    assert.equal(rolled,2,'both discovered properties roll forward')
   } finally { await db.close() }
 })

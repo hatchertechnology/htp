@@ -102,7 +102,7 @@ async function inspectUrl() {
   finally { if (current === toolGeneration) toolBusy.value = false }
 }
 
-watch(() => [ws.user.value?.id, ws.selectedId.value, canSearch.value, ws.google.value.connected, ws.google.value.reauthorizationRequired], () => { void discover() }, { immediate: true })
+useConnectionReload(() => [ws.user.value?.id, ws.selectedId.value, canSearch.value, ws.google.value.connected, ws.google.value.reauthorizationRequired], () => { void discover() })
 watch(() => [property.value, start.value, end.value, ws.user.value?.id, ws.selectedId.value, canSearch.value], () => { void load() }, { immediate: true })
 watch([report, busy, discovering, error, discoveryError], () => {
   emit('snapshot', { report: report.value, loading: busy.value || discovering.value, error: error.value || discoveryError.value })
