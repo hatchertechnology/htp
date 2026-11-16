@@ -187,3 +187,22 @@ test('public CLI rejects cancelling an already measured lease',()=>{
   const r=measuredResults(),o=r.observations.find(o=>o.id==='google.withdraw.shared.scheduled.leased');o.steps.at(-1).workAfter.leasedClaims=0;
   const result=cli(r);assert.notEqual(result.status,0);assert.match(result.stderr,/preserve measured/);
 });
+
+test('business_locations nonempty source is rejected, not silently normalized',()=>{
+  const s=trace('google.undated.omitted.business_locations');
+  for (const t of s.steps) {
+    t.request.input.propertyId='123';t.association.propertyId='123';
+    if (t.expected.collection) t.expected.collection.association.propertyId='123';
+  }
+  assert.throws(()=>check(s),/bounded error shape|association requires empty/);
+});
+test('business_locations new-invalid versus existing-conflict order is defined',()=>{
+  const s=trace('google.business_locations.property_constraint');
+  assert.equal(s.steps[0].expected.error.code,'INVALID_ARGUMENT');
+  assert.equal(s.steps[2].expected.error.code,'CONFLICT');check(s);
+});
+test('public CLI cannot erase the nonempty business_locations rejection',()=>{
+  const r=measuredResults(),o=r.observations.find(o=>o.id==='google.business_locations.property_constraint');
+  o.context.steps[0].request.input.propertyId='';
+  const result=cli(r);assert.notEqual(result.status,0);assert.match(result.stderr,/input validity case retained/);
+});

@@ -31,6 +31,7 @@ export function validateCollection(c) {
   } else {
     assert.notEqual(a.kind, 'bing', 'Google kind');
     assert.ok(typeof a.propertyId === 'string' && a.propertyId.length <= 2048, 'bounded property');
+    if (a.kind === 'business_locations') assert.equal(a.propertyId,'','business_locations association requires empty property');
     assert.ok(date(a.startDate) && date(a.endDate), 'valid association dates');
     const span = (Date.parse(a.endDate) - Date.parse(a.startDate)) / 86400000;
     assert.ok(span >= 0 && span < profile.limits.inclusiveRangeDays, 'bounded inclusive date range');
@@ -41,6 +42,9 @@ const kinds = new Set(['analytics','conversions','search','properties','pagespee
 function validInput(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(k => !['kind','propertyId','startDate','endDate'].includes(k)) || !kinds.has(input.kind)) return false;
   if (input.propertyId != null && (typeof input.propertyId !== 'string' || input.propertyId.length > 2048)) return false;
+  // Location discovery accepts only the empty effective property; unlike
+  // properties/Bing it does not ignore a supplied nonempty value.
+  if (input.kind === 'business_locations' && (input.propertyId ?? '') !== '') return false;
   const start=input.startDate ?? null, end=input.endDate ?? null;
   if (start === null && end === null) return undated.has(input.kind) || input.kind === 'bing';
   if (!date(start) || !date(end)) return false;

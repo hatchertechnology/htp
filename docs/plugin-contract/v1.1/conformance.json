@@ -4097,6 +4097,183 @@
           "sharedJob": true
         }
       ]
+    },
+    {
+      "id": "google.business_locations.property_constraint",
+      "steps": [
+        {
+          "id": "new-nonempty",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "bad-locations",
+            "input": {
+              "kind": "business_locations",
+              "propertyId": "123",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "business_locations",
+            "propertyId": "",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "new-nonempty",
+            "collection": null,
+            "error": {
+              "code": "INVALID_ARGUMENT"
+            },
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "omitted-create",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "business_locations",
+              "propertyId": "",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "business_locations",
+            "propertyId": "",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "omitted-create",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "business_locations",
+                "propertyId": "",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 1,
+              "collectionJobsCreated": 1,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "existing-nonempty-conflict",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "business_locations",
+              "propertyId": "123",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "business_locations",
+            "propertyId": "",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "existing-nonempty-conflict",
+            "collection": null,
+            "error": {
+              "code": "CONFLICT"
+            },
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "original-retained",
+          "action": "lookup",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "business_locations",
+              "propertyId": "",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "business_locations",
+            "propertyId": "",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "original-retained",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "business_locations",
+                "propertyId": "",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        }
+      ]
     }
   ]
 }

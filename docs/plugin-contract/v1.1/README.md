@@ -64,7 +64,14 @@ The association is an existing **shared job natural key**, not a fresh run ID:
 Google uses website/FQDN/kind/property/start/end; Bing uses website/FQDN with
 `provider: bing`, `kind: bing` and explicit null `propertyId`, `startDate`,
 `endDate`. Google undated source associations use `1970-01-01` sentinel dates;
-`properties` and `business_locations` use an empty property string.
+`properties` and `business_locations` use an empty property string on accepted
+associations. These have different input rules: properties ignores supplied
+property IDs, while business_locations accepts only an empty effective property
+(null/omitted coalesces to empty). A new business_locations intent with a nonempty
+property is INVALID_ARGUMENT. Reusing an existing key with a changed nonempty
+property is CONFLICT because signature comparison precedes new-source validation;
+the original intent and association remain unchanged. The supplied nonempty
+property is never silently ignored or normalized into a successful registration.
 All six association fields are present; the website scope is supplied by the
 request rather than repeated in the collection object.
 
@@ -190,7 +197,7 @@ node --test scripts/plugin-contract.test.mjs scripts/provider-request-contract.t
 node scripts/check-plugin-contract.mjs --provider-results /path/provider-results.json
 ```
 
-Twenty-six synthetic traces cover Google/Bing association, exact retry, new-key
+Twenty-seven synthetic traces cover Google/Bing association, exact retry, new-key
 renewal/shared jobs, conflicts, expiry boundary/terminal status, response loss
 with/without commit, unknown keys, key/website isolation, auth/capability denial,
 key/range/cap rejection, cancellation serializations, shared/scheduled/leased
@@ -290,6 +297,19 @@ remain fixed. Context clocks are ordered and must preserve pre/post-expiry cases
 and the exact expiry-boundary test. Context edits that erase conflicts, collapse
 websites, switch cancellation into lookup, bypass owner/cap errors, change a
 retry association or inject a successful reconciliation seed are rejected.
+
+The optional isolated source probe below loads every migration from the exact
+backend merge revision recorded in `provider-requests.json`, using that checkout's
+already installed pinned PGlite test dependency. It verifies new nonempty
+business_locations input is INVALID_ARGUMENT, changed existing input is CONFLICT,
+null/empty coalescing, unchanged original intent, and shared job counts. It enables
+Business Profile only in its disposable fixture to reach source validation. It
+never connects to a deployed database or provider and is separate from the
+no-dependency conformance suite:
+
+```sh
+node scripts/probe-provider-business-locations.mjs --backend-root /path/to/backend
+```
 
 The validator trusts supplied context (counts, ownership, transaction time,
 association and any committed-after-loss seed). It does not verify provenance,

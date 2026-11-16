@@ -65,7 +65,7 @@ or closing #34. This documentation does not authorize closure or alter scope.
 the 2026-11-16 acceptance audit: caller key scoped by website, Google/Bing public
 natural-key association, immutable seven-day intent, retry/new intent/conflict,
 read-only reconciliation, scoped withdrawal and races, retained data, shared and
-scheduled work, fixed storage/input limits and bounded/uncertain errors. Twenty-six
+scheduled work, fixed storage/input limits and bounded/uncertain errors. Twenty-seven
 synthetic lifecycle traces and independent invariant mutation tests add definition
 evidence. The new semantic validator accepts lawful variation; it still cannot
 verify context/provenance or measure backend effects.
