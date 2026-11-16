@@ -4,6 +4,11 @@ export interface AuditObservationCounts {
 }
 export interface AuditSummary {
   summary_version?: number
+  evidence_contract_version?: 1 | null
+  evidence_state?: 'legacy_unknown' | 'versioned'
+  evaluation_coverage_complete?: boolean | null
+  crawl_coverage_complete?: boolean
+  evidence_truncated?: boolean; omitted_observations?: number; policy_digest?: string
   schema_version: number; engine_version: string | null; ruleset_version: string | null
   started_at: string | null; finished_at: string | null; outcome: string; stop_reason: string | null
   coverage_complete: boolean | null; comparison_key: string
@@ -42,6 +47,7 @@ export interface AuditPage {
   extraction_truncated?: boolean
 }
 export interface AuditReport {
+  evidence_contract?: AuditEvidenceContract
   schema_version?: number; engine_version?: string; ruleset_version?: string
   started_at?: string; finished_at?: string; outcome?: string; stop_reason?: string; coverage_complete?: boolean
   request: {
@@ -52,3 +58,45 @@ export interface AuditReport {
   pages: AuditPage[]; findings: AuditFinding[]
 }
 export interface AuditDetail extends AuditRun { report_json?: string | null; report: AuditReport }
+
+/** Values are explicit: an empty known value is not unavailable evidence. */
+export type AuditEvidenceValue =
+  | { state: 'source'; source_locator: string }
+  | { state: 'known'; value: string }
+  | { state: 'unavailable'; reason: string }
+export interface AuditEvidenceObservation {
+  entity_id: string; source_locator: string
+  state: 'available' | 'unavailable'; unknown_reason: string | null
+}
+export interface AuditEvaluation {
+  entity_id: string; rule: string; rule_version: string; validator_version: string
+  eligibility: 'eligible' | 'ineligible' | 'unknown'
+  attempt: 'completed' | 'not_attempted' | 'unknown'
+  outcome: 'pass' | 'fail' | 'not_applicable' | 'unknown'
+  unknown_reason: string | null; source_locator: string
+  actual: AuditEvidenceValue; expected: AuditEvidenceValue
+  confidence: 'high' | 'unknown'; finding_key: string | null
+}
+export interface AuditRuleCoverage {
+  rule: string; entities: number
+  eligible: number; ineligible: number; eligibility_unknown: number
+  attempted: number; not_attempted: number; attempt_unknown: number
+  passed: number; failed: number; not_applicable: number; unknown: number
+  unknown_reasons: Record<string, number>
+}
+export interface AuditReceiverCapabilities {
+  receiver: 'htp'; schema_versions: number[]; max_report_bytes: number
+  max_pages: number; max_resources: number; max_observations: number; max_findings: number
+  exact_bytes: boolean; receipt_fields: string[]
+}
+
+export interface AuditEvidenceContract {
+  version: 1
+  /** signature is an unauthenticated SHA-256 digest of canonical_json bytes. */
+  policy: { canonical_json: string; signature: string }
+  comparison_key: string
+  observed_at: { started_at: string; finished_at: string }
+  observations: AuditEvidenceObservation[]; evaluations: AuditEvaluation[]
+  coverage: AuditRuleCoverage[]; truncated: boolean; omitted_observations: number
+  evaluation_coverage_complete: boolean
+}

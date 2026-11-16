@@ -50,3 +50,95 @@ test('receiver upgrade retains legacy bytes and receipts; old receiver rejects n
     await assert.rejects(()=>db.query('select public.seosmith_legacy_summary($1)',[legacy]),/permission denied/)
   } finally { await db.close() }
 })
+
+test('exact UTF-8 boundary applies to worker and import without accepted oversized rows', async () => {
+  const db=await setup()
+  try {
+    await upgrade(db)
+    const max=16777216,raw=JSON.stringify(legacy),id=legacy.request.request_id
+    // JSON trailing whitespace is legal and is part of the immutable hash.
+    const boundary=raw+' '.repeat(max-Buffer.byteLength(raw))
+    await db.exec('set role anon')
+    const push=bytes=>db.query('select public.ingest_seosmith_audit($1,$2,$3,$4) as r',['x'.repeat(64),id,hash(bytes),bytes]).then(r=>r.rows[0].r)
+    assert.equal((await push(boundary)).accepted,true)
+    await assert.rejects(()=>push(boundary+' '),/invalid_delivery/)
+    const oversized=JSON.stringify({...legacy,padding:'é'.repeat(max/2)})
+    assert.ok(oversized.length<max)
+    assert.ok(Buffer.byteLength(oversized)>max)
+    await assert.rejects(()=>push(oversized),/invalid_delivery/)
+    await identity(db)
+    assert.equal((await db.query('select public.import_seosmith_audit($1,$2) as r',[site,boundary])).rows[0].r.accepted,true)
+    await assert.rejects(()=>db.query('select public.import_seosmith_audit($1,$2)',[site,boundary+' ']),/report_limit/)
+    await assert.rejects(()=>db.query('select public.import_seosmith_audit($1,$2)',[site,oversized]),/report_limit/)
+    await db.exec('reset role')
+    assert.equal((await db.query('select count(*)::int as n from public.seosmith_audits')).rows[0].n,1)
+    const stored=(await db.query('select raw_report_json,sha256 from public.seosmith_audits')).rows[0]
+    assert.equal(stored.raw_report_json,boundary)
+    assert.equal(stored.sha256,hash(boundary))
+  } finally { await db.close() }
+})
+
+test('frozen versioned contract validates through worker and owner import', async () => {
+  const db=await setup()
+  try {
+    await upgrade(db)
+    await db.query('delete from public.websites where id=$1',[site])
+    for (const name of ['v2-complete','v2-partial','v2-truncated']) {
+      const raw=await readFile(new URL('fixtures/contracts/'+name+'.json',import.meta.url),'utf8')
+      const report=JSON.parse(raw),id=report.request.request_id
+      // Shared fixtures retain producer bytes and their native website identity.
+      await db.query('insert into public.websites(id,owner_id,fqdn) values($1,$2,$3) on conflict do nothing',[report.request.website_id,owner,'example.com'])
+      await db.query('delete from public.seosmith_bindings')
+      await db.query('insert into public.seosmith_bindings(website_id,token_sha256) values($1,$2)',[report.request.website_id,hash('x'.repeat(64))])
+      await db.exec('set role anon')
+      const receipt=(await db.query('select public.ingest_seosmith_audit($1,$2,$3,$4) as r',['x'.repeat(64),id,hash(raw),raw])).rows[0].r
+      assert.deepEqual(receipt,{accepted:true,delivery_id:id,sha256:hash(raw)})
+      await identity(db)
+      assert.deepEqual((await db.query('select public.import_seosmith_audit($1,$2) as r',[report.request.website_id,raw])).rows[0].r,receipt)
+      const detail=(await db.query('select public.seosmith_audit_detail($1,$2) as d',[report.request.website_id,id])).rows[0].d
+      assert.equal(detail.report_json,raw)
+      assert.deepEqual(detail.report,report)
+      assert.equal(detail.summary.summary_version,4)
+      assert.equal(detail.summary.schema_version,2)
+      assert.equal(detail.summary.evaluation_coverage_complete,false)
+      assert.equal(detail.summary.coverage_complete,false)
+      await db.exec('reset role')
+      await db.query('delete from public.seosmith_audits where delivery_id=$1',[id])
+    }
+  } finally { await db.close() }
+})
+
+test('invalid contracts never produce receipts on either path', async () => {
+  const db=await setup()
+  try {
+    await upgrade(db)
+    const fixture=JSON.parse(await readFile(new URL('fixtures/contracts/v2-complete.json',import.meta.url),'utf8'))
+    await db.query('delete from public.websites where id=$1',[site])
+    await db.query("insert into public.websites(id,owner_id,fqdn) values($1,$2,'example.com')",[fixture.request.website_id,owner])
+    await db.query('insert into public.seosmith_bindings(website_id,token_sha256) values($1,$2)',[fixture.request.website_id,hash('x'.repeat(64))])
+    const cases = [
+      r=>{r.schema_version=3}, r=>{delete r.evidence_contract},
+      r=>{r.evidence_contract.version=2}, r=>{r.evidence_contract.policy.signature='sha256:'+'0'.repeat(64)},
+      r=>{r.evidence_contract.observations[0].source_locator='/pages/9999'},
+      r=>{r.evidence_contract.observations[0].entity_id='sha256:'+'0'.repeat(64)},
+      r=>{r.evidence_contract.evaluations.push(structuredClone(r.evidence_contract.evaluations[0]))},
+      r=>{r.evidence_contract.evaluations[0].outcome='unknown';r.evidence_contract.evaluations[0].unknown_reason=null},
+      r=>{r.evidence_contract.coverage.pop()},
+      r=>{r.evidence_contract.coverage[0].unknown=0},
+      r=>{r.evidence_contract.evaluation_coverage_complete=true},
+      r=>{r.evidence_contract.omitted_observations=1},
+      r=>{r.evidence_contract.evaluations[0].actual={state:'source',source_locator:'/pages/9999/title'}},
+      r=>{r.evidence_contract.padding='x'.repeat(1048577)},
+      r=>{r.schema_version=1}
+    ]
+    for (const mutate of cases) {
+      const report=structuredClone(fixture);mutate(report);const raw=JSON.stringify(report)
+      await db.exec('reset role;set role anon')
+      await assert.rejects(()=>db.query('select public.ingest_seosmith_audit($1,$2,$3,$4)',['x'.repeat(64),report.request.request_id,hash(raw),raw]))
+      await identity(db)
+      await assert.rejects(()=>db.query('select public.import_seosmith_audit($1,$2)',[report.request.website_id,raw]))
+    }
+    await db.exec('reset role')
+    assert.equal((await db.query('select count(*)::int as n from public.seosmith_audits')).rows[0].n,0)
+  } finally { await db.close() }
+})
