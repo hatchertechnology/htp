@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readJson, validateResults, MAX_FILE_BYTES } from './plugin-contract.mjs';
+import { readJson, validateObservation, validateResults, MAX_FILE_BYTES } from './plugin-contract.mjs';
 const fixtures = readJson(new URL('../docs/plugin-contract/v1/conformance.json', import.meta.url));
 const { operations } = readJson(new URL('../docs/plugin-contract/v1/capabilities.json', import.meta.url));
 const results = () => ({ contractVersion: '1.0.0', host: 'codex', observations: fixtures.scenarios.map(s => ({ id: s.id, result: structuredClone(s.expected) })) });
@@ -79,4 +79,37 @@ test('repository collection registration is preserved', () => {
 });
 test('external mode deliberately requires golden unknown outcome', () => {
   assert.throws(() => check(change('seosmith.report.complete', r => { r.outcome = 'pass'; })));
+});
+
+
+// Mutate expected and observed together: golden equality cannot reject these.
+// Each assertion must come from the named independent invariant.
+for (const [name, id, patch, message] of [
+  ['read scheduling', 'htp.saved_reads.no_collection', { crawlRunsCreated: 1 }, /reads cannot schedule/],
+  ['rejection scheduling', 'seosmith.unconfigured_worker', { crawlRunsCreated: 1 }, /rejection cannot create jobs/],
+  ['rejection payload', 'seosmith.unconfigured_worker', { source: 'stored' }, /rejection cannot return data/],
+  ['authorization', 'htp.auth.expired', { code: 'other_error' }, /authorization must fail closed/],
+  ['owner denial', 'htp.write.non_owner', { code: 'auth_required' }, /owner denial required/],
+  ['capability gate', 'htp.missing_capability', { status: 'ok' }, /missing capability must be explicit/],
+  ['major version', 'contract.major_mismatch', { code: 'other_error' }, /incompatible major/],
+  ['request identity', 'seosmith.start.bounded', { requestId: '22222222-2222-4222-8222-222222222222' }, /new run must retain request identity/],
+  ['retry dedupe', 'seosmith.retry.same_request', { crawlRunsCreated: 1 }, /retry cannot duplicate a run/],
+  ['retry identity', 'seosmith.retry.same_request', { requestId: '22222222-2222-4222-8222-222222222222' }, /retry identity changed/],
+  ['conflict evidence', 'seosmith.retry.conflict', { code: 'other_error' }, /changed payload must conflict/],
+  ['v2 gate', 'seosmith.report.complete', { reportSchema: 2 }, /v2 needs explicit receiver gate/],
+  ['report size', 'seosmith.report.complete', { bytes: 16777217 }, /unbounded report/],
+  ['unknown evaluation', 'seosmith.report.complete', { outcome: 'pass' }, /no evaluation proof/],
+]) test('independent invariant: ' + name, () => {
+  const scenario = structuredClone(fixtures.scenarios.find(s => s.id === id));
+  Object.assign(scenario.expected, patch);
+  assert.throws(() => validateObservation(scenario, structuredClone(scenario.expected), operations), message);
+});
+test('independent invariant: explicit start intent', () => {
+  const scenario = structuredClone(fixtures.scenarios.find(s => s.id === 'seosmith.start.bounded'));
+  scenario.context.explicit = false;
+  assert.throws(() => validateObservation(scenario, scenario.expected, operations), /scan requires explicit intent/);
+});
+test('golden equality still rejects otherwise valid transcript variation', () => {
+  const scenario = fixtures.scenarios.find(s => s.id === 'seosmith.report.complete');
+  assert.throws(() => validateObservation(scenario, { ...scenario.expected, bytes: scenario.expected.bytes + 1 }, operations), /observation differs from contract/);
 });
