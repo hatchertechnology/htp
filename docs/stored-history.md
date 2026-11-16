@@ -108,3 +108,9 @@ The foundation test covers pre-migration snapshot replay, overlapping revisions,
 ties, older late arrivals, disconnected reads without an exact-range snapshot,
 partial/zero coverage, real zeroes, malformed data, privileges, source binding,
 Bing date offsets, raw retention, and no jobs created by the new read primitive.
+
+## Cutover behavior
+
+Report reads do not register or renew collection jobs. Daily Google reports and Bing traffic use canonical observations, with missing dates explicitly returned. Exact-range snapshots supply non-additive aggregates and ranked breakdowns; absent exact-range data is unavailable. PSI is a lab observation and CrUX a rolling period, independent of the dashboard range. Raw snapshots remain available as provenance; deleting a winning raw snapshot would cascade to its canonical rows, so do not prune them.
+
+The Google scheduler retires legacy view ranges, seeds current windows, and schedules at most one recovery window per website and source with up to three attempts per connection generation. Recovery is bounded to 365 days for GA4 and 480 for Search, in windows of at most 28 days. Sites receive turns according to their last claim; within each site, due current, recovery and explicitly registered classes take turns by their last claim, so continuously due current work cannot starve recovery or explicit requests. Bing continues its existing independently scheduled collector. Provider retention, sparse responses, quota, and outages can leave gaps; missing rows are never filled with zeros.

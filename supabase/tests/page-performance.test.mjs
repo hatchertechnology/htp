@@ -34,13 +34,9 @@ test('priority samples enforce ownership/bounds and retain distinct history with
     for (const invalid of ['mobile|https://other.example/a', 'mobile|http://example.com/a', 'mobile|https://example.com:8443/a', 'mobile|https://example.com/a#b', 'mobile|https://example.com/a\\b', 'PHONE|https://example.com/a', 'mobile|https://example.com/a b']) await assert.rejects(() => request(invalid), /Invalid source/)
     await assert.rejects(() => db.query("select public.valid_performance_source('pagespeed','example.com','mobile')"), /permission denied/)
     await request('mobile'); await request('PHONE', 'crux'); await request(source)
-    await request('desktop|https://example.com/services'); await request('PHONE|https://example.com/services', 'crux')
-    for (let i = 1; i < 10; i++) await request(`mobile|https://example.com/page-${i}`)
-    await assert.rejects(() => request('mobile|https://example.com/eleventh'), /ten active/)
-    await request(source)
     await db.exec('reset role')
-    const job = (await db.query('select * from public.google_report_jobs where property_id=$1', [source])).rows[0]
-    assert.equal(new Date(job.start_date).toISOString().slice(0, 10), '1970-01-01')
+    assert.equal((await db.query('select count(*)::int n from public.google_report_jobs')).rows[0].n, 0, 'reading observations creates no collection jobs')
+    const job = (await db.query("insert into public.google_report_jobs(website_id,fqdn,kind,property_id,start_date,end_date) values($1,'example.com','pagespeed',$2,'1970-01-01','1970-01-01') returning *", [site,source])).rows[0]
     const data = { url: 'https://example.com/services', strategy: 'mobile', measurement: { semantics_version: 1, scope: 'url', mode: 'lab', sample_count: 1, metrics: { 'total-blocking-time': 0 } }, lighthouseResult: { lighthouseVersion: '13', environment: { hostUserAgent: 'test' }, categories: { performance: { score: 0.8 } }, audits: { large: {} } } }
     await db.query('insert into public.google_report_snapshots(job_id,data) values($1,$2)', [job.id, data])
     await identity(owner)
@@ -54,7 +50,6 @@ test('priority samples enforce ownership/bounds and retain distinct history with
     assert.equal((await history('mobile')).snapshots.length, 0)
     await identity(other); await assert.rejects(() => history(source), /Website not found/)
     await db.exec('reset role')
-    await db.query("update public.google_report_jobs set refresh_until=now()-interval '1 minute' where property_id like '%|https://example.com/page-1'")
     await identity(owner); await request('mobile|https://example.com/replacement')
     await db.exec('reset role')
     await db.query("update public.google_connections set status='disconnected' where owner_id=$1", [owner])

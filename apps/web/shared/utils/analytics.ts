@@ -13,3 +13,15 @@ export function validDateRange(start: string, end: string) {
 export function dateLabel(value: string) {
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(value + 'T12:00:00Z'))
 }
+
+// Summary absence is unavailable, not a measured zero.
+export function hasMetric(report: GoogleReport | undefined, name: string): boolean {
+  const index = report?.metricHeaders?.findIndex(h => h.name === name) ?? -1
+  const value = index < 0 ? undefined : report?.rows?.[0]?.metricValues?.[index]?.value
+  return value !== undefined && value !== '' && Number.isFinite(Number(value))
+}
+export function metricText(report: GoogleReport | undefined, name: string, percent = false): string {
+  if (!hasMetric(report, name)) return '—'
+  const value = metric(report, name)
+  return percent ? `${(value * 100).toFixed(1)}%` : value.toLocaleString()
+}

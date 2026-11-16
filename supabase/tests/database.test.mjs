@@ -26,7 +26,7 @@ test('Google sync migrations enforce ownership, leases, history, retries and dis
       await db.exec('reset role; set role authenticated')
       await db.query(`select set_config('request.jwt.claims',$1,false)`, [JSON.stringify({ sub: user, is_anonymous: anonymous })])
     }
-    const request = () => db.query(`select public.request_google_report($1,'analytics','123','2026-10-01','2026-10-27') as result`, [site])
+    const request = () => db.query(`select public.request_google_report($1,'analytics','123',current_date-28,current_date-1) as result`, [site])
     await identity(other)
     await assert.rejects(request, /Website not found/)
     await identity(owner, true)
@@ -39,7 +39,8 @@ test('Google sync migrations enforce ownership, leases, history, retries and dis
     assert.equal(pending.sync.state, 'pending')
     await request()
     await db.exec('reset role')
-    assert.equal((await db.query(`select count(*)::integer as n from public.google_report_jobs`)).rows[0].n, 1)
+    assert.equal((await db.query(`select count(*)::integer as n from public.google_report_jobs`)).rows[0].n, 0, 'reads do not create jobs')
+    await db.query(`insert into public.google_report_jobs(website_id,fqdn,kind,property_id,start_date,end_date,collection_class) values($1,'example.com','analytics','123',current_date-28,current_date-1,'current')`, [site])
     await db.exec('set role service_role')
     const claim = async () => (await db.query('select public.claim_google_report() as job')).rows[0].job
     const first = await claim()
@@ -48,8 +49,9 @@ test('Google sync migrations enforce ownership, leases, history, retries and dis
     const another = await claim()
     assert.notEqual(another.id, first.id, 'a leased job must not be claimed twice')
     const complete = async (job, data, error = null) => (await db.query('select public.complete_google_report($1,$2,$3,$4,$5) as saved', [job.id, job.lease, job.generation, data, error])).rows[0].saved
-    const report = { summary: { metricHeaders: [{ name: 'activeUsers' }], rows: [{ metricValues: [{ value: '8' }] }] } }
+    const report = { summary: { metricHeaders: [{ name: 'activeUsers' }], rows: [{ metricValues: [{ value: '8' }] }] }, daily: { dimensionHeaders: [{name:'date'}], metricHeaders: [{name:'sessions'}], rows: [{dimensionValues:[{value:new Date(Date.now()-86400000).toISOString().slice(0,10).replaceAll('-','')}],metricValues:[{value:'7'}]}] } }
     assert.equal(await complete(first, report), true)
+    assert.equal((await db.query("select count(*)::int n from public.provider_daily_history where source='analytics'")).rows[0].n, 1, 'completion normalizes GA4 daily rows')
     assert.equal(await complete(first, report), false, 'a lease can commit only once')
     await identity(owner)
     const ready = (await request()).rows[0].result
@@ -70,18 +72,22 @@ test('Google sync migrations enforce ownership, leases, history, retries and dis
     await db.exec('reset role')
     await db.query(`update public.google_report_jobs set next_run_at=now()-interval '1 day' where id=$1`, [first.id])
     await db.exec('set role service_role')
+    await db.query("update public.google_report_jobs set next_run_at=now()+interval '1 day' where id<>$1",[first.id])
     const recovered = await claim()
     assert.equal(await complete(recovered, report), true)
     assert.equal((await db.query(`select count(*)::integer as n from public.google_report_snapshots where job_id=$1`, [first.id])).rows[0].n, 2, 'successful syncs append history')
     await db.exec("update public.google_report_jobs set lease=null,leased_until=null,next_run_at=now()-interval '1 day' where kind='properties'")
+    await db.exec("update public.google_report_jobs set next_run_at=now()+interval '1 day' where kind<>'properties'")
     const discovered = await claim()
     assert.equal(discovered.kind, 'properties')
     assert.equal(await complete(discovered, { properties: [{ siteUrl: 'sc-domain:example.com', permissionLevel: 'siteOwner' }] }), true)
     await db.exec("update public.google_report_jobs set next_run_at=now()-interval '1 day' where kind='search'")
+    await db.exec("update public.google_report_jobs set next_run_at=now()+interval '1 day' where kind<>'search' or collection_class='recovery'")
     const searchJob = await claim()
     assert.equal(searchJob.kind, 'search', 'property discovery seeds default collection without a browser')
     assert.equal(searchJob.property_id, 'sc-domain:example.com')
     await db.query(`update public.google_report_jobs set leased_until=now()-interval '1 minute' where id=$1`, [searchJob.id])
+    await db.query("update public.google_report_jobs set next_run_at=now()+interval '1 day' where id<>$1",[searchJob.id])
     const reclaimed = await claim()
     assert.equal(reclaimed.id, searchJob.id, 'crashed work becomes eligible after lease expiry')
     assert.notEqual(reclaimed.lease, searchJob.lease)

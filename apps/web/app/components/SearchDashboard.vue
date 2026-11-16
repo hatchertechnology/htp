@@ -28,14 +28,14 @@ let toolGeneration = 0
 let discoveryAbort: AbortController | null = null
 let reportAbort: AbortController | null = null
 let toolAbort: AbortController | null = null
-const canSearch = computed(() => !!ws.user.value && !!ws.selected.value && ws.connectionReady.value)
+const canSearch = computed(() => !!ws.user.value && !!ws.selected.value)
 const needs = computed(() => !ws.user.value ? { title: 'See how people find your website.', body: 'Sign in, select a website, and connect Google to review your search performance.', label: 'Sign in', to: '/connections' } : !ws.selected.value ? { title: 'Start with a website.', body: 'Add the domain you manage to connect its Google Search data.', label: 'Add a website', to: '/websites' } : null)
 const summary = computed(() => report.value?.summary.rows?.[0])
 const metrics = computed(() => [
-  { label: 'Search clicks', value: summary.value?.clicks?.toLocaleString() ?? '0', icon: 'i-lucide-mouse-pointer-2', help: 'Clicks from Google web search results.' },
-  { label: 'Impressions', value: summary.value?.impressions?.toLocaleString() ?? '0', icon: 'i-lucide-eye', help: 'Appearances in Google web search results.' },
-  { label: 'Click-through rate', value: `${((summary.value?.ctr ?? 0) * 100).toFixed(1)}%`, icon: 'i-lucide-percent', help: 'Clicks divided by impressions, from the aggregate report.' },
-  { label: 'Average position', value: summary.value?.impressions ? summary.value.position.toFixed(1) : '—', icon: 'i-lucide-list-ordered', help: 'Average topmost search position. A lower value is better.' },
+  { label: 'Search clicks', value: summary.value?.clicks?.toLocaleString() ?? '—', icon: 'i-lucide-mouse-pointer-2', help: 'Clicks from Google web search results.' },
+  { label: 'Impressions', value: summary.value?.impressions?.toLocaleString() ?? '—', icon: 'i-lucide-eye', help: 'Appearances in Google web search results.' },
+  { label: 'Click-through rate', value: summary.value?.ctr === undefined ? '—' : `${(summary.value.ctr * 100).toFixed(1)}%`, icon: 'i-lucide-percent', help: 'Clicks divided by impressions, from the aggregate report.' },
+  { label: 'Average position', value: summary.value?.position?.toFixed(1) ?? '—', icon: 'i-lucide-list-ordered', help: 'Average topmost search position. A lower value is better.' },
 ])
 const daily = computed<GoogleReport>(() => ({
   metricHeaders: [{ name: 'clicks' }, { name: 'impressions' }],
@@ -65,8 +65,8 @@ async function discover() {
       if (data.sync.connection_status === 'connected') discoveryTimer = setTimeout(() => { void discover() }, 10000)
       return
     }
-    properties.value = data.properties
-    property.value = data.properties.find(p => p.siteUrl === `sc-domain:${ws.selected.value?.fqdn}`)?.siteUrl ?? data.properties[0]?.siteUrl ?? ''
+    properties.value = data.properties.slice(0, 50)
+    property.value = properties.value.find(p => p.siteUrl === `sc-domain:${ws.selected.value?.fqdn}`)?.siteUrl ?? properties.value[0]?.siteUrl ?? ''
   } catch (cause) { if (current === discoveryGeneration) discoveryError.value = failureMessage(cause) }
   finally { if (current === discoveryGeneration) discovering.value = false }
 }
@@ -102,7 +102,7 @@ async function inspectUrl() {
   finally { if (current === toolGeneration) toolBusy.value = false }
 }
 
-watch(() => [ws.user.value?.id, ws.selectedId.value, canSearch.value], () => { void discover() }, { immediate: true })
+useConnectionReload(() => [ws.user.value?.id, ws.selectedId.value, canSearch.value, ws.google.value.connected, ws.google.value.reauthorizationRequired], () => { void discover() })
 watch(() => [property.value, start.value, end.value, ws.user.value?.id, ws.selectedId.value, canSearch.value], () => { void load() }, { immediate: true })
 watch([report, busy, discovering, error, discoveryError], () => {
   emit('snapshot', { report: report.value, loading: busy.value || discovering.value, error: error.value || discoveryError.value })

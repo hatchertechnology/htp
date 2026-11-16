@@ -20,7 +20,7 @@ beforeEach(() => {
   vi.stubGlobal('getCookie',cookie); vi.stubGlobal('setCookie',set); vi.stubGlobal('deleteCookie',vi.fn())
   vi.stubGlobal('getQuery',() => ({state:'a'.repeat(43),code:'code'})); vi.stubGlobal('sendRedirect',redirect)
   vi.stubGlobal('getHeader',() => 'https://htp.example'); vi.stubGlobal('getRouterParam',() => '00000000-0000-0000-0000-000000000003')
-  vi.stubGlobal('setResponseStatus',vi.fn()); vi.stubGlobal('createError',(v:{message:string}) => Object.assign(new Error(v.message),v))
+  vi.stubGlobal('readBody', vi.fn().mockResolvedValue({ start_date: '2026-10-01', end_date: '2026-10-28' })); vi.stubGlobal('setResponseStatus',vi.fn()); vi.stubGlobal('createError',(v:{message:string}) => Object.assign(new Error(v.message),v))
 })
 afterEach(() => { vi.unstubAllGlobals(); vi.resetAllMocks() })
 it('requests read-only consent with encrypted owner-bound state and rejects foreign origins',async () => {
@@ -62,7 +62,7 @@ it('reads only the authenticated connection status and disconnects account-wide'
 })
 it('proxies saved data using the user identity without provider credentials and rejects injected IDs',async () => {
   expect(await proxyBing(event)).toEqual({code:'report_pending'})
-  expect(mocks.raw).toHaveBeenCalledWith('https://api.example/websites/00000000-0000-0000-0000-000000000003/bing/dashboard',expect.objectContaining({headers:{Authorization:'Bearer owner-token'},body:{},retry:0,redirect:'error'}))
+  expect(mocks.raw).toHaveBeenCalledWith('https://api.example/websites/00000000-0000-0000-0000-000000000003/bing/dashboard',expect.objectContaining({headers:{Authorization:'Bearer owner-token'},body:{start_date:'2026-10-01',end_date:'2026-10-28'},retry:0,redirect:'error'}))
   expect(setResponseStatus).toHaveBeenCalledWith(event,202)
   vi.stubGlobal('getRouterParam',() => '../other')
   await expect(proxyBing(event)).rejects.toMatchObject({statusCode:400})
