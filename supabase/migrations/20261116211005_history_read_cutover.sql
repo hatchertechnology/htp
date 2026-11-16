@@ -297,6 +297,8 @@ begin
         when q.kind like 'business_%' then 'https://www.googleapis.com/auth/business.manage'=any(c.scopes)
         else 'https://www.googleapis.com/auth/webmasters.readonly'=any(c.scopes) end
     order by (select max(x.last_claimed_at) from public.google_report_jobs x where x.website_id=q.website_id) nulls first,
+      coalesce((select max(x.last_claimed_at) from public.google_report_jobs x
+        where x.website_id=q.website_id and x.collection_class=q.collection_class),'-infinity'::timestamptz),
       case when q.collection_class='current' then 0 else 1 end,q.next_run_at,q.id for update of q skip locked limit 1;
   if not found then return null; end if;
   update public.google_report_jobs set last_claimed_at=clock_timestamp(),lease=gen_random_uuid(),leased_until=now()+interval '3 minutes'

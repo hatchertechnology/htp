@@ -88,6 +88,7 @@ test('scheduled recovery is bounded and does not starve another site', async () 
     await db.query("update public.google_report_jobs set lease=null,leased_until=null where id in ($1,$2)",[first.id,second.id])
     const served=new Set(), recoveries=new Set()
     for (let i=0;i<30;i++) {
+      await db.exec("update public.google_report_jobs set next_run_at=now()-interval '1 minute' where collection_class='current' and leased_until is null")
       const j=await claim(); if (!j) break
       served.add(j.website_id)
       if (j.collection_class==='recovery') recoveries.add(j.website_id)
