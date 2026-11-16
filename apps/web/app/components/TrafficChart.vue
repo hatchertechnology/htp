@@ -21,10 +21,10 @@ const points = computed(() => rows.value.map((row, i) => {
   const d = row.dimensionValues?.[0]?.value ?? ''
   const time = Date.parse(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`)
   const total = Math.max(86400_000, Date.parse(props.end) - Date.parse(props.start))
-  return { x: 44 + ((time - Date.parse(props.start)) / total) * (right.value - 44), y: bottom.value - metric(props.report, props.selectedMetric, i) / maximum.value * (bottom.value - 18), value: metric(props.report, props.selectedMetric, i), date: `${d.slice(4, 6)}/${d.slice(6, 8)}` }
+  return { time, x: 44 + ((time - Date.parse(props.start)) / total) * (right.value - 44), y: bottom.value - metric(props.report, props.selectedMetric, i) / maximum.value * (bottom.value - 18), value: metric(props.report, props.selectedMetric, i), date: `${d.slice(4, 6)}/${d.slice(6, 8)}` }
 }))
-const path = computed(() => points.value.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' '))
-const area = computed(() => points.value.length ? `${path.value} L ${points.value.at(-1)!.x} ${bottom.value} L ${points.value[0]!.x} ${bottom.value} Z` : '')
+const path = computed(() => points.value.map((p, i) => `${i && p.time - points.value[i - 1]!.time === 86400_000 ? 'L' : 'M'} ${p.x} ${p.y}`).join(' '))
+const area = computed(() => points.value.length && points.value.every((p, i) => !i || p.time - points.value[i - 1]!.time === 86400_000) ? `${path.value} L ${points.value.at(-1)!.x} ${bottom.value} L ${points.value[0]!.x} ${bottom.value} Z` : '')
 const ticks = computed(() => [0, 1, 2, 3, 4].map(i => ({ value: maximum.value * (4 - i) / 4, y: 18 + i * (bottom.value - 18) / 4 })))
 function formatValue(value: number) { return props.selectedMetric === 'sessionKeyEventRate' ? `${(value * 100).toFixed(1)}%` : value.toLocaleString(undefined, { maximumFractionDigits: 2 }) }
 function dateText(value: string) { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(value + 'T12:00:00Z')) }

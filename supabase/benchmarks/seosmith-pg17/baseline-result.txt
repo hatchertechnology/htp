@@ -1,0 +1,63 @@
+# htp head: d4dd085b8c94a657793d758857d57ddc4a17c7bd  H01 migration: 20261116210550_seosmith_versioned_receiver.sql
+PostgreSQL 17.11 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 15.2.0, 64-bit
+# applying pre-H01 migrations
+# generating synthetic payloads
+legacy-pages-1m	1076118 bytes
+legacy-pages-2m	2152380 bytes
+legacy-pages-4m	4305054 bytes
+legacy-pages-8m	7232289 bytes
+legacy-pad-16m	16777216 bytes
+legacy-pre-v2	3036 bytes
+legacy-post-small	3036 bytes
+legacy-post-8m	7232289 bytes
+v2-complete	36640 bytes
+v2-partial	36631 bytes
+v2-truncated	672341 bytes
+v2-complete-import	36640 bytes
+v2-oversize	16777217 bytes
+scan-legacy-tokens-16m	15998034 bytes
+scan-v2-tokens-16m	15998034 bytes
+scan-v2-strings-16m	15600036 bytes
+scan-v2-deep-contiguous	2000032 bytes
+scan-v2-deep-late	15998024 bytes
+scan-v2-deep-sparse	12800858 bytes
+scan-v2-dup-late	15997651 bytes
+scan-v2-escaped-version	15997774 bytes
+# seeding legacy rows on the pre-H01 receiver
+auth debug uid=00000000-0000-4000-8000-0000000000aa jwt={"sub": "00000000-0000-4000-8000-0000000000aa", "is_anonymous": false} site_visible=1
+pre rows=5 raw_bytes=31543057 v4_summaries=0
+# applying H01 migration (single transaction, timed)
+H01 migration wall ms: 42947
+immutable source rows: UNCHANGED (eb6abadc9c225f3597dd8763be3b70ed)
+cache rows=5 derivation_failed=0 uncached_pre_v4=0 cache_size=32 kB audits_size=968 kB
+capabilities={"receiver": "htp", "max_pages": 20000, "exact_bytes": true, "max_findings": 400000, "max_resources": 20000, "receipt_fields": ["delivery_id", "sha256", "accepted"], "max_evaluations": 512, "schema_versions": [1, 2], "max_observations": 40000, "max_report_bytes": 16777216, "max_evidence_observations": 128, "max_schema2_nesting_depth": 64, "evidence_contract_versions": [1], "schema2_unique_object_keys": true, "max_evidence_contract_bytes": 1048576}
+# post-H01 checks
+post rows=11 schema2=4
+# results (phase | label | ms | ok | detail)
+pre | seed 0 small legacy (worker path) | 1.2 | t | 0
+pre | ingest legacy-pages-1m | 1192.3 | t | {"sha256": "aa341b4be8c1c0ccf3c6476d07938f8d7ea453b0e662f1e9d83656cfdd2c390c", "accepted": true, "delivery_id": "5ae2f952-2ebf-4765-843d-d79dee2bf384"}
+pre | ingest legacy-pages-2m | 4437.7 | t | {"sha256": "6e428329c7f6a011b1e2a8b482ea0dc70e4282f3fc8189166d8b7f48a7fb6453", "accepted": true, "delivery_id": "e6114335-7445-4567-88e3-fa7c5d3ef1c3"}
+pre | ingest legacy-pages-4m | 17005.4 | t | {"sha256": "f03b6d0c086107fad162abda589e03298e59ea0a30bb1583a37e2a66f2c55f8e", "accepted": true, "delivery_id": "849ae872-a92f-40d0-9cc7-7f0543efe7ac"}
+pre | ingest legacy-pages-8m | 55595.7 | t | {"sha256": "a50b7ed084da8ae38815f6e9f66d17b40beed12529ad64953d79ec34cf70f713", "accepted": true, "delivery_id": "5300a0fc-c206-480b-a86d-2f42d02157cd"}
+pre | ingest legacy-pad-16m | 208.3 | t | {"sha256": "15b1d661590f34ceefb99d08a7f87447044343118dc1ab85f29759001df67154", "accepted": true, "delivery_id": "e42c3b67-650e-4065-97e1-ab4f52fa2ae4"}
+pre | ingest legacy-pre-v2 | 2.7 | f | 22023 invalid_binding_or_report
+pre | history read (50) | 2.8 | t | [{"scan_at": "2026-11-01T01:10:00+00:00", "summary": {"pages": {"html": 1888, "images": 0, "blocked": 0, "checked": 1888, "http_errors": 0, "fetch_errors": 0},
+post | history read (50) | 3.4 | t | [{"scan_at": "2026-11-01T01:10:00+00:00", "summary": {"pages": {"html": 1888, "images": 0, "blocked": 0, "checked": 1888, "http_errors": 0, "fetch_errors": 0},
+post-retry | ingest legacy-pages-8m | 29484.3 | t | {"sha256": "a50b7ed084da8ae38815f6e9f66d17b40beed12529ad64953d79ec34cf70f713", "accepted": true, "delivery_id": "5300a0fc-c206-480b-a86d-2f42d02157cd"}
+post-retry | ingest legacy-pad-16m | 192.8 | t | {"sha256": "15b1d661590f34ceefb99d08a7f87447044343118dc1ab85f29759001df67154", "accepted": true, "delivery_id": "e42c3b67-650e-4065-97e1-ab4f52fa2ae4"}
+post | ingest legacy-post-small | 6.5 | t | {"sha256": "fb0b06fbd80d9f5257988e8da48ffe6121aabda951090150f89a8939a0faf921", "accepted": true, "delivery_id": "183c27ce-4e18-4f50-bd37-e59157419de7"}
+post | ingest legacy-post-8m | 62795.3 | t | {"sha256": "fcba773df33952a5ac6c35f9b0bec656a7de20e48601d02bbf5228c34fe659fe", "accepted": true, "delivery_id": "18bd8b48-3dd9-47f5-9b35-7147977f1870"}
+post | ingest v2-complete | 61.0 | t | {"sha256": "a22d9a45276dcef851c40a211da697fd331bc44f0736a871abb4edbce4ba584f", "accepted": true, "delivery_id": "00000000-0000-4000-8000-000000000001"}
+post | ingest v2-partial | 64.2 | t | {"sha256": "be2ffba85aae28a04bad629d6e640a6e355307d191bc6dc88403bf7801bd8902", "accepted": true, "delivery_id": "0da29142-3ef8-490d-bb8e-7bfc5906efc8"}
+post | ingest v2-truncated | 573.9 | t | {"sha256": "cd5d49b386f8ec508d505a668d7a20cade37c7029f7a31e70a670a6ce5c07418", "accepted": true, "delivery_id": "ccc1216e-31ac-496e-b377-15697aec3f54"}
+post | ingest v2-oversize | 52.3 | f | 22023 invalid_delivery
+post | owner import v2-complete-import | 59.0 | t | {"sha256": "fc7e22d429041cf576092ef961e73649bdaa7de5744ce03198fad5e4a5bb1010", "accepted": true, "delivery_id": "f6ccabd5-2d19-4c50-a667-a214e0757358"}
+scan | scan-legacy-tokens-16m | 124.5 | t |
+scan | scan-v2-tokens-16m | 274.8 | t |
+scan | scan-v2-strings-16m | 24009.2 | t |
+scan | scan-v2-deep-contiguous | 18.6 | f | 22023 report_depth_limit
+scan | scan-v2-deep-late | 177.9 | f | 22023 report_depth_limit
+scan | scan-v2-deep-sparse | 184.2 | f | 22023 report_depth_limit
+scan | scan-v2-dup-late | 298.1 | f | 22023 invalid_or_duplicate_json_keys
+scan | scan-v2-escaped-version | 219.7 | f | 22023 report_depth_limit
+kept container htp-h01-dryrun-166482

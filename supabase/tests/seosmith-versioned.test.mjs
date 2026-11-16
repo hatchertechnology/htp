@@ -24,7 +24,9 @@ async function setup() {
 }
 const upgrade = async db => {
   await db.exec(await readFile(new URL('../migrations/'+migration, import.meta.url), 'utf8'))
+  await db.exec(await readFile(new URL('../migrations/20261116221958_seosmith_summary_target_lookup.sql', import.meta.url), 'utf8'))
   await db.exec(await readFile(new URL('../migrations/20261116223631_h01_scanner_budget.sql', import.meta.url), 'utf8'))
+  await db.exec(await readFile(new URL('../migrations/20261116224641_seosmith_summary_compact_input.sql', import.meta.url), 'utf8'))
 }
 const identity = async db => {
   await db.exec('reset role;set role authenticated')
@@ -258,6 +260,29 @@ test('token-heavy schema-2 input at the 16 MiB bound stays bounded', async () =>
 })
 
 
+test('target lookup preserves coverage and summaries across checked, missing, duplicate, and excluded relationships', async () => {
+  const db=await setup()
+  try {
+    await db.exec(await readFile(new URL('../migrations/'+migration, import.meta.url), 'utf8'))
+    const samples=[]
+    for (const kind of ['checked','missing','unknown','excluded','duplicate','null-url']) {
+      const r=structuredClone(legacy)
+      const rel=r.pages[0].relationships[0]
+      if (kind==='missing') rel.url='https://example.com/missing'
+      if (kind==='unknown') rel.state='not_fetched'
+      if (kind==='excluded') Object.assign(rel,{kind:'navigation',url:'https://outside.example/',state:'outside_scope',resource:false})
+      if (kind==='duplicate') r.pages.push(structuredClone(r.pages[1]))
+      if (kind==='null-url') rel.url=null
+      samples.push(r)
+    }
+    const summarize=async r=>(await db.query('select public.seosmith_summary($1) as s',[r])).rows[0].s
+    const expected=[]
+    for (const r of samples) expected.push(await summarize(r))
+    await db.exec(await readFile(new URL('../migrations/20261116221958_seosmith_summary_target_lookup.sql', import.meta.url), 'utf8'))
+    for (let i=0;i<samples.length;i++) assert.deepEqual(await summarize(samples[i]),expected[i])
+  } finally { await db.close() }
+})
+
 test('nested string batching preserves depth, escape and duplicate-key checks at chunk boundaries', async () => {
   const db=await setup()
   try {
@@ -309,4 +334,25 @@ test('batched scanner agrees with H01 on adversarial raw inputs', async () => {
     }
     for(const raw of cases) assert.equal(await outcome('seosmith_check_raw_report',raw),await outcome('seosmith_check_raw_report_baseline',raw))
   } finally { await db.close() }
+})
+
+test('compact v2 summary preserves results and rejection errors for unrelated root values and missing fields', async () => {
+  const db=await setup()
+  try {
+    await db.exec(await readFile(new URL('../migrations/'+migration, import.meta.url), 'utf8'))
+    await db.exec(await readFile(new URL('../migrations/20261116221958_seosmith_summary_target_lookup.sql', import.meta.url), 'utf8'))
+    await db.exec(await readFile(new URL('../migrations/20261116223631_h01_scanner_budget.sql', import.meta.url), 'utf8'))
+    const base=JSON.parse(await readFile(new URL('fixtures/contracts/v2-complete.json',import.meta.url),'utf8'))
+    const cases=[base,{...base,padding:[0,1,{x:'ignored'}]},{...base,padding:null}]
+    for (const name of ['v2-partial','v2-truncated']) cases.push(JSON.parse(await readFile(new URL(`fixtures/contracts/${name}.json`,import.meta.url),'utf8')))
+    for (const key of ['request','started_at','engine_version','pages','findings','coverage_complete','evidence_contract']) {
+      const missing=structuredClone(base); delete missing[key]; cases.push(missing)
+      cases.push({...base,[key]:null})
+    }
+    const invalid=structuredClone(base); invalid.evidence_contract.policy.signature='bad'; cases.push(invalid)
+    const evaluate=async r=>{try {return {value:(await db.query('select public.seosmith_summary($1) s',[r])).rows[0].s}} catch(e) {return {code:e.code,message:e.message}}}
+    const expected=[]; for(const r of cases) expected.push(await evaluate(r))
+    await db.exec(await readFile(new URL('../migrations/20261116224641_seosmith_summary_compact_input.sql',import.meta.url),'utf8'))
+    for(let i=0;i<cases.length;i++) assert.deepEqual(await evaluate(cases[i]),expected[i],`case ${i}`)
+  } finally {await db.close()}
 })
