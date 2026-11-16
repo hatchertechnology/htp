@@ -48,11 +48,11 @@ Durable identity for provider collection remains owned by the open checklist in
 [HTP #34](https://github.com/hatchertechnology/htp/issues/34). HTP #7 explicitly
 owns durable HTP scan job identity, scope, budgets and cancellation; its current
 wording does not establish ownership of provider collection request identity.
-Do not treat it as satisfying or waiving the provider gap. A narrowly scoped
-follow-up is proposed for coordinator approval: durable identity for explicit
-provider collection requests, defining stable request/job association, retry and
-conflict behavior, bounds, cancellation and error semantics, with backend tests
-and MCP evidence. Until routed to an approved issue, #34 retains that requirement.
+Do not treat it as satisfying or waiving the provider gap. Open #34 is the
+owning issue for durable provider collection identity, including request/job
+association, retry/conflict behavior, bounds, cancellation and error semantics.
+No duplicate follow-up issue is needed; retain the unchecked requirement there
+until implementation and appropriate backend/MCP evidence satisfy it.
 
 SEOsmith #18 owns operation adapter integration. Backend gates above and live
 host evidence remain open. The coordinator must record exact reviewed commits,
