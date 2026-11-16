@@ -11,7 +11,14 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const dir = resolve(root, 'docs/plugin-contract/v1');
 const inventory = readJson(resolve(dir, 'capabilities.json'));
 const fixtures = readJson(resolve(dir, 'conformance.json'));
-// v1 lock is historical; current shared source is versioned by the additive profile.
+// Verify the immutable v1 lock against its reviewed revision snapshot, not current source.
+const historicalLock = readJson(resolve(dir, 'skills.lock.json'));
+assert.equal(createHash('sha256').update(readFileSync(resolve(dir, 'skills.lock.json'))).digest('hex'), '241fbeffd1f9b36f82f7c90869d7ac70a8f3c40e04700b032acc0ed5386b3d83', 'historical v1 lock drift');
+for (const f of historicalLock.files) {
+  assert.ok(f.path.startsWith('plugins/htp/skills/') && !f.path.includes('..'), 'unsafe historical path');
+  assert.equal(createHash('sha256').update(readFileSync(resolve(root, 'docs/plugin-contract/v1.1/historical-v1-source', f.path))).digest('hex'), f.sha256, 'historical v1 skill snapshot drift: ' + f.path);
+}
+// Current shared source uses the additive profile lock.
 const lock = readJson(resolve(root, 'docs/plugin-contract/v1.1/skills.lock.json'));
 const providerFixtures = readJson(resolve(root, 'docs/plugin-contract/v1.1/conformance.json'));
 const ops = inventory.operations;
@@ -21,7 +28,7 @@ assert.equal(new Set(ops.map(o => o.id)).size, ops.length);
 const source = readFileSync(resolve(root, 'apps/api/src/mcp.rs'), 'utf8');
 const actualTools = [...source.matchAll(/#\[tool\([\s\S]*?\)\]\s*(?:async )?fn (\w+)\(/g)]
   .map(m => m[1]).filter(n => !n.startsWith('hello_world')).sort();
-assert.deepEqual(ops.filter(o => o.service === 'htp').map(o => o.binding).sort(), actualTools.filter(n => !profile.operations.slice(1).some(op => op.binding === n)), 'HTP tool inventory drift');
+assert.deepEqual(ops.filter(o => o.service === 'htp').map(o => o.binding).sort(), actualTools.filter(n => !profile.operations.some(op => op.binding !== 'request_website_report' && op.binding === n)), 'HTP tool inventory drift');
 const annotations = new Map([...source.matchAll(/#\[tool\(([\s\S]*?)\)\]\s*(?:async )?fn (\w+)\(/g)].map(m => [m[2], m[1]]));
 for (const op of ops.filter(o => o.service === 'htp')) {
   for (const [field, hint] of [['idempotency', 'idempotent_hint'], ['destructive', 'destructive_hint'], ['effect', 'read_only_hint']]) {
@@ -40,6 +47,7 @@ assert.equal(profile.extends, inventory.contractVersion);
 for (const op of profile.operations) {
   if (!annotations.has(op.binding)) continue; // not deployed/implemented in this baseline
   const hints = annotations.get(op.binding);
+  // The existing tool's annotation covers both keyed and legacy calls; preserve it.
   for (const [hint, value] of [['read_only_hint', op.effect === 'read'], ...(op.binding === 'request_website_report' ? [] : [['idempotent_hint', op.idempotency]]), ['destructive_hint', op.destructive]]) {
     assert.equal(hints.match(new RegExp(hint + '\\s*=\\s*(true|false)'))?.[1], String(value), 'provider annotation drift: ' + op.binding + ':' + hint);
   }
@@ -71,8 +79,10 @@ for (const host of ['claude', 'codex', 'pi']) {
 const args = process.argv.slice(2);
 if (args.length) {
   assert.ok(args.length === 2 && ['--results','--provider-results'].includes(args[0]), 'usage: node scripts/check-plugin-contract.mjs [--results results.json | --provider-results results.json]');
-  if (args[0] === '--provider-results') validateProviderResults(providerFixtures, readJson(resolve(args[1])));
-  else validateResults(fixtures, readJson(resolve(args[1])), ops);
+  const external = readJson(resolve(args[1]));
+  if (args[0] === '--provider-results') validateProviderResults(providerFixtures, external);
+  else validateResults(fixtures, external, ops);
+  if (args[0] === '--provider-results') console.log(external.observations.every(o => Object.hasOwn(o, 'context')) ? 'Measured context supplied for all provider traces; evidence provenance remains an independent acceptance obligation.' : 'Synthetic fixture context selected; this is not measured backend/host acceptance.');
   console.log(args[0] === '--provider-results' ? 'Provider semantic trace assertions passed. Counters/context require independent measured evidence; provenance and live support are not verified.' : 'External synthetic golden transcripts match exactly; outcome must be unknown. This is not varied backend semantic conformance or live support evidence.');
 }
 console.log(`Synthetic offline contract OK: ${ops.length} operations, ${fixtures.scenarios.length} scenarios, 3 host profiles; no live integration tested.`);

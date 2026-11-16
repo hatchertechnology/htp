@@ -9,8 +9,8 @@ created here. Existing HTP package functionality is documented in ../mcp-seo.md.
 
 The additive [provider request profile 1.1.0](v1.1/README.md) now defines
 caller intent/job association, retry, reconciliation and scoped withdrawal with
-versioned semantic traces. Backend implementation is scheduled under #34;
-acceptance/deployment and host activation remain gated. The original `v1/`
+versioned semantic traces. Backend PR45 is delivered/merged separately under #34; backend postchecks,
+contract acceptance, deployment and host activation remain distinct gates. The original `v1/`
 artifacts and accepted host pins remain historical 1.0.0 evidence. Current shared
 skill source is pinned by `v1.1/skills.lock.json`; it gates the new workflow on
 deployed capability support. The checker validates both scenario sets and that

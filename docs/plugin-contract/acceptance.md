@@ -65,16 +65,18 @@ or closing #34. This documentation does not authorize closure or alter scope.
 the 2026-11-16 acceptance audit: caller key scoped by website, Google/Bing public
 natural-key association, immutable seven-day intent, retry/new intent/conflict,
 read-only reconciliation, scoped withdrawal and races, retained data, shared and
-scheduled work, fixed storage/input limits and bounded/uncertain errors. Twenty
+scheduled work, fixed storage/input limits and bounded/uncertain errors. Twenty-six
 synthetic lifecycle traces and independent invariant mutation tests add definition
 evidence. The new semantic validator accepts lawful variation; it still cannot
 verify context/provenance or measure backend effects.
 
 The accepted v1 inventory and host pins above remain historical. The shared
 website-management source has a capability-gated extension with a separate
-1.1.0 skill lock; hosts require deliberate reviewed repinning. Backend/MCP delivery
-is scheduled now under literal #34 with t2 in the provider-lifecycle worktree;
-it is not silently deferred to host rollout. Definition tests do not establish
+1.1.0 skill lock; hosts require deliberate reviewed repinning. Backend/MCP PR45 is delivered and merged separately under literal #34 as
+`48485a55773b1ca97e165a4715d343704270266e` (reviewed head
+`edd55b83059122fbb3d83781be7e567e1680bbc9`); coordinator postchecks are pending.
+It was not silently deferred to host rollout. That merge does not itself prove
+contract or host acceptance. Definition tests do not establish
 backend acceptance or production activation. Keep the provider checklist open
 until exact-head backend/MCP tests and review evidence satisfy it. Host release
 gates, unrelated backend issues and the coordinator's issue-closure ownership

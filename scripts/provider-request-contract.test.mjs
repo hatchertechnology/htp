@@ -76,3 +76,114 @@ test('result envelope/version/trace coverage is checked',()=>{
 test('invalid calendar dates are rejected',()=>{
   const c=structuredClone(trace('google.retry.reconcile').steps[0].expected.collection);c.association.startDate='2026-02-30';assert.throws(()=>validateCollection(c),/dates/);
 });
+
+// Exercise the public CLI, including its actual measured-context entry point.
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+function measuredResults() {
+  const r=results(), shift=30*86400000;
+  const key = k => /^[A-Za-z0-9._~-]{1,128}$/.test(k) ? (k.length===128 ? 'y'.repeat(128) : 'pg17~run.'+k) : k;
+  const stamp = v => new Date(Date.parse(v)+shift).toISOString();
+  const assoc = a => ({...a,fqdn:'measured.example.test',propertyId:typeof a.propertyId==='string' && /^\d+$/.test(a.propertyId) ? '900'+a.propertyId : a.propertyId});
+  for (let i=0;i<r.observations.length;i++) {
+    const o=r.observations[i], s=fixtures.scenarios[i];
+    o.context={evidenceRefs:['evidence://pg17/run-7/transactions-and-wire.json'],steps:s.steps.map(t=>({
+      id:t.id, now:stamp(t.now), request:{...structuredClone(t.request),websiteId:t.request.websiteId==='site-a' ? '8f000000-0000-4000-8000-000000000001' : '8f000000-0000-4000-8000-000000000002',requestKey:key(t.request.requestKey),input:{...t.request.input,...(/^\d+$/.test(t.request.input.propertyId ?? '') ? {propertyId:'900'+t.request.input.propertyId} : {})}},association:assoc(t.association),
+      ...(t.workBefore ? {workBefore:structuredClone(t.workBefore)} : {}),
+      ...(t.committedAfterLoss ? {committedAfterLoss:{...t.committedAfterLoss,requestKey:key(t.committedAfterLoss.requestKey),expiresAt:stamp(t.committedAfterLoss.expiresAt),association:assoc(t.committedAfterLoss.association)}} : {})
+    }))};
+    let previous=-Infinity;
+    for (const t of o.context.steps) { previous=Math.max(previous,Date.parse(t.now)); t.now=new Date(previous).toISOString(); }
+    for (const t of o.steps) if (t.collection) t.collection={...t.collection,requestKey:key(t.collection.requestKey),expiresAt:stamp(t.collection.expiresAt),association:assoc(t.collection.association)};
+  }
+  // Real retry/read measurements need not use the fixture's one-day spacing.
+  const t=r.observations.find(o=>o.id==='google.retry.reconcile').context.steps;
+  t[1].now=new Date(Date.parse(t[0].now)+15000).toISOString();
+  t[2].now=new Date(Date.parse(t[0].now)+17000).toISOString();
+  return r;
+}
+function cli(value) {
+  const dir=mkdtempSync(join(tmpdir(),'provider-measured-'));
+  try {
+    const path=join(dir,'results.json');writeFileSync(path,JSON.stringify(value));
+    return spawnSync(process.execPath,[fileURLToPath(new URL('./check-plugin-contract.mjs',import.meta.url)),'--provider-results',path],{encoding:'utf8',timeout:10000});
+  } finally {rmSync(dir,{recursive:true,force:true});}
+}
+test('public CLI accepts measured keys, timestamps, property, FQDN and loss seed',()=>{
+  const result=cli(measuredResults());assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/semantic trace assertions passed/);
+});
+for (const [name,id,mutate,pattern] of [
+  ['owner denial result erased','website.key_scope',o=>o.steps[2].error=null,/bounded error shape/],
+  ['cap result erased','caps.new_rejected_existing_available',o=>o.steps[1].error=null,/bounded error shape/],
+  ['loss reconciliation changed','uncertain.committed',o=>o.steps[1].collection.status='withdrawn',/cannot revive/],
+  ['changed conflict erased','google.conflict',o=>o.context.steps[1].request.input={...o.context.steps[0].request.input},/signature distinction erased/],
+  ['owner predicate overridden','website.key_scope',o=>o.context.steps[2].owned=true,/measured step shape/],
+  ['cap predicate overridden','caps.new_rejected_existing_available',o=>o.context.steps[1].activeCount=0,/measured step shape/],
+  ['retry deadline extended','google.retry.reconcile',o=>o.steps[1].collection.expiresAt='2027-01-01T00:00:00.000Z',/cannot revive/],
+  ['loss association altered','uncertain.committed',o=>o.context.steps[0].committedAfterLoss.association.fqdn='wrong.test',/loss seed association/],
+  ['success seed injected','uncertain.not_committed',o=>o.context.steps[0].committedAfterLoss={},/measured step shape/],
+  ['retry key substituted','google.retry.reconcile',o=>o.context.steps[1].request.requestKey='another-key',/request key equality/],
+  ['website denial collapsed','website.key_scope',o=>o.context.steps[1].request.websiteId=o.context.steps[0].request.websiteId,/website distinction/],
+  ['shared association changed','google.new_intent.renewal',o=>o.context.steps[1].association.fqdn='changed.test',/association equality/],
+  ['expiry boundary moved','google.expiry.boundary',o=>o.context.steps[1].now=new Date(Date.parse(o.context.steps[1].now)+1).toISOString(),/exact expiry boundary/],
+  ['invalid calendar timestamp','google.retry.reconcile',o=>o.context.steps[0].now='2026-02-30T00:00:00.000Z',/invalid timestamp/],
+  ['unbounded evidence ref','google.retry.reconcile',o=>o.context.evidenceRefs=['x'.repeat(513)],/bounded evidence/],
+  ['missing context step','google.retry.reconcile',o=>o.context.steps.pop(),/context step coverage/],
+  ['canonical action overridden','google.withdraw.shared.scheduled.leased',o=>o.context.steps[2].action='lookup',/measured step shape/],
+]) test('public CLI rejects measured '+name,()=>{
+  const r=measuredResults();mutate(r.observations.find(o=>o.id===id));
+  const result=cli(r);assert.notEqual(result.status,0);assert.match(result.stderr,pattern);
+});
+
+test('public CLI rejects mixing measured and synthetic context',()=>{
+  const r=measuredResults();delete r.observations[1].context;
+  const result=cli(r);assert.notEqual(result.status,0);assert.match(result.stderr,/context required for every trace/);
+});
+
+test('public CLI bounds entire measured envelope before parsing',()=>{
+  const r=measuredResults();r.observations[0].context.evidenceRefs=['x'.repeat(1024*1024)];
+  const result=cli(r);assert.notEqual(result.status,0);assert.match(result.stderr,/exceeds 1 MiB/);
+});
+
+for (const [name,patch] of [
+  ['kind',a=>a.kind='search'], ['property',a=>a.propertyId='999'],
+  ['range',a=>a.startDate='2026-11-02'],
+]) test('independent input/job association binding: '+name,()=>{
+  const s=trace('google.retry.reconcile');patch(s.steps[0].association);patch(s.steps[0].expected.collection.association);
+  assert.throws(()=>check(s),/input\/job association mismatch/);
+});
+test('invalid range is rejected without a fixture flag',()=>{
+  const s=trace('google.retry.reconcile');s.steps[0].request.input.startDate='2026-11-30';
+  assert.throws(()=>check(s),/bounded error shape/);
+});
+test('invalid range fixture contains an independently invalid range',()=>{
+  const s=trace('input.range.invalid');assert.ok(s.steps[0].request.input.startDate>s.steps[0].request.input.endDate);
+  assert.equal(Object.hasOwn(s.steps[0],'invalidInput'),false);check(s);
+});
+for (const field of ['leasedClaims','scheduledJobs','activeOtherIntents','savedSnapshots']) test('withdrawal preserves measured '+field,()=>{
+  const s=trace('google.withdraw.shared.scheduled.leased');s.steps[2].expected.workAfter[field]--;
+  assert.throws(()=>check(s),/preserve measured/);
+});
+test('last keyed withdrawal retains leased work, schedule and snapshots',()=>{
+  const s=trace('google.withdraw.shared.scheduled.leased');const t=s.steps.at(-1);
+  assert.equal(t.workBefore.activeOtherIntents,0);assert.ok(t.workBefore.leasedClaims>0 && t.workBefore.scheduledJobs>0 && t.workBefore.savedSnapshots>0);check(s);
+});
+test('successful submit cannot inject a reconciliation seed',()=>{
+  const s=trace('google.retry.reconcile');s.steps[0].committedAfterLoss=structuredClone(s.steps[0].expected.collection);
+  assert.throws(()=>check(s),/loss seed only/);
+});
+test('bounded request shape rejects extra context fields',()=>{
+  const s=trace('google.retry.reconcile');s.steps[0].request.extra='fixture';assert.throws(()=>check(s),/request context shape/);
+});
+test('public CLI rejects measured invalid-range case becoming valid',()=>{
+  const r=measuredResults(),o=r.observations.find(o=>o.id==='input.range.invalid');
+  o.context.steps[0].request.input.startDate='2026-11-01';o.context.steps[0].request.input.endDate='2026-11-15';
+  const result=cli(r);assert.notEqual(result.status,0);assert.match(result.stderr,/input validity case retained/);
+});
+test('public CLI rejects cancelling an already measured lease',()=>{
+  const r=measuredResults(),o=r.observations.find(o=>o.id==='google.withdraw.shared.scheduled.leased');o.steps.at(-1).workAfter.leasedClaims=0;
+  const result=cli(r);assert.notEqual(result.status,0);assert.match(result.stderr,/preserve measured/);
+});

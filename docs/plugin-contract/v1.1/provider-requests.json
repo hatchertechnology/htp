@@ -2,7 +2,7 @@
   "contractVersion": "1.1.0",
   "extends": "1.0.0",
   "capability": "htp.provider-request-lifecycle",
-  "backend": "implementation-in-progress",
+  "backend": "merged-postchecks-pending",
   "activationGate": "HTP #34 exact-head SQL/API/MCP acceptance, deployment and discovered input schemas; host releases must explicitly repin",
   "operations": [
     {
@@ -86,5 +86,11 @@
     "expiresAt",
     "association"
   ],
-  "retention": "No automatic key eviction/reuse. Terminal identities retained until website deletion. At cap use existing read/retry/cancel; new key fails LIMIT_EXCEEDED."
+  "retention": "No automatic key eviction/reuse. Terminal identities retained until website deletion. At cap use existing read/retry/cancel; new key fails LIMIT_EXCEEDED.",
+  "backendEvidence": {
+    "pullRequest": 45,
+    "reviewedRevision": "edd55b83059122fbb3d83781be7e567e1680bbc9",
+    "mergeRevision": "48485a55773b1ca97e165a4715d343704270266e",
+    "status": "coordinator reports backend merged after dual approval; postchecks pending; contract/deployment/host activation acceptance separate"
+  }
 }

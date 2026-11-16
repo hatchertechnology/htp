@@ -540,7 +540,19 @@
               "savedDataDeleted": 0,
               "otherIntentsWithdrawn": 0,
               "scheduledWorkCancelled": 0
+            },
+            "workAfter": {
+              "leasedClaims": 1,
+              "scheduledJobs": 1,
+              "activeOtherIntents": 1,
+              "savedSnapshots": 3
             }
+          },
+          "workBefore": {
+            "leasedClaims": 1,
+            "scheduledJobs": 1,
+            "activeOtherIntents": 1,
+            "savedSnapshots": 3
           }
         },
         {
@@ -685,6 +697,69 @@
               "otherIntentsWithdrawn": 0,
               "scheduledWorkCancelled": 0
             }
+          }
+        },
+        {
+          "id": "last-keyed-withdrawal",
+          "action": "cancel",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "shared-2",
+            "input": {
+              "kind": "analytics",
+              "propertyId": "123",
+              "startDate": "2026-11-01",
+              "endDate": "2026-11-15"
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "analytics",
+            "propertyId": "123",
+            "startDate": "2026-11-01",
+            "endDate": "2026-11-15",
+            "fqdn": "example.test"
+          },
+          "sharedJob": true,
+          "scheduledWork": true,
+          "leasedWork": true,
+          "expected": {
+            "id": "last-keyed-withdrawal",
+            "collection": {
+              "requestKey": "shared-2",
+              "status": "withdrawn",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "analytics",
+                "propertyId": "123",
+                "startDate": "2026-11-01",
+                "endDate": "2026-11-15",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            },
+            "workAfter": {
+              "leasedClaims": 1,
+              "scheduledJobs": 1,
+              "activeOtherIntents": 0,
+              "savedSnapshots": 3
+            }
+          },
+          "workBefore": {
+            "leasedClaims": 1,
+            "scheduledJobs": 1,
+            "activeOtherIntents": 0,
+            "savedSnapshots": 3
           }
         }
       ]
@@ -2155,8 +2230,8 @@
             "input": {
               "kind": "analytics",
               "propertyId": "123",
-              "startDate": "2026-11-01",
-              "endDate": "2026-11-15"
+              "startDate": "2026-11-15",
+              "endDate": "2026-11-01"
             }
           },
           "association": {
@@ -2167,7 +2242,6 @@
             "endDate": "2026-11-15",
             "fqdn": "example.test"
           },
-          "invalidInput": true,
           "expected": {
             "id": "reject",
             "collection": null,
@@ -2464,6 +2538,46 @@
               "scheduledWorkCancelled": 0
             }
           }
+        },
+        {
+          "id": "retained-cap-after-cancel",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "new",
+            "input": {
+              "kind": "analytics",
+              "propertyId": "123",
+              "startDate": "2026-11-01",
+              "endDate": "2026-11-15"
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "analytics",
+            "propertyId": "123",
+            "startDate": "2026-11-01",
+            "endDate": "2026-11-15",
+            "fqdn": "example.test"
+          },
+          "retainedCount": 1000,
+          "expected": {
+            "id": "retained-cap-after-cancel",
+            "collection": null,
+            "error": {
+              "code": "LIMIT_EXCEEDED"
+            },
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          },
+          "activeCount": 99
         }
       ]
     },
@@ -2889,6 +3003,1098 @@
               "scheduledWorkCancelled": 0
             }
           }
+        }
+      ]
+    },
+    {
+      "id": "google.undated.omitted.pagespeed",
+      "steps": [
+        {
+          "id": "omitted-create",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "pagespeed",
+              "propertyId": "mobile",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "pagespeed",
+            "propertyId": "mobile",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "omitted-create",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "pagespeed",
+                "propertyId": "mobile",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 1,
+              "collectionJobsCreated": 1,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "omitted-retry",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "pagespeed",
+              "propertyId": "mobile",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "pagespeed",
+            "propertyId": "mobile",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "omitted-retry",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "pagespeed",
+                "propertyId": "mobile",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "explicit-conflict",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "pagespeed",
+              "propertyId": "mobile",
+              "startDate": "1970-01-01",
+              "endDate": "1970-01-01"
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "pagespeed",
+            "propertyId": "mobile",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "explicit-conflict",
+            "collection": null,
+            "error": {
+              "code": "CONFLICT"
+            },
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "reconcile",
+          "action": "lookup",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "pagespeed",
+              "propertyId": "mobile",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "pagespeed",
+            "propertyId": "mobile",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "reconcile",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "pagespeed",
+                "propertyId": "mobile",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "google.undated.omitted.crux",
+      "steps": [
+        {
+          "id": "omitted-create",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "crux",
+              "propertyId": "PHONE",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "crux",
+            "propertyId": "PHONE",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "omitted-create",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "crux",
+                "propertyId": "PHONE",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 1,
+              "collectionJobsCreated": 1,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "omitted-retry",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "crux",
+              "propertyId": "PHONE",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "crux",
+            "propertyId": "PHONE",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "omitted-retry",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "crux",
+                "propertyId": "PHONE",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "explicit-conflict",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "crux",
+              "propertyId": "PHONE",
+              "startDate": "1970-01-01",
+              "endDate": "1970-01-01"
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "crux",
+            "propertyId": "PHONE",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "explicit-conflict",
+            "collection": null,
+            "error": {
+              "code": "CONFLICT"
+            },
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "reconcile",
+          "action": "lookup",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "crux",
+              "propertyId": "PHONE",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "crux",
+            "propertyId": "PHONE",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "reconcile",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "crux",
+                "propertyId": "PHONE",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "google.undated.omitted.business_locations",
+      "steps": [
+        {
+          "id": "omitted-create",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "business_locations",
+              "propertyId": "",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "business_locations",
+            "propertyId": "",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "omitted-create",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "business_locations",
+                "propertyId": "",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 1,
+              "collectionJobsCreated": 1,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "omitted-retry",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "business_locations",
+              "propertyId": "",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "business_locations",
+            "propertyId": "",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "omitted-retry",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "business_locations",
+                "propertyId": "",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "explicit-conflict",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "business_locations",
+              "propertyId": "",
+              "startDate": "1970-01-01",
+              "endDate": "1970-01-01"
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "business_locations",
+            "propertyId": "",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "explicit-conflict",
+            "collection": null,
+            "error": {
+              "code": "CONFLICT"
+            },
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "reconcile",
+          "action": "lookup",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "business_locations",
+              "propertyId": "",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "business_locations",
+            "propertyId": "",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "reconcile",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "business_locations",
+                "propertyId": "",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "google.undated.omitted.business_profile",
+      "steps": [
+        {
+          "id": "omitted-create",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "business_profile",
+              "propertyId": "locations/123",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "business_profile",
+            "propertyId": "locations/123",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "omitted-create",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "business_profile",
+                "propertyId": "locations/123",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 1,
+              "collectionJobsCreated": 1,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "omitted-retry",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "business_profile",
+              "propertyId": "locations/123",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "business_profile",
+            "propertyId": "locations/123",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "omitted-retry",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "business_profile",
+                "propertyId": "locations/123",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "explicit-conflict",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "business_profile",
+              "propertyId": "locations/123",
+              "startDate": "1970-01-01",
+              "endDate": "1970-01-01"
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "business_profile",
+            "propertyId": "locations/123",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "explicit-conflict",
+            "collection": null,
+            "error": {
+              "code": "CONFLICT"
+            },
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "reconcile",
+          "action": "lookup",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "business_profile",
+              "propertyId": "locations/123",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "business_profile",
+            "propertyId": "locations/123",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "reconcile",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "business_profile",
+                "propertyId": "locations/123",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "google.undated.omitted.properties",
+      "steps": [
+        {
+          "id": "omitted-create",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "properties",
+              "propertyId": "",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "properties",
+            "propertyId": "",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "omitted-create",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "properties",
+                "propertyId": "",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 1,
+              "collectionJobsCreated": 1,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "omitted-retry",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "properties",
+              "propertyId": "",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "properties",
+            "propertyId": "",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "omitted-retry",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "properties",
+                "propertyId": "",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "explicit-conflict",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "properties",
+              "propertyId": "",
+              "startDate": "1970-01-01",
+              "endDate": "1970-01-01"
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "properties",
+            "propertyId": "",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "explicit-conflict",
+            "collection": null,
+            "error": {
+              "code": "CONFLICT"
+            },
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "reconcile",
+          "action": "lookup",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "properties",
+              "propertyId": "",
+              "startDate": null,
+              "endDate": null
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "properties",
+            "propertyId": "",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "reconcile",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "properties",
+                "propertyId": "",
+                "startDate": "1970-01-01",
+                "endDate": "1970-01-01",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "caps.withdraw_frees_active_not_identity",
+      "steps": [
+        {
+          "id": "create",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "analytics",
+              "propertyId": "123",
+              "startDate": "2026-11-01",
+              "endDate": "2026-11-15"
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "analytics",
+            "propertyId": "123",
+            "startDate": "2026-11-01",
+            "endDate": "2026-11-15",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "create",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "analytics",
+                "propertyId": "123",
+                "startDate": "2026-11-01",
+                "endDate": "2026-11-15",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 1,
+              "collectionJobsCreated": 1,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          }
+        },
+        {
+          "id": "cancel-free-active",
+          "action": "cancel",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "intent-1",
+            "input": {
+              "kind": "analytics",
+              "propertyId": "123",
+              "startDate": "2026-11-01",
+              "endDate": "2026-11-15"
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "analytics",
+            "propertyId": "123",
+            "startDate": "2026-11-01",
+            "endDate": "2026-11-15",
+            "fqdn": "example.test"
+          },
+          "sharedJob": true,
+          "scheduledWork": true,
+          "leasedWork": true,
+          "expected": {
+            "id": "cancel-free-active",
+            "collection": {
+              "requestKey": "intent-1",
+              "status": "withdrawn",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "analytics",
+                "propertyId": "123",
+                "startDate": "2026-11-01",
+                "endDate": "2026-11-15",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 0,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          },
+          "activeCount": 100,
+          "retainedCount": 999
+        },
+        {
+          "id": "new-after-cancel",
+          "action": "submit",
+          "now": "2026-11-16T00:00:00.000Z",
+          "request": {
+            "websiteId": "site-a",
+            "requestKey": "fresh-after-cancel",
+            "input": {
+              "kind": "analytics",
+              "propertyId": "123",
+              "startDate": "2026-11-01",
+              "endDate": "2026-11-15"
+            }
+          },
+          "association": {
+            "provider": "google",
+            "kind": "analytics",
+            "propertyId": "123",
+            "startDate": "2026-11-01",
+            "endDate": "2026-11-15",
+            "fqdn": "example.test"
+          },
+          "expected": {
+            "id": "new-after-cancel",
+            "collection": {
+              "requestKey": "fresh-after-cancel",
+              "status": "accepted",
+              "expiresAt": "2026-11-23T00:00:00.000Z",
+              "association": {
+                "provider": "google",
+                "kind": "analytics",
+                "propertyId": "123",
+                "startDate": "2026-11-01",
+                "endDate": "2026-11-15",
+                "fqdn": "example.test"
+              }
+            },
+            "error": null,
+            "effects": {
+              "intentCreated": 1,
+              "collectionJobsCreated": 0,
+              "providerClaimsStarted": 0,
+              "savedDataDeleted": 0,
+              "otherIntentsWithdrawn": 0,
+              "scheduledWorkCancelled": 0
+            }
+          },
+          "activeCount": 99,
+          "retainedCount": 999,
+          "sharedJob": true
         }
       ]
     }
