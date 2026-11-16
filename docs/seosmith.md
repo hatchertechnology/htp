@@ -251,3 +251,13 @@ keep receiver support for every version still present in retained reports and
 retry queues. Never rewrite or regenerate finalized reports to downgrade them.
 Local fixture results do not demonstrate production readiness. H01 development
 and its tests do not authorize a production deployment.
+
+Schema 2 requires unique decoded object keys at every depth and at most 64 nested
+JSON objects/arrays, counting the report root as depth one. Both ingestion paths
+check the raw input before JSONB conversion; schema 1 retains its prior behavior.
+Historical pre-v4 summaries are derived into a separate version-keyed cache during
+the migration, without updating immutable reports or their original bytes. New
+reports store their derived summary on insertion.
+
+Once v2 rows exist, v2 receiver and historical read support is a permanent
+compatibility requirement; disabling producer generation does not remove it.

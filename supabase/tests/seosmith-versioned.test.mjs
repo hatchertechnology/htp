@@ -36,6 +36,10 @@ test('receiver upgrade retains legacy bytes and receipts; old receiver rejects n
     const receipt=await push(raw)
     await assert.rejects(()=>push(JSON.stringify({...legacy,schema_version:2})),/invalid_binding_or_report/)
     await db.exec('reset role');await upgrade(db)
+    const cached=(await db.query('select summary_version,summary from public.seosmith_summary_cache where delivery_id=$1',[id])).rows[0]
+    assert.equal(cached.summary_version,4)
+    assert.equal(cached.summary.evidence_state,'legacy_unknown')
+    assert.equal((await db.query("select summary->>'summary_version' as version,raw_report_json from public.seosmith_audits where delivery_id=$1",[id])).rows[0].raw_report_json,raw)
     await db.exec('set role anon')
     assert.deepEqual(await push(raw),receipt)
     const caps=(await db.query('select public.seosmith_receiver_capabilities() as c')).rows[0].c
@@ -43,6 +47,8 @@ test('receiver upgrade retains legacy bytes and receipts; old receiver rejects n
     assert.equal(caps.exact_bytes,true)
     assert.ok(caps.schema_versions.includes(1))
     await identity(db)
+    const history=(await db.query('select public.seosmith_audit_history($1) as h',[site])).rows[0].h
+    assert.deepEqual(history.items[0].summary,cached.summary)
     const detail=(await db.query('select public.seosmith_audit_detail($1,$2) as d',[site,id])).rows[0].d
     assert.equal(detail.report_json,raw)
     assert.deepEqual(detail.report,legacy)
@@ -131,6 +137,13 @@ test('invalid contracts never produce receipts on either path', async () => {
       r=>{r.evidence_contract.padding='x'.repeat(1048577)},
       r=>{r.schema_version=1}
     ]
+    for (const extra of ['\"duplicate\":{\"a\":1,\"a\":2}', '\"deep\":'+ '['.repeat(64)+'0'+']'.repeat(64)]) {
+      const raw=JSON.stringify(fixture).replace(/}$/,','+extra+'}')
+      await db.exec('reset role;set role anon')
+      await assert.rejects(()=>db.query('select public.ingest_seosmith_audit($1,$2,$3,$4)',['x'.repeat(64),fixture.request.request_id,hash(raw),raw]))
+      await identity(db)
+      await assert.rejects(()=>db.query('select public.import_seosmith_audit($1,$2)',[fixture.request.website_id,raw]))
+    }
     for (const mutate of cases) {
       const report=structuredClone(fixture);mutate(report);const raw=JSON.stringify(report)
       await db.exec('reset role;set role anon')
@@ -140,5 +153,21 @@ test('invalid contracts never produce receipts on either path', async () => {
     }
     await db.exec('reset role')
     assert.equal((await db.query('select count(*)::int as n from public.seosmith_audits')).rows[0].n,0)
+  } finally { await db.close() }
+})
+
+test('raw parser vectors enforce decoded uniqueness and depth without changing legacy behavior', async () => {
+  const db=await setup()
+  try {
+    await upgrade(db)
+    const vectors=JSON.parse(await readFile(new URL('fixtures/contracts/raw-validation-vectors.json',import.meta.url),'utf8'))
+    for (const v of vectors) {
+      const inner=v.depth ? '['.repeat(v.depth-1)+'0'+']'.repeat(v.depth-1) : v.suffix
+      const raw=`{"schema_version":${v.schema},"data":${inner}}`
+      const check=()=>db.query('select public.seosmith_check_raw_report($1)',[raw])
+      if (v.accepted) await check(); else await assert.rejects(check,undefined,v.name)
+    }
+    await assert.rejects(()=>db.query('select public.seosmith_check_raw_report($1)', ['{"schema_version":2.0,"schema_version":1}']),/duplicate/)
+    await assert.rejects(()=>db.query('select public.seosmith_check_raw_report($1)', ['{"schema_vers\\u0069on":2,"x":{"a":1,"a":2}}']),/duplicate/)
   } finally { await db.close() }
 })
