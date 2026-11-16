@@ -5,7 +5,7 @@
 - **Related:** SEOsmith #1 (S01 observation/evaluation contract v2); HTP #6 and PR #37 (H01 versioned receiver, merged); HTP #5 (full research and sources); HTP #26 (primary bundle).
 - **Date:** 2026-11-16
 - **Sources of truth (as cited below):**
-  - HTP `origin/main` at `d7b593c` (v1 citations unchanged since `0f704cf`).
+  - HTP citation baseline `d7b593c` (historical v1 SQL citations unchanged since `0f704cf`). The later PR #41 performance correction merged as `58208e7`; it does not change the API citations below.
   - SEOsmith S01 at `bc6210f` (`docs/contracts/s01-v2.md`), text identical to `1070262`. The H01 copy at `d4dd085` is byte-identical to `bc6210f`.
   - HTP H01 (PR #37) merged in `d7b593c`; candidate `d4dd085` received Sonnet and independent exact-head approval.
 
@@ -179,14 +179,15 @@ The pilot passes only when all of these are true. No numeric threshold is set he
 - What it recorded: PostgreSQL 17.11; H01 migration 34,172 ms on 303 pre-existing legacy rows (26.3 MB raw); 303 cache rows with 0 derivation failures; immutable source digest unchanged; capabilities returned.
 - The older run measured 7.2 MB v1 ingests at 58.5 seconds before the migration and 52.7 seconds after. Follow-up profiling identified a superlinear relationship lookup; performance PR #41 is a separately reviewed correction, not evidence that this baseline was fast.
 - Invalid phases: history reads returned `forbidden`, and every scanner phase returned `permission denied for schema dry`. These are harness problems. The v2 partial and truncated ingests returned `delivery_conflict` because the harness reused a delivery ID. These phases do not provide valid timings.
-- A newer coordination artifact `coordination/integration/h01-native-pg17/result-d4dd085.txt` records integration head `6f255e0`, not the merged head. History, scanner and v2 phases passed there; 305 synthetic rows (32.7 MB) produced 305 cache rows with zero derivation failures. Page-heavy v1 ingest took 1.47, 4.95, 25.3 and 53.3 seconds for 1m, 2m, 4m and 8m respectively; 16m v2 string scanning took 14.3 seconds. This superlinear cost remains unresolved.
+- A newer coordination artifact `coordination/integration/h01-native-pg17/result-d4dd085.txt` records integration head `6f255e0`, not the merged head. History, scanner and v2 phases passed there; 305 synthetic rows (32.7 MB) produced 305 cache rows with zero derivation failures. Page-heavy v1 ingest took 1.47, 4.95, 25.3 and 53.3 seconds for 1m, 2m, 4m and 8m respectively; 16m v2 string scanning took 14.3 seconds. These are baseline measurements before the merged PR #41 relationship-lookup correction; they do not establish the corrected implementation's end-to-end timeout safety.
 - The final merged-head artifact `coordination/integration/h01-native-pg17/result-d7b593c.txt` covers `d7b593c`: the synthetic backfill took 50.69 seconds for 305 rows (32.8 MB raw), with unchanged source digests, 305 cache rows and no derivation failures. Page-heavy ingestion took 58.8 seconds before H01 and 50.1 seconds after; retry took 24.4 seconds. String-heavy 16 MiB scanning took 14.3 seconds. These synthetic results do not prove production timeouts or production-data backfill behavior.
-- Required before deployment: verified role timeouts and representative production-sized backfill rehearsal, plus the pending ingest-performance correction and its independent validation. The later performance migration does not speed the initial H01 backfill. PostgreSQL 16 or later is needed for the JSON unique-key predicate, which the Sonnet review of `d4dd085` noted.
+- PR #41 merged as `58208e7` after two independent exact-head reviews and pre/post-merge tests. Its relationship-lookup optimization does not resolve every ingest cost. Scanner PR #42 remains a draft; a valid approximately 15.24 MB token-heavy report still exceeded the authenticated 8-second timeout with both optimizations installed during local rehearsal. No production rollout is authorized by these code merges.
+- Required before deployment: end-to-end acceptance under the actual role timeouts across representative and worst-case valid inputs, and representative production-sized backfill rehearsal. The later performance migration does not speed the initial H01 backfill. PostgreSQL 16 or later is needed for the JSON unique-key predicate, which the Sonnet review of `d4dd085` noted.
 - These benchmark runs used no production database. Separate read-only production sizing was performed by the integration coordinator; no deployment is claimed here.
 
 ## Open decisions (H01 and Wave 2)
 
-1. Add a `duplicate` boolean to receipts? (Additive; needs a versioning decision. Still open in PR #37.)
+1. Add a `duplicate` boolean to receipts? (Additive; needs a versioning decision. Remains a follow-up after merged PR #37.)
 2. Capability advertisement: decided in H01 as `seosmith_receiver_capabilities()` and `GET /integrations/seosmith/capabilities` (merged PR #37). Confirm in review.
 3. Whether detail returns the parsed `report` by default.
 4. Derived summary cache: implemented in H01 as `seosmith_summary_cache` (merged PR #37). Confirm the backfill strategy after measuring it.
