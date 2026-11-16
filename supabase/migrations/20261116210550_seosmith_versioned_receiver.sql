@@ -380,22 +380,23 @@ begin
         end if;
       else
         if awaiting_colon then
-          if btrim(token)<>'' then
+          if btrim(token,E' \t\n\r')<>'' then
             awaiting_colon:=false;
             if token=':' then awaiting_version:=true; version_text:=''; end if;
           end if;
         elsif awaiting_version then
           if token in (',','}',']','{','[',':','"') then
             awaiting_version:=false;
-            if btrim(version_text) ~ '^-?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$' and btrim(version_text)::numeric=2 then
+            if token='"' then in_string:=true; root_string:=false; key_text:=''; end if;
+            if btrim(version_text,E' \t\n\r') ~ '^-?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$' and btrim(version_text,E' \t\n\r')::numeric=2 then
               is_v2:=true;
               if max_depth>64 then raise exception 'report_depth_limit' using errcode='22023'; end if;
             end if;
-          elsif length(version_text)+length(btrim(token))>256 then
+          elsif length(version_text)+length(btrim(token,E' \t\n\r'))>256 then
             -- Never let an oversized numeric spelling evade schema-2 checks.
             is_v2:=true; awaiting_version:=false;
             if max_depth>64 then raise exception 'report_depth_limit' using errcode='22023'; end if;
-          else version_text:=version_text||btrim(token);
+          else version_text:=version_text||btrim(token,E' \t\n\r');
           end if;
         elsif token='"' then in_string:=true; root_string:=depth=1; key_text:='';
         end if;

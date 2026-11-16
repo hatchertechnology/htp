@@ -144,6 +144,22 @@ test('invalid contracts never produce receipts on either path', async () => {
       await identity(db)
       await assert.rejects(()=>db.query('select public.import_seosmith_audit($1,$2)',[fixture.request.website_id,raw]))
     }
+    const whitespace = ['\t','\n','\r'];
+    const malicious = [];
+    for (const ws of whitespace) {
+      malicious.push(JSON.stringify(fixture).replace('{"schema_version":2',`{"schema_version"${ws}:${ws}2${ws}` ).replace(/}$/,',"padding":{"a":1,"a":2}}'))
+      malicious.push(JSON.stringify(fixture).replace('{"schema_version":2',`{"schema_version"${ws}:${ws}2${ws}`).replace(/}$/,',"padding":'+ '['.repeat(65)+'0'+']'.repeat(65)+'}'))
+    }
+    for (const first of ['1','2','\\u0032']) {
+      malicious.push(JSON.stringify(fixture).replace('{"schema_version":2',`{"schema_version":"${first}","schema_version":2`))
+      malicious.push(JSON.stringify(fixture).replace('{"schema_version":2',`{"schema_version":"${first}","schema_version":2`).replace(/}$/,',"padding":'+ '['.repeat(65)+'0'+']'.repeat(65)+'}'))
+    }
+    for (const raw of malicious) {
+      await db.exec('reset role;set role anon')
+      await assert.rejects(()=>db.query('select public.ingest_seosmith_audit($1,$2,$3,$4)',['x'.repeat(64),fixture.request.request_id,hash(raw),raw]))
+      await identity(db)
+      await assert.rejects(()=>db.query('select public.import_seosmith_audit($1,$2)',[fixture.request.website_id,raw]))
+    }
     for (const mutate of cases) {
       const report=structuredClone(fixture);mutate(report);const raw=JSON.stringify(report)
       await db.exec('reset role;set role anon')
@@ -163,7 +179,7 @@ test('raw parser vectors enforce decoded uniqueness and depth without changing l
     const vectors=JSON.parse(await readFile(new URL('fixtures/contracts/raw-validation-vectors.json',import.meta.url),'utf8'))
     for (const v of vectors) {
       const inner=v.depth ? '['.repeat(v.depth-1)+'0'+']'.repeat(v.depth-1) : v.suffix
-      const raw=`{"schema_version":${v.schema},"data":${inner}}`
+      const raw=v.raw ?? `{"schema_version":${v.schema},"data":${inner}}`
       const check=()=>db.query('select public.seosmith_check_raw_report($1)',[raw])
       if (v.accepted) await check(); else await assert.rejects(check,undefined,v.name)
     }
