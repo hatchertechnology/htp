@@ -22,7 +22,10 @@ async function setup() {
   await db.query('insert into public.seosmith_bindings(website_id,token_sha256) values($1,$2)',[site,hash('x'.repeat(64))])
   return db
 }
-const upgrade = async db => db.exec(await readFile(new URL('../migrations/'+migration, import.meta.url), 'utf8'))
+const upgrade = async db => {
+  await db.exec(await readFile(new URL('../migrations/'+migration, import.meta.url), 'utf8'))
+  await db.exec(await readFile(new URL('../migrations/20261116223631_h01_scanner_budget.sql', import.meta.url), 'utf8'))
+}
 const identity = async db => {
   await db.exec('reset role;set role authenticated')
   await db.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({sub:owner,is_anonymous:false})])
@@ -251,5 +254,50 @@ test('token-heavy schema-2 input at the 16 MiB bound stays bounded', async () =>
     const start=performance.now()
     await db.query('select public.seosmith_check_raw_report($1)',[raw])
     assert.ok(performance.now()-start<120000,'bounded token scan exceeded two minutes')
+  } finally { await db.close() }
+})
+
+
+test('nested string batching preserves depth, escape and duplicate-key checks at chunk boundaries', async () => {
+  const db=await setup()
+  try {
+    await upgrade(db)
+    const check=s=>db.query('select public.seosmith_check_raw_report($1)',[s])
+    for (const n of [16360,16370,16380,16383,16384,16385]) {
+      const prefix='{"schema_version":2,"x":['+JSON.stringify('é'.repeat(n)+'\\"[{}]')+','
+      await check(prefix+'"safe"]}')
+      await assert.rejects(()=>check(prefix+'{"a":1,"\\u0061":2}]}'),/duplicate/)
+      await assert.rejects(()=>check(prefix+'['.repeat(64)+'0'+']'.repeat(64)+']}'),/report_depth_limit/)
+    }
+  } finally { await db.close() }
+})
+
+
+test('batched scanner agrees with H01 on adversarial raw inputs', async () => {
+  const db=await setup()
+  try {
+    await upgrade(db)
+    const oldSql=await readFile(new URL('../migrations/'+migration, import.meta.url),'utf8')
+    const start=oldSql.indexOf('create function public.seosmith_check_raw_report(')
+    const end=oldSql.indexOf('revoke all on function public.seosmith_check_raw_report',start)
+    await db.exec(oldSql.slice(start,end).replace('public.seosmith_check_raw_report(', 'public.seosmith_check_raw_report_baseline('))
+    const outcome=async (name,raw)=>{
+      try { await db.query(`select public.${name}($1)`,[raw]); return 'accepted' }
+      catch (e) { return e.message }
+    }
+    const cases=[
+      ...[16360,16370,16380,16383,16384,16385].flatMap(n=>{
+        const a=JSON.stringify('é'.repeat(n)+'\\"[]{}')
+        return [`{"schema_version":2,"x":[${a},"x",{"a":1}]}`,
+          `{"schema_version":2,"x":[${a},{"a":1,"\\u0061":2}]}`,
+          `{"x":[${a},${'['.repeat(64)}0${']'.repeat(64)}],"schema_version":2}`]
+      }),
+      '{"schema_version":2,"x":['+'"[{\\"x\\":]}",'.repeat(4000)+'"z"]}',
+      '{"schema_version":2,"x":['+'0,'.repeat(10000)+'0]}',
+      '{"schema_version":1,"x":'+ '['.repeat(70)+'0'+']'.repeat(70)+'}',
+      '{"schema_version":2,"x":'+ '['.repeat(63)+'0'+']'.repeat(63)+'}',
+      '{"schema_version":2,"x":'+ '['.repeat(64)+'0'+']'.repeat(64)+'}'
+    ]
+    for(const raw of cases) assert.equal(await outcome('seosmith_check_raw_report',raw),await outcome('seosmith_check_raw_report_baseline',raw))
   } finally { await db.close() }
 })
