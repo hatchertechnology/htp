@@ -24,7 +24,7 @@ call 401 ingest_seosmith_audit "@$WORK/invalid-token.json" ''
 node -e "if(JSON.parse(require('fs').readFileSync(process.argv[1])).message!=='invalid_worker')process.exit(1)" "$WORK/response"
 call 400 ingest_seosmith_audit "@$WORK/duplicate.json" ''
 node -e "if(JSON.parse(require('fs').readFileSync(process.argv[1])).message!=='invalid_or_duplicate_json_keys')process.exit(1)" "$WORK/response"
-podman exec -e PGPASSWORD=dryrun "$PG" psql -X -v ON_ERROR_STOP=1 -U supabase_admin -h 127.0.0.1 -d postgres -Atc "select count(*)=0 from public.seosmith_audits where delivery_id='00000000-0000-4000-8000-000000000088'" | grep -qx t
+podman exec -e PGPASSWORD=dryrun "$PG" psql -X -v ON_ERROR_STOP=1 -U supabase_admin -h 127.0.0.1 -d postgres -Atc "select count(*)=0 from public.seosmith_audits where delivery_id in ('00000000-0000-4000-8000-000000000088','00000000-0000-4000-8000-000000000089')" | grep -qx t
 podman cp "$WORK/." "$PG:/tmp/evidence" >/dev/null
 podman exec -u 0 "$PG" chmod -R a+rX /tmp/evidence
 for kind in token string; do for mode in worker import; do for n in 0 1 2; do
@@ -37,3 +37,15 @@ call 200 ingest_seosmith_audit "@$WORK/exact16m.json" ''
 call 400 ingest_seosmith_audit "@$WORK/oversize.json" ''
 node -e "if(JSON.parse(require('fs').readFileSync(process.argv[1])).message!=='invalid_delivery')process.exit(1)" "$WORK/response"
 echo 'exact 16 MiB accepted; 16 MiB + 1 rejected'
+
+# Denials use unique IDs and malformed duplicate-key reports: authorization must precede report validation.
+call 401 import_seosmith_audit "@$WORK/anonymous-import.json" ''
+node -e "const x=JSON.parse(require('fs').readFileSync(process.argv[1]));if(x.accepted===true)process.exit(1)" "$WORK/response"
+OWNER_J=$J; J=$(cat "$WORK/other-jwt")
+call 403 import_seosmith_audit "@$WORK/other-import.json" yes
+node -e "const x=JSON.parse(require('fs').readFileSync(process.argv[1]));if(x.message!=='forbidden'||x.accepted===true)process.exit(1)" "$WORK/response"
+J=$OWNER_J
+call 400 import_seosmith_audit "@$WORK/import-oversize.json" yes
+node -e "if(JSON.parse(require('fs').readFileSync(process.argv[1])).message!=='report_limit')process.exit(1)" "$WORK/response"
+podman exec -e PGPASSWORD=dryrun "$PG" psql -X -v ON_ERROR_STOP=1 -U supabase_admin -h 127.0.0.1 -d postgres -Atc "select count(*)=0 from public.seosmith_audits where delivery_id in ('00000000-0000-4000-8000-000000000090','00000000-0000-4000-8000-000000000091','00000000-0000-4000-8000-000000000092','00000000-0000-4000-8000-000000000093')" | grep -qx t
+echo 'anonymous and cross-owner imports rejected before validation; oversize requests left no rows'
