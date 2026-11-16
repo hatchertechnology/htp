@@ -11,11 +11,11 @@
 
 ## Context
 
-Seosmith (the crawler) delivers one JSON report per run to HTP. HTP stores it as an immutable audit row. The v1 pipeline on `main` (`4259aeb`; the cited files are unchanged since `0f704cf`):
+Seosmith (the crawler) delivers one JSON report per run to HTP. HTP stores it as an immutable audit row. The historical v1 SQL limits below remain in effect on merged H01 `main` (`d7b593c`); API citations refer to that merged revision:
 
-- **Exact-byte cap.** The ingest RPC rejects `octet_length(report_json) > 16777216` (`supabase/migrations/20261101054016_seosmith_expanded_evidence.sql`, ingest function, line 84). The import RPC does the same (`supabase/migrations/20261031053413_seosmith_history.sql`, line 51). The API repeats the check before the RPC (`apps/api/src/seosmith.rs:51` for worker ingest, `:98` for import).
+- **Exact-byte cap.** The ingest RPC rejects `octet_length(report_json) > 16777216` (`supabase/migrations/20261101054016_seosmith_expanded_evidence.sql`, ingest function, line 84). The import RPC does the same (`supabase/migrations/20261031053413_seosmith_history.sql`, line 51). The API repeats the check before the RPC (`apps/api/src/seosmith.rs:58` for worker ingest, `:105` for import).
 - **Record budgets.** `seosmith_summary` rejects more than 40,000 pages, more than 400,000 findings, or more than 20,000 pages with `is_resource` set or unset (`supabase/migrations/20261101060006_seosmith_policy_exclusions.sql`, lines 28-48). Explicit request budgets must be 1-20,000 pages and 0-20,000 resources (same file, lines 51-56).
-- **Request body.** The HTP Seosmith routes use `DefaultBodyLimit::max(32 MiB)` (`apps/api/src/seosmith.rs:25,33`). This is an allowance for the JSON envelope, not a larger report allowance (see "Envelope expansion" below).
+- **Request body.** The HTP Seosmith routes use `DefaultBodyLimit::max(32 MiB)` (`apps/api/src/seosmith.rs:26,34`). This is an allowance for the JSON envelope, not a larger report allowance (see "Envelope expansion" below).
 - **Schema gate.** The ingest RPC checks `schema_version` directly (`20261101054016`, line 92). `seosmith_summary` checks it too (`20261101060006`, line 28). These were the v1 gates before H01; merged H01 adds v2 support.
 - **Immutability.** Insert computes the summary through the `seosmith_prepare_audit` trigger. Update is rejected (`20261031053413`, lines 35-43).
 
@@ -37,7 +37,7 @@ The Wave 0 question is whether the pilot can carry v2 evidence inline, or whethe
 
 | Limit | Value | Where enforced | Status |
 |---|---|---|---|
-| Exact report bytes (UTF-8 octets of `report_json`) | 16,777,216 | API (`seosmith.rs:51`, `:98`); ingest and import RPCs | Enforced on `main` |
+| Exact report bytes (UTF-8 octets of `report_json`) | 16,777,216 | API (`seosmith.rs:58`, `:105`); ingest and import RPCs | Enforced on `main` |
 | Pages, including resources | 40,000 combined | `seosmith_summary` (`20261101060006` line 33) | Enforced on `main` |
 | Pages (non-resource) | 20,000 | `20261101060006` lines 47-48 | Enforced on `main` |
 | Resources | 20,000 | `20261101060006` lines 47-48 | Enforced on `main` |
@@ -49,7 +49,7 @@ The Wave 0 question is whether the pilot can carry v2 evidence inline, or whethe
 | Raw input scan | structural token loop uses 16 KiB byte slices; schema 1 validation outcomes remain unchanged | `seosmith_check_raw_report` (H01 at `d4dd085`) | Merged in PR #37 |
 | Engine/ruleset ≤128 bytes, timestamps ≤64, seed ≤16,384, finding keys 64 lowercase hex | per S01 | H01 validators | Merged in PR #37 |
 | SEOsmith `/v1/runs` submit body | 16 KiB (`DefaultBodyLimit::max(16 * 1024)`, SEOsmith `src/api.rs:29` at `1070262`) | SEOsmith run-control API | Real, but it limits run submission only. It does not apply to report delivery. |
-| HTP Seosmith route body | 32 MiB | `apps/api/src/seosmith.rs:25,33` | Enforced on `main`; envelope allowance only |
+| HTP Seosmith route body | 32 MiB | `apps/api/src/seosmith.rs:26,34` | Enforced on `main`; envelope allowance only |
 
 ## Serialization and amplification bounds for v2
 
@@ -200,7 +200,7 @@ The pilot passes only when all of these are true. No numeric threshold is set he
 - **Sonnet review, M3 (naming).** S01 `1070262` line 105 keeps the wire name `signature` for H01 compatibility, and says it "denotes a digest only", not authentication. The M3 concern is addressed by that text. A rename would be a separate wire change.
 - **Sonnet review, M7 (rollback).** Addressed by the receiver-first rollout and the rollback rules above.
 - **S01 "keep v2 until drained."** Superseded. The producer S01 (`bc6210f`, same text as `1070262`) says v2 support is permanent while any v2 audit row is retained. The H01 copy at `d4dd085` is byte-identical. The earlier "correction" in this ADR is withdrawn because it quoted an outdated S01 text.
-- **H01 references.** This ADR now cites the candidate `d4dd085`, replacing `4ca092a`. The Sonnet review of `d4dd085` approves the code. It lists native PG timing at 16 MiB, role `statement_timeout`, and the production-size cache dry run as open.
+- **H01 references.** This ADR cites the reviewed H01 implementation `d4dd085`, merged as `d7b593c`, replacing `4ca092a`. The Sonnet review of `d4dd085` approves the code. It lists native PG timing at 16 MiB, role `statement_timeout`, and the production-size cache dry run as open.
 - **S01 summary-version semantics.** A summary-version bump changes which stored summaries are recomputed on read. The cache in PR #37 addresses this, but its backfill must be measured first.
 
 ## Consequences
