@@ -34,12 +34,14 @@ test('canonical history preserves revisions and provenance, backfills safely and
     const oldJob = await job('analytics', '123')
     const oldSnapshot = await snapshot(oldJob, report([ga('20261002', 10), ga('20261003', 20)]))
     const overlap = await job('analytics', '123', '2026-10-02', '2026-10-29')
+    // Poisoned legacy containers must remain raw and never stop a batch cursor.
+    for (const daily of [null, 'bad', 5, true, []]) await snapshot(oldJob, { daily });
     const newerSnapshot = await snapshot(overlap, report([ga('20261003', 30), ga('20261004', 40)]), '2026-11-02T00:00:00Z')
     await db.exec(await readFile(new URL(migration, dir), 'utf8'))
     const backfill = async (provider = 'google', cursor = 0, limit = 100) => (await db.query('select public.backfill_daily_history($1,$2,$3) as r', [provider,cursor,limit])).rows[0].r
     await db.exec('set role service_role')
     assert.deepEqual(await backfill('google', 0, 1), { next_cursor: oldSnapshot, processed: 1, changed: 2 })
-    assert.equal((await backfill('google', oldSnapshot, 1)).next_cursor, newerSnapshot)
+    assert.equal((await backfill('google', oldSnapshot, 100)).next_cursor, newerSnapshot)
     assert.equal((await backfill()).changed, 0, 'replaying older overlapping observations cannot overwrite newer ones')
     await assert.rejects(() => backfill('google', 0, 501), /Invalid history backfill/)
     await assert.rejects(() => backfill(null), /Invalid history backfill/)
@@ -78,6 +80,8 @@ test('canonical history preserves revisions and provenance, backfills safely and
     // Bad legacy dates, absent metric values and out-of-range rows do not claim coverage.
     await snapshot(oldJob, report([ga('20260230', 1),ga('20261102', 1), {dimensionValues:[{value:'20261005'}]}]))
     await snapshot(oldJob, {daily:{rows:{invalid:true}}})
+    for (const daily of [null, 'bad', 5, true, []]) await snapshot(oldJob, { daily });
+    assert.equal((await backfill()).changed, 0, 'malformed retained snapshots do not poison replay');
     const conversionJob = await job('conversions','123')
     await snapshot(conversionJob,report([ga('20261003',5)]))
     const searchJob = await job('search','sc-domain:example.com')
@@ -94,6 +98,8 @@ test('canonical history preserves revisions and provenance, backfills safely and
     const bingJob = (await db.query('insert into public.bing_report_jobs(website_id,fqdn) values($1,$2) returning id',[site,'example.com'])).rows[0].id
     const bing = async (rows, error = null) => db.query('insert into public.bing_report_snapshots(job_id,data) values($1,$2)',[bingJob,JSON.stringify({site_url:'https://example.com/',sections:{traffic:{rows,error}}})])
     await bing([{Date:'/Date(1316156400000-0700)/',Clicks:2,Impressions:20}])
+    await bing([{Date:'/Date(253402300800000)/',Clicks:1,Impressions:1}, {Date:'/Date(-99999999999999)/',Clicks:1,Impressions:1}])
+    assert.equal((await db.query("select count(*)::int n from public.provider_daily_history where day < date '2000-01-01' or day > date '9999-12-31'")).rows[0].n, 0)
     await bing([{Date:'2026-10-03',Clicks:3,Impressions:30}])
     await bing([{Date:'2026-10-04',Clicks:0,Impressions:0}], 'bing_quota_exceeded')
     await bing([{Date:'2026-10-04',Clicks:0,Impressions:0}])

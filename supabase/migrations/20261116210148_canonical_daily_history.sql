@@ -30,7 +30,9 @@ begin
       (substring(m[2],2,2)::integer*60+substring(m[2],4,2)::integer)
         * case when left(m[2],1)='-' then -1 else 1 end end;
     if abs(minutes)>14*60 or (m[2] is not null and substring(m[2],4,2)::integer>=60) then return null; end if;
-    return (to_timestamp(m[1]::double precision/1000) at time zone 'UTC' + make_interval(mins=>minutes))::date;
+    d := (to_timestamp(m[1]::double precision/1000) at time zone 'UTC' + make_interval(mins=>minutes))::date;
+    if d < date '2000-01-01' or d > date '9999-12-31' then return null; end if;
+    return d;
   end if;
   v := case when p_value ~ '^[0-9]{8}$' then
     substring(p_value,1,4)||'-'||substring(p_value,5,2)||'-'||substring(p_value,7,2)
@@ -57,6 +59,8 @@ begin
       into doc,website,host,property,source_name,fetched,range_start,range_end
       from public.google_report_snapshots s join public.google_report_jobs j on j.id=s.job_id where s.id=p_snapshot_id;
     if not found or source_name not in ('analytics','conversions','search') then return 0; end if;
+    -- JSON null is not SQL NULL. Reject scalar containers before object operators.
+    if jsonb_typeof(doc->'daily') is distinct from 'object' then return 0; end if;
     rows := doc#>'{daily,rows}';
     meta := coalesce(doc->'daily','{}'::jsonb)-'rows';
     if source_name in ('analytics','conversions') and
