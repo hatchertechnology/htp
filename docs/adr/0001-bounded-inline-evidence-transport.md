@@ -57,7 +57,7 @@ The Wave 0 question is whether the pilot can carry v2 evidence inline, or whethe
 - **Nesting depth: 64, root counts as depth 1.** S01 (`bc6210f`, lines 113-116): "at most 64 nested JSON object/array containers, counting the root as depth 1". The producer checks depth while serializing; over-depth reports fail finalization. Receivers reject over-depth input before parsing. H01 implements this in `seosmith_check_raw_report` (`d4dd085`, lines 349-410). The structural token loop reads 16 KiB byte slices; a whole-report negative prefilter runs first, including for schema 1. The loop does not materialize all tokens, and rejects over-depth as soon as v2 is known. A v2 report whose `schema_version` appears late must have its preceding prefix scanned to classify it, so time to rejection grows with that prefix. This is a design property, not a timing claim. Required fixtures: depth 64 accepted, depth 65 rejected, including non-contiguous nesting.
 - **Duplicate keys rejected before parse.** S01 requires unique object keys at every depth. H01 rejects duplicate decoded keys in the raw scan, including escaped spellings of `schema_version`. Reason: PostgreSQL `jsonb` keeps only the last value of a duplicated key (PostgreSQL's JSON-type documentation; not reproduced in this session), so parsed evidence could otherwise differ from the exact bytes.
 - **Validation order (receiver).** Check the exact-byte cap first. Run the raw depth and duplicate-key scan. Parse once. Check schema fields, record counts, extension size, and per-field bounds. Compute the summary last. Reject before any insert.
-- **Summary must accept schema 2 before any v2 insert.** The insert trigger calls `seosmith_summary`, which rejects any `schema_version` other than 1 on `main`. Enabling v2 without updating the summary function fails every v2 insert. PR #37 adds the v2-compatible summary. This ordering is part of rollout.
+- **Summary must accept schema 2 before any v2 insert.** Before H01, the insert trigger called `seosmith_summary`, which rejected any `schema_version` other than 1. Enabling v2 without updating the summary function fails every v2 insert. PR #37 adds the v2-compatible summary. This ordering is part of rollout.
 
 ### Envelope expansion
 
@@ -65,12 +65,12 @@ The 32 MiB route body limit does not guarantee that a worst-case 16 MiB report f
 
 ### Read-path amplification
 
-**On `main` (verified in migrations):**
+**Before H01 (historical migration behavior):**
 
 - Summaries are not cached for legacy rows. History and detail reuse the stored summary only when `summary_version` matches the current version (`'3'` in `20261101060006`, lines 96 and 111). Otherwise they call `seosmith_summary(report)`. The immutability trigger forbids updates, so older rows are recomputed on every read. A history page fetches `p_limit + 1` rows (up to 101) before trimming, and each recomputation makes several full passes over the stored report.
 - Detail returns both the parsed `report` (jsonb) and `raw_report_json` (text). For a near-cap report, one detail response carries roughly two copies of the document.
 
-**In PR #37 (H01 at `d4dd085`):**
+**On merged `main` after PR #37 (H01 at `d7b593c`):**
 
 - A derived cache table `seosmith_summary_cache` keyed by `(delivery_id, summary_version)`, with `on delete cascade` from `seosmith_audits` (`20261116210550`, line 417 onward). New rows are written as version 4. History and detail join the cache for non-v4 rows.
 - The migration backfills the cache for every existing non-v4 row. That backfill recomputes every legacy summary once, so its duration on production-sized tables must be measured before the migration is applied. A derivation that fails during backfill is stored as `evidence_state: legacy_unknown` with `summary_derivation_failed: true` (`seosmith_cached_legacy_summary`, lines 428-435; backfill at line 438). Those rows must never count as complete coverage. `supabase/tests/seosmith-versioned.test.mjs` covers this fallback.
@@ -166,22 +166,23 @@ The pilot passes only when all of these are true. No numeric threshold is set he
 
 1. All required tests pass in both repositories, using the same fixtures. The S01 text is identical at `1070262` and `bc6210f`, and the H01 copy at `d4dd085` is byte-identical to `bc6210f`. The six shared fixtures at H01 `d4dd085` match SEOsmith PR #25 `bcedd23`, including raw vectors; those vectors differ from older S01 `bc6210f`.
 2. On native PostgreSQL 17 (management metadata reports 17.11; PGlite is not a substitute), ingest, import, history, detail, the raw scanner and the cache backfill are measured for worst-case 16 MiB reports, against thresholds set before the run.
-7. A production-sized backfill dry run on an isolated native PG17 copy: cache rows equal non-v4 rows, zero unexpected derivation failures, immutable source rows unchanged by digest, wall time and size recorded. No hosted or production database is used.
-3. The fraction of planned crawl inventories that exceed the byte or record budget is measured. This decides whether a chunk protocol is needed in Wave 2.
-4. A rollback drill in the pilot environment: disable the producer gate, confirm v2 retries still succeed byte-identically, and confirm receiver v2 support remains.
-5. Database growth per website is measured and reported to the operator.
-6. Fixture results are not production evidence. Production readiness is claimed only from a separate production rollout record.
+3. A production-sized backfill dry run on an isolated native PG17 copy: cache rows equal non-v4 rows, zero unexpected derivation failures, immutable source rows unchanged by digest, wall time and size recorded. No hosted or production database is used.
+4. The fraction of planned crawl inventories that exceed the byte or record budget is measured. This decides whether a chunk protocol is needed in Wave 2.
+5. A rollback drill in the pilot environment: disable the producer gate, confirm v2 retries still succeed byte-identically, and confirm receiver v2 support remains.
+6. Database growth per website is measured and reported to the operator.
+7. Fixture results are not production evidence. Production readiness is claimed only from a separate production rollout record.
 
 ### Native PG17 evidence status (not satisfied)
 
 - In the hatchtechplatform coordination repository, the harness `coordination/integration/h01-native-pg17/run.sh` runs in an isolated podman container with tmpfs data, a localhost-only port and synthetic data. It never connects to a hosted database.
 - The partial result `coordination/integration/h01-native-pg17/result-ba2dd58-superseded-harness-bugs.txt` is not final-head evidence. Its header records htp head `58c745d`, not `ba2dd58` or `d4dd085`.
 - What it recorded: PostgreSQL 17.11; H01 migration 34,172 ms on 303 pre-existing legacy rows (26.3 MB raw); 303 cache rows with 0 derivation failures; immutable source digest unchanged; capabilities returned.
-- Unexplained: 7.2 MB v1 ingests took 58.5 s before the migration and 52.7 s after. This needs a root cause before any pilot timing threshold is set.
+- The older run measured 7.2 MB v1 ingests at 58.5 seconds before the migration and 52.7 seconds after. Follow-up profiling identified a superlinear relationship lookup; performance PR #41 is a separately reviewed correction, not evidence that this baseline was fast.
 - Invalid phases: history reads returned `forbidden`, and every scanner phase returned `permission denied for schema dry`. These are harness problems. The v2 partial and truncated ingests returned `delivery_conflict` because the harness reused a delivery ID. These phases do not provide valid timings.
 - A newer coordination artifact `coordination/integration/h01-native-pg17/result-d4dd085.txt` records integration head `6f255e0`, not the merged head. History, scanner and v2 phases passed there; 305 synthetic rows (32.7 MB) produced 305 cache rows with zero derivation failures. Page-heavy v1 ingest took 1.47, 4.95, 25.3 and 53.3 seconds for 1m, 2m, 4m and 8m respectively; 16m v2 string scanning took 14.3 seconds. This superlinear cost remains unresolved.
-- Required before deployment: a valid native PG17 run at the final H01 head, covering worst-case 16 MiB reports and the production-sized backfill dry run. PostgreSQL 16 or later is needed for the JSON unique-key predicate, which the Sonnet review of `d4dd085` noted.
-- No production database query or deployment was performed.
+- The final merged-head artifact `coordination/integration/h01-native-pg17/result-d7b593c.txt` covers `d7b593c`: the synthetic backfill took 50.69 seconds for 305 rows (32.8 MB raw), with unchanged source digests, 305 cache rows and no derivation failures. Page-heavy ingestion took 58.8 seconds before H01 and 50.1 seconds after; retry took 24.4 seconds. String-heavy 16 MiB scanning took 14.3 seconds. These synthetic results do not prove production timeouts or production-data backfill behavior.
+- Required before deployment: verified role timeouts and representative production-sized backfill rehearsal, plus the pending ingest-performance correction and its independent validation. The later performance migration does not speed the initial H01 backfill. PostgreSQL 16 or later is needed for the JSON unique-key predicate, which the Sonnet review of `d4dd085` noted.
+- These benchmark runs used no production database. Separate read-only production sizing was performed by the integration coordinator; no deployment is claimed here.
 
 ## Open decisions (H01 and Wave 2)
 
@@ -206,5 +207,5 @@ The pilot passes only when all of these are true. No numeric threshold is set he
 
 - The pilot stays on existing, verified infrastructure: one inline request, one RPC, one immutable row.
 - The byte and record caps are not raised. v2 evidence must fit the existing budget, including framing, so some large crawls will be rejected or must use smaller limits. That is the intended fail-closed behavior.
-- Read amplification on legacy rows is a known cost on `main`. PR #37 adds a cache, but the pilot cannot claim bounded history latency until the backfill and cache are measured.
+- Merged PR #37 adds a legacy summary cache. The pilot cannot claim bounded history latency until representative backfill and cache measurements satisfy the rollout gates.
 - Future chunk or artifact protocols have explicit requirements, so they can be designed later without weakening the current guarantees.
