@@ -298,6 +298,13 @@ test('batched scanner agrees with H01 on adversarial raw inputs', async () => {
       '{"schema_version":2,"x":'+ '['.repeat(63)+'0'+']'.repeat(63)+'}',
       '{"schema_version":2,"x":'+ '['.repeat(64)+'0'+']'.repeat(64)+'}'
     ]
+    for (const n of [16355,16360,16370,16380,16383,16384,16385,16390,32760,32768]) {
+      for (const slashes of [1,2,3,4,5]) {
+        const content=JSON.stringify('é'.repeat(n)+'\\'.repeat(slashes)+'"[{}]')
+        cases.push(`{"schema_version":2,"items":[${content}, {"x":1,"\\u0078":2}]}`)
+        cases.push(`{"schema_version":2,"items":[${content}, "valid"]}`)
+      }
+    }
     for(const raw of cases) assert.equal(await outcome('seosmith_check_raw_report',raw),await outcome('seosmith_check_raw_report_baseline',raw))
   } finally { await db.close() }
 })

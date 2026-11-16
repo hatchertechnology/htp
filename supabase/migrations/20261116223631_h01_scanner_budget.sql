@@ -12,6 +12,16 @@ begin
   -- character offsets. Latin-1 maps every input byte 1:1; structural bytes are ASCII.
   while offset_bytes < octet_length(bytes) loop
     chunk:=convert_from(substring(bytes from offset_bytes+1 for 16384),'LATIN1');
+    -- Skip complete string-content units without crossing an unescaped quote.
+    -- A trailing backslash is left for the state machine, preserving escapes
+    -- that span chunks. Root strings still use the key-discovery logic.
+    if in_string and not root_string and not escaped then
+      fast_prefix:=substring(chunk from $fast$^((?:[^"\\]|\\.)+)$fast$);
+      if length(fast_prefix)>0 then
+        offset_bytes:=offset_bytes+length(fast_prefix);
+        continue;
+      end if;
+    end if;
     -- In nested containers, complete strings, commas and whitespace cannot
     -- change depth or reveal a root schema key. Consume only complete tokens;
     -- a chunk ending inside a string falls back to the existing state machine.
@@ -25,10 +35,6 @@ begin
     end if;
     offset_bytes:=offset_bytes+16384;
     -- A run of array scalars cannot change nesting or string state.
-    -- In nested containers, complete strings, commas and whitespace cannot
-    -- change depth or reveal a root schema key. Consume only complete tokens;
-    -- a chunk ending inside a string falls back to the existing state machine.
-    -- Latin-1 makes matched character count equal to the original byte count.
     if depth>1 and not in_string and chunk ~ '^[0-9,[:space:]]+$' then continue; end if;
     for tok in select regexp_matches(chunk, $tokens$["\\{}\[\]:,]|[^"\\{}\[\]:,]+$tokens$, 'g') loop
       token:=tok[1];
