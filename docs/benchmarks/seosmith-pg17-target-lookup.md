@@ -1,6 +1,6 @@
 # SEOsmith target lookup: local PostgreSQL 17.11
 
-Synthetic fixture measurements on a disposable local Supabase PostgreSQL 17.11 container. The fixture generator and original harness are maintained in the coordination workspace at `coordination/integration/h01-native-pg17/{gen.mjs,run.sh}`. Times are single runs, not production estimates; some baseline measurements overlapped diagnostic work.
+Synthetic fixture measurements on a disposable local Supabase PostgreSQL 17.11 container. The candidate-installing harness and captured results are in `supabase/benchmarks/seosmith-pg17/`. Run `supabase/benchmarks/seosmith-pg17/run.sh "$PWD" 0` from the repository root with Podman, Node.js and the Supabase PostgreSQL 17.11 image available. The harness creates a disposable local container and synthetic data; it does not contact a hosted database. Times are single runs, not production estimates; some baseline measurements overlapped diagnostic work.
 
 | Fixture | Bytes | Pages | Pre-H01 ingest |
 | --- | ---: | ---: | ---: |

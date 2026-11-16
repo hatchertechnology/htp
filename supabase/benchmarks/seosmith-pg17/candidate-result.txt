@@ -1,0 +1,35 @@
+Timing is on.
+ timeit
+--------
+
+(1 row)
+
+Time: 594.737 ms
+INSERT 0 1
+Time: 217.172 ms
+ timeit
+--------
+
+(1 row)
+
+Time: 882.341 ms
+ timeit
+--------
+
+(1 row)
+
+Time: 1072.039 ms (00:01.072)
+       label       |   ms   | ok |                                                                         detail
+-------------------+--------+----+---------------------------------------------------------------------------------------------------------------------------------------------------------
+ retry 19k         |  594.0 | t  | {"sha256": "a50b7ed084da8ae38815f6e9f66d17b40beed12529ad64953d79ec34cf70f713", "accepted": true, "delivery_id": "5300a0fc-c206-480b-a86d-2f42d02157cd"}
+ new 19k           |  882.0 | t  | {"sha256": "c0bcd18d1e630c721560c0ab0a1697fcc33ee4311468ba086ba98a033de314e1", "accepted": true, "delivery_id": "00000000-0000-4000-8000-000000000099"}
+ cache derive five | 1071.8 | t  | 5
+(3 rows)
+
+Time: 0.136 ms
+ exact_bytes
+-------------
+ t
+(1 row)
+
+Time: 62.482 ms

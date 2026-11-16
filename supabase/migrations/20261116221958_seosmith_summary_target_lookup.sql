@@ -62,5 +62,3 @@ begin
     'pages',pages,'resources',resources,'findings',jsonb_array_length(r->'findings'),'severities',counts,'rules',rules,
     'comparison_key',encode(sha256(convert_to(jsonb_build_object('request',((r->'request') - 'request_id'::text - 'website_id'::text - 'binding_generation'::text),'engine',r->'engine_version','ruleset',r->'ruleset_version')::text,'UTF8')),'hex'));
 end $$;
-
-
