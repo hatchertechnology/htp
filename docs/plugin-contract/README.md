@@ -97,7 +97,12 @@ Rollback restores the prior verified package/skill lock and capability activatio
 preserving history and reports. Claude update/rollback remains unverified in this
 baseline. Forms, orchestration, lifecycle, staging, baseline-aware CI and richer
 provider analysis activate only after their backend and rollout gates ship.
-HTP #34 and host issues remain open pending rollout evidence; no deployment occurs.
+HTP #34 covers the Wave 0 contract definition, inventory and offline fixtures.
+The full #34 issue remains open while its literal checklist criteria are unmet;
+offline definition evidence does not certify supported host versions,
+upgrade/rollback, parity or durable collection request identity. Host
+release issues and backend activation gates remain open pending their own evidence;
+no deployment occurs. See [Wave 0 acceptance evidence](acceptance.md).
 
 ### Review clarifications
 
@@ -115,7 +120,7 @@ An idempotency hint does not authorize automatic retry or replace explicit inten
 Import dedupe, explicit delete, and non-owner writes have synthetic scenarios.
 
 SEOsmith host bindings remain null and gated. `primitiveBinding` records
-historical implementation details only. The #18 adapter (#19 PR, ad36869) uses
+historical implementation details only. The #18 adapter (open PR #19; head may change) uses
 the in-process CLI dispatch: `seosmith --database /absolute/private/run.sqlite
 operations start --request /path/request.json`, status/cancel/report with
 `--id UUID`, and export with `--id UUID --output /new/file`.
@@ -159,3 +164,15 @@ remain possible. Legacy HTTP outage/auth fixtures are synthetic target cases,
 not evidence of local CLI behavior. SEOsmith null idempotency/destructive metadata
 means unverified adapter semantics; exact retry expectations do not establish
 blanket replay safety. Credentials never belong in host packages.
+
+### Versioned host baseline
+
+The `v1/hosts/` descriptors preserve the initial inspected baseline, including
+historical package and adapter wording. Codex now has readiness documentation and
+validation scripts (htp-codex PR #3, merged as `e9efb57`); Pi readiness
+PR #2 merged as `a3edc71` against canonical PR #36. These artifacts do not implement installable
+host packages: `packageStatus: not-implemented` remains accurate. The adapter
+implementation described above does not establish host integration. Read historical
+install/gate prose in that context. This scope clarification changes no normative
+v1 profile, fixture, lock or canonical pin; a future normative correction must be
+versioned and coordinated across mirrors.
