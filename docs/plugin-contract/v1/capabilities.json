@@ -20,7 +20,9 @@
       "result": "connection metadata without credentials",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": false
     },
     {
       "id": "htp.get_website",
@@ -36,7 +38,9 @@
       "result": "website or binding configuration",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": false
     },
     {
       "id": "htp.website_audit_history",
@@ -52,7 +56,9 @@
       "result": "stored audit summary page/trends",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": false
     },
     {
       "id": "htp.website_audit_detail",
@@ -68,7 +74,9 @@
       "result": "saved report preserving schema_version",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": false
     },
     {
       "id": "htp.list_websites",
@@ -84,7 +92,9 @@
       "result": "website page with next_offset/has_more",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": false
     },
     {
       "id": "htp.website_saved_data",
@@ -100,7 +110,9 @@
       "result": "stored dataset items with next_cursor/has_more and source coverage",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": false
     },
     {
       "id": "htp.website_repository_history",
@@ -116,7 +128,9 @@
       "result": "stored commit page and collection status",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": false
     },
     {
       "id": "htp.disconnect_provider",
@@ -132,7 +146,9 @@
       "result": "connection metadata; saved history retained",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": true
     },
     {
       "id": "htp.inspect_website_url",
@@ -148,7 +164,9 @@
       "result": "indexed-version inspection result",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": false
     },
     {
       "id": "htp.create_website",
@@ -164,7 +182,9 @@
       "result": "website or binding configuration",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": false,
+      "destructive": false
     },
     {
       "id": "htp.update_website",
@@ -180,7 +200,9 @@
       "result": "website or binding configuration",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": true
     },
     {
       "id": "htp.delete_website",
@@ -196,7 +218,9 @@
       "result": "deleted:true",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": true
     },
     {
       "id": "htp.set_website_ga4_property",
@@ -212,7 +236,9 @@
       "result": "website or binding configuration",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": false
     },
     {
       "id": "htp.set_website_business_location",
@@ -228,7 +254,9 @@
       "result": "website or binding configuration",
       "gate": "HTP Business Profile feature flag",
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": false
     },
     {
       "id": "htp.request_website_report",
@@ -244,7 +272,9 @@
       "result": "latest report and sync metadata or pending; not crawl job completion",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": false
     },
     {
       "id": "htp.import_website_audit",
@@ -260,7 +290,9 @@
       "result": "validated deduplicated import receipt",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": false
     },
     {
       "id": "htp.set_website_repository",
@@ -276,71 +308,93 @@
       "result": "repository binding and collection state",
       "gate": null,
       "unsupported": "Return unsupported when absent from tools/list; never substitute another operation.",
-      "source": "apps/api/src/mcp.rs"
+      "source": "apps/api/src/mcp.rs",
+      "idempotency": true,
+      "destructive": false
     },
     {
       "id": "seosmith.start",
       "service": "seosmith",
-      "backend": "present-private-primitive",
+      "backend": "gated",
       "package": "not-implemented",
       "effect": "write",
       "authorization": "explicit-local-or-private-worker",
-      "transport": "private-http",
-      "binding": "POST /v1/runs",
+      "transport": null,
+      "binding": null,
       "version": "schema_version=1 default; adapter not versioned yet",
       "limits": "request <=16 KiB; pages 1..20000; resources 0..20000; seconds 10..7200; delay_ms 1000..60000; exact-host HTTP(S); no URL credentials/custom ports/query/fragment on seed; plugin report budget 16 MiB",
       "result": "202 request_id; identity conflict is 409",
-      "gate": "seosmith#18 adapter; htp#7 additionally for customer scheduling",
+      "gate": "SEOsmith #18 CLI adapter integration and host acceptance remain unverified",
       "unsupported": "Unsupported until adapter discovery and explicit local/private configuration; never use public crawler or HTP provider report action.",
-      "source": "hatchertechnology/seosmith src/api.rs, src/model.rs @11ca577"
+      "source": "hatchertechnology/seosmith src/api.rs, src/model.rs @11ca577",
+      "primitiveBinding": {
+        "transport": "private-http",
+        "binding": "POST /v1/runs"
+      },
+      "hostBinding": null
     },
     {
       "id": "seosmith.status",
       "service": "seosmith",
-      "backend": "present-private-primitive",
+      "backend": "gated",
       "package": "not-implemented",
       "effect": "read",
       "authorization": "explicit-local-or-private-worker",
-      "transport": "private-http",
-      "binding": "GET /v1/runs/{id}",
+      "transport": null,
+      "binding": null,
       "version": "schema_version=1 default; adapter not versioned yet",
       "limits": "request <=16 KiB; pages 1..20000; resources 0..20000; seconds 10..7200; delay_ms 1000..60000; exact-host HTTP(S); no URL credentials/custom ports/query/fragment on seed; plugin report budget 16 MiB",
       "result": "stored job status or 404",
-      "gate": "seosmith#18 adapter; htp#7 additionally for customer scheduling",
+      "gate": "SEOsmith #18 CLI adapter integration and host acceptance remain unverified",
       "unsupported": "Unsupported until adapter discovery and explicit local/private configuration; never use public crawler or HTP provider report action.",
-      "source": "hatchertechnology/seosmith src/api.rs, src/model.rs @11ca577"
+      "source": "hatchertechnology/seosmith src/api.rs, src/model.rs @11ca577",
+      "primitiveBinding": {
+        "transport": "private-http",
+        "binding": "GET /v1/runs/{id}"
+      },
+      "hostBinding": null
     },
     {
       "id": "seosmith.cancel",
       "service": "seosmith",
-      "backend": "present-private-primitive",
+      "backend": "gated",
       "package": "not-implemented",
       "effect": "write",
       "authorization": "explicit-local-or-private-worker",
-      "transport": "private-http",
-      "binding": "POST /v1/runs/{id}/cancel",
+      "transport": null,
+      "binding": null,
       "version": "schema_version=1 default; adapter not versioned yet",
       "limits": "request <=16 KiB; pages 1..20000; resources 0..20000; seconds 10..7200; delay_ms 1000..60000; exact-host HTTP(S); no URL credentials/custom ports/query/fragment on seed; plugin report budget 16 MiB",
       "result": "202 accepted; 409 not cancellable; acceptance is not completion",
-      "gate": "seosmith#18 adapter; htp#7 additionally for customer scheduling",
+      "gate": "SEOsmith #18 CLI adapter integration and host acceptance remain unverified",
       "unsupported": "Unsupported until adapter discovery and explicit local/private configuration; never use public crawler or HTP provider report action.",
-      "source": "hatchertechnology/seosmith src/api.rs, src/model.rs @11ca577"
+      "source": "hatchertechnology/seosmith src/api.rs, src/model.rs @11ca577",
+      "primitiveBinding": {
+        "transport": "private-http",
+        "binding": "POST /v1/runs/{id}/cancel"
+      },
+      "hostBinding": null
     },
     {
       "id": "seosmith.report",
       "service": "seosmith",
-      "backend": "present-private-primitive",
+      "backend": "gated",
       "package": "not-implemented",
       "effect": "read",
       "authorization": "explicit-local-or-private-worker",
-      "transport": "private-http",
-      "binding": "GET /v1/runs/{id}/report",
+      "transport": null,
+      "binding": null,
       "version": "schema_version=1 default; adapter not versioned yet",
       "limits": "request <=16 KiB; pages 1..20000; resources 0..20000; seconds 10..7200; delay_ms 1000..60000; exact-host HTTP(S); no URL credentials/custom ports/query/fragment on seed; plugin report budget 16 MiB",
       "result": "original report JSON or 404; not-ready is not empty success",
-      "gate": "seosmith#18 adapter; htp#7 additionally for customer scheduling",
+      "gate": "SEOsmith #18 CLI adapter integration and host acceptance remain unverified",
       "unsupported": "Unsupported until adapter discovery and explicit local/private configuration; never use public crawler or HTP provider report action.",
-      "source": "hatchertechnology/seosmith src/api.rs, src/model.rs @11ca577"
+      "source": "hatchertechnology/seosmith src/api.rs, src/model.rs @11ca577",
+      "primitiveBinding": {
+        "transport": "private-http",
+        "binding": "GET /v1/runs/{id}/report"
+      },
+      "hostBinding": null
     },
     {
       "id": "seosmith.export",
@@ -354,41 +408,56 @@
       "version": "schema_version=1 default; adapter not versioned yet",
       "limits": "request <=16 KiB; pages 1..20000; resources 0..20000; seconds 10..7200; delay_ms 1000..60000; exact-host HTTP(S); no URL credentials/custom ports/query/fragment on seed; plugin report budget 16 MiB",
       "result": "bounded original report bytes plus schema/version/provenance; no invented evaluations",
-      "gate": "seosmith#18 adapter; htp#7 additionally for customer scheduling",
+      "gate": "SEOsmith #18 CLI adapter integration and host acceptance remain unverified",
       "unsupported": "Unsupported until adapter discovery and explicit local/private configuration; never use public crawler or HTP provider report action.",
-      "source": "hatchertechnology/seosmith src/api.rs, src/model.rs @11ca577"
+      "source": "hatchertechnology/seosmith src/api.rs, src/model.rs @11ca577",
+      "primitiveBinding": {
+        "transport": null,
+        "binding": null
+      },
+      "hostBinding": null
     },
     {
       "id": "seosmith.cli.crawl",
       "service": "seosmith",
-      "backend": "present-local-primitive",
+      "backend": "gated",
       "package": "not-implemented",
       "effect": "write",
       "authorization": "explicit-local-scope",
-      "transport": "cli",
-      "binding": "seosmith crawl --request <file>",
+      "transport": null,
+      "binding": null,
       "version": "CLI schema_version=1 default",
       "limits": "same crawl request bounds; isolated database; no shell interpolation; bounded output/time",
       "result": "JSON report",
-      "gate": "seosmith#18 for shared adapter",
+      "gate": "SEOsmith #18 CLI adapter integration and host acceptance remain unverified",
       "unsupported": "Missing executable or capability returns unsupported; local use never requires HTP credentials.",
-      "source": "hatchertechnology/seosmith src/main.rs @11ca577"
+      "source": "hatchertechnology/seosmith src/main.rs @11ca577",
+      "primitiveBinding": {
+        "transport": "cli",
+        "binding": "seosmith crawl --request <file>"
+      },
+      "hostBinding": null
     },
     {
       "id": "seosmith.cli.rules",
       "service": "seosmith",
-      "backend": "present-local-primitive",
+      "backend": "gated",
       "package": "not-implemented",
       "effect": "read",
       "authorization": "explicit-local-scope",
-      "transport": "cli",
-      "binding": "seosmith rules",
+      "transport": null,
+      "binding": null,
       "version": "CLI schema_version=1 default",
       "limits": "same crawl request bounds; isolated database; no shell interpolation; bounded output/time",
       "result": "JSON rules",
-      "gate": "seosmith#18 for shared adapter",
+      "gate": "SEOsmith #18 CLI adapter integration and host acceptance remain unverified",
       "unsupported": "Missing executable or capability returns unsupported; local use never requires HTP credentials.",
-      "source": "hatchertechnology/seosmith src/main.rs @11ca577"
+      "source": "hatchertechnology/seosmith src/main.rs @11ca577",
+      "primitiveBinding": {
+        "transport": "cli",
+        "binding": "seosmith rules"
+      },
+      "hostBinding": null
     },
     {
       "id": "seosmith.ci.baseline",
@@ -402,9 +471,14 @@
       "version": "CLI schema_version=1 default",
       "limits": "same crawl request bounds; isolated database; no shell interpolation; bounded output/time",
       "result": "future baseline-aware pass/fail/inconclusive",
-      "gate": "seosmith#16; htp#8; htp#18",
+      "gate": "SEOsmith #18 CLI adapter integration and host acceptance remain unverified",
       "unsupported": "Missing executable or capability returns unsupported; local use never requires HTP credentials.",
-      "source": "hatchertechnology/seosmith src/main.rs @11ca577"
+      "source": "hatchertechnology/seosmith src/main.rs @11ca577",
+      "primitiveBinding": {
+        "transport": null,
+        "binding": null
+      },
+      "hostBinding": null
     }
   ]
 }

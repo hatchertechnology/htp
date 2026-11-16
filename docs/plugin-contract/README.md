@@ -98,3 +98,28 @@ preserving history and reports. Claude update/rollback remains unverified in thi
 baseline. Forms, orchestration, lifecycle, staging, baseline-aware CI and richer
 provider analysis activate only after their backend and rollout gates ship.
 HTP #34 and host issues remain open pending rollout evidence; no deployment occurs.
+
+### Review clarifications
+
+All scenarios carry top-level `evidenceKind: synthetic`. The default checker
+compares each golden expected result with itself: it checks fixture consistency,
+not host behavior. Only `--results` compares externally supplied normalized
+observations, and even that does not verify producer provenance or live support.
+These fixtures do not exercise S01 evaluation pass/fail semantics.
+
+`crawlRunsCreated` counts only SEOsmith crawl runs. `collectionRegistered`
+separately records HTP provider collection registration; a pending report request
+has zero crawl runs and registration true. Saved reads have both zero/false.
+HTP `idempotency` and `destructive` mirror MCP annotations and are drift checked.
+An idempotency hint does not authorize automatic retry or replace explicit intent.
+Import dedupe, explicit delete, and non-owner writes have synthetic scenarios.
+
+SEOsmith host bindings remain null and gated. `primitiveBinding` records
+historical implementation details only. The #18 adapter (#19 PR, ad36869) uses
+the in-process CLI dispatch: `seosmith --database /absolute/private/run.sqlite
+operations start --request /path/request.json`, status/cancel/report with
+`--id UUID`, and export with `--id UUID --output /new/file`.
+Capabilities requires no database. Start is synchronous under lock; exact retries
+return existing state without resuming. Cancellation acceptance is distinct from
+terminal cancellation. Evidence v2, staging, and CI remain false. Adapter
+integration and live host acceptance are still unverified.

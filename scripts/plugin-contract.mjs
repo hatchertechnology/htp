@@ -10,7 +10,7 @@ export function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 const statuses = new Set(['ok', 'accepted', 'pending', 'running', 'cancelling', 'cancelled', 'error', 'unsupported']);
-const fields = ['status', 'code', 'jobsCreated', 'requestId', 'coverage', 'outcome', 'source', 'reportSchema', 'bytes', 'retryable'].sort();
+const fields = ['collectionRegistered', 'status', 'code', 'crawlRunsCreated', 'requestId', 'coverage', 'outcome', 'source', 'reportSchema', 'bytes', 'retryable'].sort();
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function validateObservation(scenario, value, operations) {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value), 'observation object required');
@@ -19,7 +19,7 @@ export function validateObservation(scenario, value, operations) {
   assert.ok(op, 'unknown operation');
   assert.ok(statuses.has(value.status), 'unknown status');
   assert.ok(value.code === null || /^[a-z_]{1,64}$/.test(value.code), 'invalid error code');
-  assert.ok(Number.isInteger(value.jobsCreated) && value.jobsCreated >= 0 && value.jobsCreated <= 1, 'unbounded job count');
+  assert.ok(Number.isInteger(value.crawlRunsCreated) && value.crawlRunsCreated >= 0 && value.crawlRunsCreated <= 1, 'unbounded job count');
   assert.ok(value.requestId === null || (typeof value.requestId === 'string' && uuid.test(value.requestId)), 'invalid request identity');
   assert.ok(['unknown', 'complete', 'partial', 'truncated'].includes(value.coverage), 'unknown coverage');
   // Crawl completeness alone is never sufficient to synthesize a passing evaluation.
@@ -28,23 +28,26 @@ export function validateObservation(scenario, value, operations) {
   assert.ok([null, 1, 2].includes(value.reportSchema), 'unsupported report schema');
   assert.ok(Number.isInteger(value.bytes) && value.bytes >= 0 && value.bytes <= MAX_REPORT_BYTES, 'unbounded report');
   assert.equal(typeof value.retryable, 'boolean');
-  if (op.effect === 'read') assert.equal(value.jobsCreated, 0, 'reads cannot schedule');
+  if (op.effect === 'read') assert.equal(value.crawlRunsCreated, 0, 'reads cannot schedule');
   if (['error', 'unsupported'].includes(value.status)) {
-    assert.equal(value.jobsCreated, 0, 'rejection cannot create jobs');
+    assert.equal(value.crawlRunsCreated, 0, 'rejection cannot create jobs');
     assert.ok(value.code, 'rejection requires error code');
     assert.equal(value.source, 'none', 'rejection cannot return data');
     assert.equal(value.bytes, 0, 'rejection cannot return report bytes');
   }
   const c = scenario.context;
+  assert.equal(typeof value.collectionRegistered, 'boolean');
+  assert.equal(value.collectionRegistered, scenario.operation === 'htp.request_website_report' && value.status === 'pending', 'collection registration differs');
+  if (c.websiteOwned === false) assert.equal(value.code, 'forbidden', 'owner denial required');
   if (!c.authorized) assert.ok(['auth_required', 'forbidden'].includes(value.code), 'authorization must fail closed');
   if (!c.capability) assert.equal(value.status, 'unsupported', 'missing capability must be explicit');
   if (c.contractMajor !== 1) assert.equal(value.code, 'unsupported_version', 'incompatible major');
-  if (value.jobsCreated) {
+  if (value.crawlRunsCreated) {
     assert.equal(c.explicit, true, 'scan requires explicit intent');
     assert.equal(value.requestId, c.requestId, 'new run must retain request identity');
   }
   if (c.priorRequestId) {
-    assert.equal(value.jobsCreated, 0, 'retry cannot duplicate a run');
+    assert.equal(value.crawlRunsCreated, 0, 'retry cannot duplicate a run');
     if (c.samePayload) assert.equal(value.requestId, c.priorRequestId, 'retry identity changed');
     else assert.equal(value.code, 'identity_conflict', 'changed payload must conflict');
   }

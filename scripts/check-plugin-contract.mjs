@@ -13,11 +13,19 @@ const fixtures = readJson(resolve(dir, 'conformance.json'));
 const lock = readJson(resolve(dir, 'skills.lock.json'));
 const ops = inventory.operations;
 assert.equal(inventory.contractVersion, '1.0.0');
+assert.equal(fixtures.evidenceKind, 'synthetic');
 assert.equal(new Set(ops.map(o => o.id)).size, ops.length);
 const source = readFileSync(resolve(root, 'apps/api/src/mcp.rs'), 'utf8');
 const actualTools = [...source.matchAll(/#\[tool\([\s\S]*?\)\]\s*(?:async )?fn (\w+)\(/g)]
   .map(m => m[1]).filter(n => !n.startsWith('hello_world')).sort();
 assert.deepEqual(ops.filter(o => o.service === 'htp').map(o => o.binding).sort(), actualTools, 'HTP tool inventory drift');
+const annotations = new Map([...source.matchAll(/#\[tool\(([\s\S]*?)\)\]\s*(?:async )?fn (\w+)\(/g)].map(m => [m[2], m[1]]));
+for (const op of ops.filter(o => o.service === 'htp')) {
+  for (const [field, hint] of [['idempotency', 'idempotent_hint'], ['destructive', 'destructive_hint']]) {
+    const match = annotations.get(op.binding).match(new RegExp(hint + '\\s*=\\s*(true|false)'));
+    assert.equal(op[field], match[1] === 'true', 'HTP annotation drift: ' + op.binding + ':' + field);
+  }
+}
 for (const op of ops) {
   for (const key of ['id', 'service', 'backend', 'package', 'effect', 'authorization', 'version', 'limits', 'result', 'unsupported', 'source']) assert.ok(op[key], `missing ${key}`);
   assert.ok(['read', 'write'].includes(op.effect));
@@ -51,4 +59,4 @@ if (args.length) {
   validateResults(fixtures, readJson(resolve(args[1])), ops);
   console.log('External normalized observations conform (producer provenance/live side effects are not verified).');
 }
-console.log(`Offline contract OK: ${ops.length} operations, ${fixtures.scenarios.length} scenarios, 3 host profiles; no live integration tested.`);
+console.log(`Synthetic offline contract OK: ${ops.length} operations, ${fixtures.scenarios.length} scenarios, 3 host profiles; no live integration tested.`);

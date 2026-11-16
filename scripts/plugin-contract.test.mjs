@@ -17,13 +17,13 @@ test('canonical scenarios validate for every host', () => {
   for (const host of ['claude', 'codex', 'pi']) check({ ...results(), host });
 });
 for (const [name, id, patch] of [
-  ['saved read schedules', 'htp.saved_reads.no_collection', { jobsCreated: 1 }],
+  ['saved read schedules', 'htp.saved_reads.no_collection', { crawlRunsCreated: 1 }],
   ['expired auth becomes empty success', 'htp.auth.expired', { status: 'ok', code: null }],
   ['cross website data leaks', 'htp.cross_website.denied', { source: 'stored', bytes: 10 }],
   ['missing capability silently succeeds', 'htp.missing_capability', { status: 'ok', code: null }],
   ['partial falsely passes', 'seosmith.report.partial', { outcome: 'pass' }],
   ['truncated becomes complete', 'seosmith.report.truncated', { coverage: 'complete' }],
-  ['retry duplicates', 'seosmith.retry.same_request', { jobsCreated: 1 }],
+  ['retry duplicates', 'seosmith.retry.same_request', { crawlRunsCreated: 1 }],
   ['retry identity changes', 'seosmith.retry.same_request', { requestId: '22222222-2222-4222-8222-222222222222' }],
   ['payload conflict disappears', 'seosmith.retry.conflict', { code: null }],
   ['cancel acceptance becomes terminal', 'seosmith.cancel.accepted', { status: 'cancelled' }],
@@ -31,11 +31,11 @@ for (const [name, id, patch] of [
   ['unknown report version', 'seosmith.report.complete', { reportSchema: 99 }],
   ['v2 bypasses receiver gate', 'seosmith.report.complete', { reportSchema: 2 }],
   ['future major accepted', 'contract.major_mismatch', { status: 'accepted', code: null }],
-  ['unconfigured worker starts', 'seosmith.unconfigured_worker', { status: 'accepted', jobsCreated: 1 }],
-  ['invalid scope starts', 'seosmith.invalid_scope', { status: 'accepted', jobsCreated: 1 }],
+  ['unconfigured worker starts', 'seosmith.unconfigured_worker', { status: 'accepted', crawlRunsCreated: 1 }],
+  ['invalid scope starts', 'seosmith.invalid_scope', { status: 'accepted', crawlRunsCreated: 1 }],
   ['outage becomes empty success', 'seosmith.worker_outage', { status: 'ok', code: null }],
   ['unexpected credential field', 'htp.saved_reads.no_collection', { access_token: 'fixture-only' }],
-  ['invalid job count', 'seosmith.start.bounded', { jobsCreated: -1 }],
+  ['invalid job count', 'seosmith.start.bounded', { crawlRunsCreated: -1 }],
 ]) test(`reject ${name}`, () => assert.throws(() => check(change(id, result => Object.assign(result, patch)))));
 for (const [name, update] of [
   ['missing', v => v.observations.pop()],
@@ -60,3 +60,10 @@ test('file input is bounded before parsing', () => {
 test('scenario count is bounded', () => {
   assert.throws(() => validateResults({ ...fixtures, scenarios: Array(129).fill(fixtures.scenarios[0]) }, results(), operations));
 });
+for (const [name, id, patch] of [
+  ['collection registration omitted', 'htp.report.collect', { collectionRegistered: false }],
+  ['read registers collection', 'htp.saved_reads.no_collection', { collectionRegistered: true }],
+  ['non-owner write succeeds', 'htp.write.non_owner', { status: 'ok', code: null }],
+  ['deduplicated import starts crawl', 'htp.import.dedupe', { crawlRunsCreated: 1 }],
+  ['delete loses acknowledgement', 'htp.delete.explicit', { status: 'pending' }],
+]) test(`reject ${name}`, () => assert.throws(() => check(change(id, result => Object.assign(result, patch)))));
