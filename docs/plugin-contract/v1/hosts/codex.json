@@ -1,0 +1,39 @@
+{
+  "minimumVersion": null,
+  "gates": [
+    "htp#34",
+    "seosmith#18",
+    "host-package-wave1"
+  ],
+  "readiness": {
+    "htp": "requires live host OAuth/read smoke test",
+    "seosmith": "adapter gated; no host operations shipped"
+  },
+  "host": "codex",
+  "displayName": "Codex CLI",
+  "observedVersion": "0.169.0",
+  "packageStatus": "not-implemented",
+  "transports": [
+    "stdio",
+    "streamable-http"
+  ],
+  "auth": {
+    "method": "host-oauth",
+    "login": "codex mcp login htp",
+    "logout": "codex mcp logout htp",
+    "limitations": [
+      "Desktop login does not authorize a managed ChatGPT App connection.",
+      "No live login performed by Wave 0 checks."
+    ]
+  },
+  "distribution": {
+    "source": "hatchertechnology/htp-codex",
+    "install": "Wave 1 gate: repository currently README/license only; documented local skills and MCP configuration are host primitives.",
+    "upgrade": "Wave 1: pin package and shared contract revision; rerun acceptance before activation.",
+    "rollback": "Restore last verified package and skill lock; retain evidence and server compatibility."
+  },
+  "sources": [
+    "https://developers.openai.com/codex/mcp",
+    "https://developers.openai.com/codex/skills"
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "minimumVersion": null,
+  "gates": [
+    "htp-pi#1 remains open; no adapter or installable package is implemented in Wave 0.",
+    "HTP OAuth sign-in from Pi is unverified in Wave 0.",
+    "seosmith#18 operation adapter is not implemented.",
+    "Backend-gated operations (htp#10, htp#6/#8/#9/#20, htp#7, htp#1, seosmith#13, seosmith#16/htp#13) activate only after their upstream issues ship."
+  ],
+  "readiness": {
+    "htp": "requires live host OAuth/read smoke test",
+    "seosmith": "adapter gated; no host operations shipped"
+  },
+  "host": "pi",
+  "displayName": "Pi",
+  "observedVersion": "1.5.2",
+  "packageStatus": "not-implemented",
+  "transports": [
+    "streamable-http",
+    "stdio"
+  ],
+  "auth": {
+    "method": "host-oauth",
+    "login": "pi mcp login <server>",
+    "logout": "pi mcp logout <server>",
+    "limitations": [
+      "Legacy SSE MCP transport is rejected; streamable HTTP (usually /mcp) only.",
+      "MCP OAuth sign-in opens a browser; headless/SSH requires pasting the redirect URL.",
+      "Client identity is a Client ID Metadata Document or dynamic registration, depending on the authorization server.",
+      "Shell-level `pi mcp` commands do not load extensions.",
+      "Tokens are stored in ~/.pi/agent/mcp-auth.json, never in the package.",
+      "Project .pi/mcp.json is read only in trusted projects."
+    ]
+  },
+  "distribution": {
+    "source": "git:github.com/hatchertechnology/htp-pi",
+    "install": "pi install git:github.com/hatchertechnology/htp-pi",
+    "upgrade": "pi update git:github.com/hatchertechnology/htp-pi",
+    "rollback": "pi remove git:github.com/hatchertechnology/htp-pi, then install a pinned ref. No installable package ships in Wave 0, so this is a documented path, not a current capability."
+  },
+  "sources": [
+    "https://pi.dev",
+    "https://www.npmjs.com/package/@earendil-works/pi-coding-agent",
+    "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-1.5.2.tgz"
+  ],
+  "provenance": {
+    "cliVersion": "1.5.2",
+    "package": "@earendil-works/pi-coding-agent",
+    "packageVersion": "1.5.2",
+    "docsUsed": [
+      "mcp.md",
+      "extensions.md",
+      "packages.md",
+      "skills.md",
+      "cli.md",
+      "security.md",
+      "environment-variables.md"
+    ],
+    "note": "Versioned npm tarball docs are the portable reference; declared repository docs may be private."
+  }
+}

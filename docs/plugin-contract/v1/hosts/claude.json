@@ -1,0 +1,39 @@
+{
+  "minimumVersion": null,
+  "gates": [
+    "htp#34",
+    "seosmith#18",
+    "host-package-wave1"
+  ],
+  "readiness": {
+    "htp": "requires live host OAuth/read smoke test",
+    "seosmith": "adapter gated; no host operations shipped"
+  },
+  "host": "claude",
+  "displayName": "Claude Code",
+  "observedVersion": "2.1.325",
+  "packageStatus": "existing-htp-only",
+  "transports": [
+    "http"
+  ],
+  "auth": {
+    "method": "host-oauth",
+    "login": "/mcp in interactive session; select plugin HTP server",
+    "logout": "Use host logout for actual registered server identity; revoke at HTP separately.",
+    "limitations": [
+      "Noninteractive runs cannot complete the interactive /mcp OAuth flow.",
+      "Removing local tokens does not revoke the grant at issuer."
+    ]
+  },
+  "distribution": {
+    "source": "hatchertechnology/htp-claude",
+    "install": "claude plugin marketplace add hatchertechnology/htp-claude; claude plugin install htp@htp",
+    "upgrade": "Unverified; Wave 1 must document and test host update procedure.",
+    "rollback": "Unverified; Wave 1 must test reinstalling previous pinned marketplace/plugin revision."
+  },
+  "sources": [
+    "https://code.claude.com/docs/en/plugins-reference",
+    "https://code.claude.com/docs/en/plugin-marketplaces",
+    "https://code.claude.com/docs/en/mcp"
+  ]
+}
