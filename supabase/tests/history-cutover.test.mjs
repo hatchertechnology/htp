@@ -48,6 +48,10 @@ test('disconnected arbitrary ranges use canonical Google and Bing days without r
     await db.exec('reset role'); assert.deepEqual(await counts(),before)
     await db.exec('set role authenticated')
     const register=async()=> (await db.query("select public.register_report_collection($1,'analytics','123','2026-10-02','2026-10-05') r",[site])).rows[0].r
+    for (const property of ['sc-domain:other.example','https://other.example/','https://example.com.evil.test/','https://example.com/?q=1','https://example.com/evil#x','https://example.com/\\evil']) {
+      await assert.rejects(() => db.query("select public.register_report_collection($1,'search',$2,'2026-10-02','2026-10-05')",[site,property]),/Invalid Search property/)
+    }
+    assert.equal((await db.query("select public.register_report_collection($1,'search','https://example.com/','2026-10-02','2026-10-05') r",[site])).rows[0].r.collectionRegistered,true)
     assert.equal((await register()).collectionRegistered,true); assert.equal((await register()).collectionRegistered,true)
     assert.equal((await db.query("select public.register_report_collection($1,'bing','','1970-01-01','1970-01-01') r",[site])).rows[0].r.collectionRegistered,true)
     await db.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({sub:'00000000-0000-0000-0000-000000000002',is_anonymous:false})])
@@ -56,8 +60,8 @@ test('disconnected arbitrary ranges use canonical Google and Bing days without r
     await assert.rejects(register,/Website not found/)
     await db.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({sub:owner,is_anonymous:false})])
     await db.exec('reset role')
-    assert.deepEqual(await counts(),{g:before.g+1,b:before.b},'explicit requests are idempotent and separate from reads')
-    assert.equal((await db.query("select collection_class from public.google_report_jobs where start_date='2026-10-02' and end_date='2026-10-05'")).rows[0].collection_class,'explicit')
+    assert.deepEqual(await counts(),{g:before.g+2,b:before.b},'explicit requests are idempotent and separate from reads')
+    assert.equal((await db.query("select collection_class from public.google_report_jobs where kind='analytics' and start_date='2026-10-02' and end_date='2026-10-05'")).rows[0].collection_class,'explicit')
     await db.exec("update public.google_connections set status='connected',scopes=array['https://www.googleapis.com/auth/analytics.readonly']; set role service_role")
     for (let i=0;i<12;i++) { const job=(await db.query('select public.claim_google_report() j')).rows[0].j; if (!job) break; if (job.collection_class==='explicit') { assert.equal(job.start_date.slice(0,10),'2026-10-02'); break } await db.query('select public.complete_google_report($1,$2,$3,$4,null)',[job.id,job.lease,job.generation,{}]) }
     assert.equal((await db.query("select count(*)::int n from public.google_report_jobs where collection_class='explicit' and lease is not null")).rows[0].n,1,'scheduler serves explicit work')

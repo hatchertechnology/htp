@@ -17,6 +17,14 @@ begin
   end if;
   -- Reuse the independent read's source, owner, feature gate and date checks.
   perform public.request_google_report(p_website_id,p_kind,p_property_id,p_start_date,p_end_date);
+  -- This RPC is directly callable by authenticated clients; do not rely on
+  -- the HTTP handler or eventual worker to reject foreign Search properties.
+  if p_kind='search' and not (
+    (p_property_id ~ '^sc-domain:[a-z0-9][a-z0-9.-]*$'
+      and (substr(p_property_id,11)=w.fqdn or right(w.fqdn,length(substr(p_property_id,11))+1)='.'||substr(p_property_id,11)))
+    or ((starts_with(p_property_id,'https://'||w.fqdn||'/') or starts_with(p_property_id,'http://'||w.fqdn||'/'))
+      and p_property_id !~ '[[:space:]?#]' and strpos(p_property_id,chr(92))=0)
+  ) then raise invalid_parameter_value using message='Invalid Search property'; end if;
   if p_kind in ('pagespeed','crux','business_locations','business_profile') then
     p_start_date:=date '1970-01-01'; p_end_date:=date '1970-01-01';
   end if;
