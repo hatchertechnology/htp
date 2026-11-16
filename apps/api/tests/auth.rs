@@ -1274,9 +1274,15 @@ async fn bing_reports_use_only_owned_saved_data_and_preserve_pending_state() {
     let token = TestAuth::token(&auth.claims(), "test-key");
     let path = "/websites/00000000-0000-0000-0000-000000000001/bing/dashboard";
     assert_eq!(
-        analytics_request(&auth, path, None, None, json!({"start_date":"2026-10-01","end_date":"2026-10-28"}))
-            .await
-            .status(),
+        analytics_request(
+            &auth,
+            path,
+            None,
+            None,
+            json!({"start_date":"2026-10-01","end_date":"2026-10-28"})
+        )
+        .await
+        .status(),
         StatusCode::UNAUTHORIZED
     );
     assert_eq!(
@@ -1291,18 +1297,40 @@ async fn bing_reports_use_only_owned_saved_data_and_preserve_pending_state() {
         .status(),
         StatusCode::UNPROCESSABLE_ENTITY
     );
-    let pending = analytics_request(&auth, path, Some(&token), None, json!({"start_date":"2026-10-01","end_date":"2026-10-28"})).await;
+    let pending = analytics_request(
+        &auth,
+        path,
+        Some(&token),
+        None,
+        json!({"start_date":"2026-10-01","end_date":"2026-10-28"}),
+    )
+    .await;
     assert_eq!(pending.status(), StatusCode::ACCEPTED);
     assert_eq!(response_json(pending).await["code"], "report_pending");
-    let ready =
-        response_json(analytics_request(&auth, path, Some(&token), None, json!({"start_date":"2026-10-01","end_date":"2026-10-28"})).await).await;
+    let ready = response_json(
+        analytics_request(
+            &auth,
+            path,
+            Some(&token),
+            None,
+            json!({"start_date":"2026-10-01","end_date":"2026-10-28"}),
+        )
+        .await,
+    )
+    .await;
     assert_eq!(ready["site_url"], "https://example.com/");
     assert_eq!(ready["sync"]["cadence"], "daily");
     let missing = "/websites/00000000-0000-0000-0000-000000000099/bing/dashboard";
     assert_eq!(
-        analytics_request(&auth, missing, Some(&token), None, json!({"start_date":"2026-10-01","end_date":"2026-10-28"}))
-            .await
-            .status(),
+        analytics_request(
+            &auth,
+            missing,
+            Some(&token),
+            None,
+            json!({"start_date":"2026-10-01","end_date":"2026-10-28"})
+        )
+        .await
+        .status(),
         StatusCode::NOT_FOUND
     );
     assert_eq!(hits.load(Ordering::SeqCst), 2);
@@ -1431,6 +1459,8 @@ async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
     });
     let hits = Arc::new(AtomicUsize::new(0));
     let capture = hits.clone();
+    let bing_ranges = Arc::new(tokio::sync::Mutex::new(Vec::<Value>::new()));
+    let saved_ranges = bing_ranges.clone();
     let rpc = Router::new().route(
         "/rest/v1/rpc/{name}",
         axum::routing::post(
@@ -1438,6 +1468,7 @@ async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
                   headers: axum::http::HeaderMap,
                   Json(body): Json<Value>| {
                 let capture = capture.clone();
+                let saved_ranges = saved_ranges.clone();
                 async move {
                     capture.fetch_add(1, Ordering::SeqCst);
                     assert_eq!(headers["apikey"], "publishable-fixture-key");
@@ -1451,12 +1482,15 @@ async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
                     assert!(matches!(
                         name.as_str(),
                         "request_google_report"
-                            | "request_bing_report"
+                            | "read_bing_history"
                             | "set_business_location"
                             | "seosmith_audit_history"
                             | "seosmith_audit_detail"
                             | "import_seosmith_audit"
                     ));
+                    if name == "read_bing_history" {
+                        saved_ranges.lock().await.push(body.clone());
+                    }
                     if body["p_website_id"] != uuid::Uuid::from_u128(1).to_string() {
                         return (
                             StatusCode::FORBIDDEN,
@@ -1504,6 +1538,31 @@ async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
         let body = &result["result"]["structuredContent"];
         assert!(body["code"] == "report_pending" || body["sync"]["state"] == "pending");
     }
+    let default_bing = response_json(
+        research_mcp_call(
+            &auth,
+            Some(&token),
+            "request_website_report",
+            json!({"website_id":id,"kind":"bing"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(default_bing["result"]["isError"], false, "{default_bing}");
+    let ranges = bing_ranges.lock().await.clone();
+    assert_eq!(ranges[0]["p_start_date"], "2026-10-01");
+    assert_eq!(ranges[0]["p_end_date"], "2026-10-28");
+    let start =
+        chrono::NaiveDate::parse_from_str(ranges[1]["p_start_date"].as_str().unwrap(), "%Y-%m-%d")
+            .unwrap();
+    let end =
+        chrono::NaiveDate::parse_from_str(ranges[1]["p_end_date"].as_str().unwrap(), "%Y-%m-%d")
+            .unwrap();
+    assert_eq!((end - start).num_days(), 27);
+    assert!(
+        end == chrono::Utc::now().date_naive() - chrono::Duration::days(1)
+            || end == chrono::Utc::now().date_naive() - chrono::Duration::days(2)
+    );
     for (name, args, rpc) in [
         (
             "set_website_business_location",
@@ -1530,7 +1589,7 @@ async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
         assert_eq!(result["result"]["isError"], false, "{result}");
         assert_eq!(result["result"]["structuredContent"]["rpc"], rpc);
     }
-    assert_eq!(hits.load(Ordering::SeqCst), 14);
+    assert_eq!(hits.load(Ordering::SeqCst), 15);
     for args in [
         json!({"website_id":id,"kind":"analytics","property_id":"123","start_date":"2026-02-30","end_date":"2026-10-01"}),
         json!({"website_id":id,"kind":"search","property_id":"sc-domain:other.com","start_date":"2026-10-01","end_date":"2026-10-28"}),
@@ -1542,7 +1601,7 @@ async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
         .await;
         assert_eq!(result["result"]["isError"], true);
     }
-    assert_eq!(hits.load(Ordering::SeqCst), 14);
+    assert_eq!(hits.load(Ordering::SeqCst), 15);
     let denied = response_json(
         research_mcp_call(
             &auth,

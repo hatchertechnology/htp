@@ -31,7 +31,11 @@ async fn dashboard(
 ) -> Result<Response, WebsiteError> {
     store.find(id, &headers).await?;
     let saved = store
-        .rpc(&headers, "read_bing_history", json!({"p_website_id":id,"p_start_date":input.start_date,"p_end_date":input.end_date}))
+        .rpc(
+            &headers,
+            "read_bing_history",
+            json!({"p_website_id":id,"p_start_date":input.start_date,"p_end_date":input.end_date}),
+        )
         .await?;
     Ok(saved_response(saved["data"].clone(), &saved["sync"]))
 }

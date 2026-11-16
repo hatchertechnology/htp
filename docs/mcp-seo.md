@@ -237,15 +237,18 @@ provider grants and performs the same checks as dashboard operations.
 | `delete_website` | `website_id` | Permanent deletion including associated records; `{deleted:true}` on success |
 | `set_website_ga4_property` | `website_id`, explicit `property_id` string or null | Updated website |
 | `set_website_business_location` | `website_id`, `location_id`, `linked` | Current location configuration; feature flag enforced |
-| `request_website_report` | `website_id`, `kind`, optional source `property_id` and inclusive `start_date`/`end_date` | Latest report and sync metadata, or pending; registers background refresh |
+| `request_website_report` | `website_id`, `kind`, optional source `property_id` and inclusive `start_date`/`end_date` | Saved report and sync metadata, or pending; collection runs independently |
 | `website_audit_history` | `website_id`, optional `limit`, `before`, `before_id` | Paginated Seosmith summaries/trends |
 | `website_audit_detail` | `website_id`, `delivery_id` UUID | Full saved Seosmith report |
 | `import_website_audit` | `website_id`, `report_json` string | Validated, deduplicated Seosmith import (16 MiB report limit) |
 
 See the packaged [management workflow](../plugins/htp/skills/website-management/SKILL.md)
 for report kinds and source formats. Reads of saved data do not fetch providers;
-`request_website_report` explicitly registers collection. Pending is a successful
-queue response, never proof that new data is ready. Failed operations return MCP
+`request_website_report` reads stored observations without creating collection jobs.
+For Bing, omit both dates to use the last 28 completed UTC days, or supply both
+inclusive dates. Pending means saved data is not yet available, not proof of zero
+traffic or a newly queued job. This read-only behavior replaces the earlier
+report-registration contract; scheduled collection operates independently. Failed operations return MCP
 `isError:true`; handler errors retain sanitized messages and HTTP status in the
 structured content. Delete is marked destructive; create is non-idempotent.
 MCP request bodies allow 32 MiB to accommodate JSON-encoded audit imports, while
