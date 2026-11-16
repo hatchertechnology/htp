@@ -65,8 +65,8 @@ async function discover() {
       if (data.sync.connection_status === 'connected') discoveryTimer = setTimeout(() => { void discover() }, 10000)
       return
     }
-    properties.value = data.properties
-    property.value = data.properties.find(p => p.siteUrl === `sc-domain:${ws.selected.value?.fqdn}`)?.siteUrl ?? data.properties[0]?.siteUrl ?? ''
+    properties.value = data.properties.slice(0, 50)
+    property.value = properties.value.find(p => p.siteUrl === `sc-domain:${ws.selected.value?.fqdn}`)?.siteUrl ?? properties.value[0]?.siteUrl ?? ''
   } catch (cause) { if (current === discoveryGeneration) discoveryError.value = failureMessage(cause) }
   finally { if (current === discoveryGeneration) discovering.value = false }
 }
@@ -102,7 +102,7 @@ async function inspectUrl() {
   finally { if (current === toolGeneration) toolBusy.value = false }
 }
 
-watch(() => [ws.user.value?.id, ws.selectedId.value, canSearch.value], () => { void discover() }, { immediate: true })
+watch(() => [ws.user.value?.id, ws.selectedId.value, canSearch.value, ws.google.value.connected, ws.google.value.reauthorizationRequired], () => { void discover() }, { immediate: true })
 watch(() => [property.value, start.value, end.value, ws.user.value?.id, ws.selectedId.value, canSearch.value], () => { void load() }, { immediate: true })
 watch([report, busy, discovering, error, discoveryError], () => {
   emit('snapshot', { report: report.value, loading: busy.value || discovering.value, error: error.value || discoveryError.value })

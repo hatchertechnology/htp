@@ -145,15 +145,24 @@ grant execute on function public.request_bing_report(uuid) to authenticated;
 -- Separate name avoids ambiguous PostgREST overloaded RPC resolution.
 create function public.read_bing_history(p_website_id uuid,p_start_date date,p_end_date date) returns jsonb
 language plpgsql stable security definer set search_path='' as $$
-declare saved jsonb; h jsonb; rows jsonb;
+declare saved jsonb; h jsonb; rows jsonb; bound text; latest_error jsonb;
 begin
   saved := public.request_bing_report(p_website_id);
-  h := public.read_daily_history(p_website_id,'bing_traffic',coalesce(saved#>>'{data,site_url}',''),p_start_date,p_end_date);
+  bound := saved#>>'{data,site_url}';
+  if bound is null then
+    select s.data->>'site_url' into bound from public.bing_report_snapshots s
+      join public.bing_report_jobs j on j.id=s.job_id join public.websites w on w.id=j.website_id
+      where w.id=p_website_id and j.fqdn=w.fqdn and s.data->>'site_url' is not null
+      order by s.fetched_at desc,s.id desc limit 1;
+  end if;
+  latest_error := saved#>'{data,sections,traffic,error}';
+  h := public.read_daily_history(p_website_id,'bing_traffic',coalesce(bound,''),p_start_date,p_end_date);
   select coalesce(jsonb_agg((v->'row') || jsonb_build_object('Date',v->>'date') order by v->>'date'),'[]') into rows
     from jsonb_array_elements(h->'daily') v;
   if saved->'data' <> 'null'::jsonb then
+    saved := jsonb_set(saved,'{data,site_url}',coalesce(to_jsonb(bound),'null'::jsonb),true);
     saved := jsonb_set(saved,'{data,sections}',coalesce(saved#>'{data,sections}','{}') ||
-      jsonb_build_object('traffic',jsonb_build_object('rows',rows,'error',saved#>'{data,sections,traffic,error}')));
+      jsonb_build_object('traffic',jsonb_build_object('rows',rows,'error',latest_error)));
   end if;
   return jsonb_set(saved,'{sync,coverage}',h->'coverage');
 end $$;
@@ -250,6 +259,20 @@ begin
     join public.google_connections c on c.owner_id=w.owner_id
     cross join (values ('business_profile'),('business_performance')) k(kind)
     where c.status='connected' and public.business_profile_enabled() and 'https://www.googleapis.com/auth/business.manage'=any(c.scopes)
+    on conflict (website_id,fqdn,kind,property_id,start_date,end_date) do update set refresh_until=excluded.refresh_until;
+  -- Discovery is stored independently of viewing. Schedule every displayed
+  -- property (bounded to 50) on each rolling date, including URL prefixes.
+  insert into public.google_report_jobs(website_id,fqdn,kind,property_id,start_date,end_date,refresh_until)
+    select w.id,w.fqdn,'search',entry->>'siteUrl',(now() at time zone 'UTC')::date-28,
+      (now() at time zone 'UTC')::date-1,now()+interval '7 days'
+    from public.websites w join public.google_connections c on c.owner_id=w.owner_id and c.status='connected'
+    join lateral (select s.data from public.google_report_jobs discovery_job join public.google_report_snapshots s on s.job_id=discovery_job.id
+      where discovery_job.website_id=w.id and discovery_job.fqdn=w.fqdn and discovery_job.kind='properties'
+      order by s.fetched_at desc,s.id desc limit 1) discovery on true
+    cross join lateral (select value entry from jsonb_array_elements(case when jsonb_typeof(discovery.data->'properties')='array'
+      then discovery.data->'properties' else '[]'::jsonb end) limit 50) properties
+    where 'https://www.googleapis.com/auth/webmasters.readonly'=any(c.scopes)
+      and entry->>'siteUrl' is not null and length(entry->>'siteUrl')<=2048
     on conflict (website_id,fqdn,kind,property_id,start_date,end_date) do update set refresh_until=excluded.refresh_until;
   -- Old user-selected windows are retained but never refreshed. Only scheduled
   -- current windows and bounded recovery work can consume collector capacity.

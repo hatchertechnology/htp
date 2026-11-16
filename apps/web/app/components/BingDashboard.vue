@@ -49,7 +49,7 @@ async function load(poll = false) {
   } catch (cause) { if (current === generation) error.value = failureMessage(cause) }
   finally { if (current === generation) busy.value = false }
 }
-watch(() => [ws.user.value?.id, ws.selectedId.value, ws.selected.value?.fqdn, start.value, end.value], () => { void load() }, { immediate: true })
+watch(() => [ws.user.value?.id, ws.selectedId.value, ws.selected.value?.fqdn, start.value, end.value, ws.bing.value.connected, ws.bing.value.reauthorizationRequired], () => { void load() }, { immediate: true })
 onBeforeUnmount(() => { generation++; controller?.abort(); clearTimeout(timer) })
 </script>
 <template>
@@ -65,7 +65,7 @@ onBeforeUnmount(() => { generation++; controller?.abort(); clearTimeout(timer) }
       <UButton to="/connections" color="neutral" variant="outline">Manage Bing connection</UButton>
     </div>
     <template v-else>
-      <p v-if="report.sections.traffic?.error" class="form-notice" role="status">Bing traffic is unavailable in this saved report. Other sections may still be available.</p>
+      <p v-if="report.sections.traffic?.error" class="form-notice" role="status">The latest Bing traffic collection failed. Previously saved daily observations remain visible below.</p>
       <div class="traffic-layout" :aria-busy="busy">
         <section class="report-panel traffic-panel"><header><h3>Bing traffic over time</h3><label class="sr-only" for="bing-metric">Bing chart metric</label><select id="bing-metric" v-model="selectedMetric"><option value="clicks">Clicks</option><option value="impressions">Impressions</option></select></header>
           <TrafficChart v-if="traffic.length && validDateRange(start, end)" :report="daily" :selected-metric="selectedMetric" :start="start" :end="end" />

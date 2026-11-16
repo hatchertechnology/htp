@@ -21,6 +21,8 @@ test('disconnected arbitrary ranges use canonical Google and Bing days without r
     const daily={dimensionHeaders:[{name:'date'}],metricHeaders:[{name:'sessions'},{name:'activeUsers'}],rows:['02','04'].map((d,i)=>({dimensionValues:[{value:`202610${d}`}],metricValues:[{value:String(i+2)},{value:'9'}]}))}
     await db.query('insert into public.google_report_snapshots(job_id,data) values($1,$2)',[gj,{daily,summary:{metricHeaders:[{name:'activeUsers'}],rows:[{metricValues:[{value:'12'}]}]}}])
     await db.query('insert into public.bing_report_snapshots(job_id,data) values($1,$2)',[bj,{site_url:'https://example.com/',sections:{traffic:{rows:[{Date:'2026-10-02',Clicks:2,Impressions:10},{Date:'2026-10-04',Clicks:3,Impressions:20}],error:null}}}])
+    // A later no-match discovery must not erase the last selected source.
+    await db.query('insert into public.bing_report_snapshots(job_id,data) values($1,$2)',[bj,{site_url:null,sections:{}}])
     const counts=async()=> (await db.query('select (select count(*)::int from public.google_report_jobs) g,(select count(*)::int from public.bing_report_jobs) b')).rows[0]
     const before=await counts()
     await db.exec('set role authenticated'); await db.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({sub:owner,is_anonymous:false})])
@@ -31,6 +33,17 @@ test('disconnected arbitrary ranges use canonical Google and Bing days without r
     assert.deepEqual(g.sync.coverage.missing_dates,['2026-10-03','2026-10-05']); assert.deepEqual(b.sync.coverage.missing_dates,g.sync.coverage.missing_dates)
     assert.equal(g.data.daily.rows.length,2); assert.equal(b.data.sections.traffic.rows.length,2)
     assert.equal(g.data.summary.metricHeaders.some(x=>x.name==='activeUsers'),false,'unique users require exact snapshot')
+    await db.exec('reset role')
+    await db.query('insert into public.bing_report_snapshots(job_id,data) values($1,$2)',[bj,{site_url:'https://example.com/',sections:{traffic:{rows:null,error:'bing_quota_exceeded'}}}])
+    await db.exec('set role authenticated')
+    const failed=await bing('2026-10-02','2026-10-05')
+    assert.equal(failed.data.sections.traffic.error,'bing_quota_exceeded'); assert.equal(failed.data.sections.traffic.rows.length,2)
+    await db.exec('reset role')
+    await db.query('insert into public.bing_report_snapshots(job_id,data) values($1,$2)',[bj,{site_url:'https://new.example.com/',sections:{traffic:{rows:[{Date:'2026-10-02',Clicks:99,Impressions:100}],error:null}}}])
+    await db.exec('set role authenticated')
+    const rebound=await bing('2026-10-02','2026-10-05')
+    assert.equal(rebound.data.site_url,'https://new.example.com/'); assert.equal(rebound.data.sections.traffic.rows.length,1)
+    assert.equal(rebound.data.sections.traffic.rows[0].Clicks,99,'never mix old Bing property')
     await google('2026-10-03','2026-10-04'); await bing('2026-10-03','2026-10-04')
     await db.exec('reset role'); assert.deepEqual(await counts(),before)
     await db.query("update public.websites set ga4_property_id='456' where id=$1",[site]); await db.exec('set role authenticated')
@@ -57,10 +70,18 @@ test('scheduled recovery is bounded and does not starve another site', async () 
       ('00000000-0000-0000-0000-000000000003','one.example','analytics','123','2020-01-01','2020-01-28',now()-interval '100 days');`)
     await db.exec('set role service_role')
     const claim=async()=>(await db.query('select public.claim_google_report() j')).rows[0].j
+    await db.exec('reset role')
+    await db.exec(`update public.google_connections set scopes=array['https://www.googleapis.com/auth/analytics.readonly','https://www.googleapis.com/auth/webmasters.readonly'];
+      insert into public.google_report_jobs(website_id,fqdn,kind,property_id,start_date,end_date) values
+      ('00000000-0000-0000-0000-000000000003','one.example','properties','','1970-01-01','1970-01-01');
+      insert into public.google_report_snapshots(job_id,data) select id,'{"properties":[{"siteUrl":"sc-domain:one.example"},{"siteUrl":"https://one.example/"}]}'::jsonb from public.google_report_jobs where kind='properties';`)
+    await db.exec('set role service_role')
     const first=await claim(), second=await claim()
+    const search=(await db.query("select property_id from public.google_report_jobs where kind='search' and start_date=current_date-28 and end_date=current_date-1 order by property_id")).rows
+    assert.deepEqual(search.map(x=>x.property_id),['https://one.example/','sc-domain:one.example'], 'each selectable property receives current scheduled work')
     assert.notEqual(first.website_id,second.website_id,'sites receive turns before either monopolizes collection')
     assert.notEqual(first.start_date?.slice(0,10),'2020-01-01','legacy range is not claimed')
-    const jobs=(await db.query("select website_id,kind,count(*)::int n,max(end_date-start_date)::int span from public.google_report_jobs where collection_class='recovery' and refresh_until>now() group by website_id,kind")).rows
+    const jobs=(await db.query("select website_id,kind,property_id,count(*)::int n,max(end_date-start_date)::int span from public.google_report_jobs where collection_class='recovery' and refresh_until>now() group by website_id,kind,property_id")).rows
     assert.ok(jobs.length>0); assert.ok(jobs.every(j=>j.n===1 && j.span<=27),'one bounded recovery range per source')
   } finally { await db.close() }
 })
