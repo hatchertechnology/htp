@@ -207,3 +207,33 @@ test('raw scanning skips token-heavy legacy and rejects obvious excessive v2 dep
     await db.query('select public.seosmith_check_raw_report($1)',[safe])
   } finally { await db.close() }
 })
+
+test('incremental scanner handles chunk boundaries, Unicode and non-contiguous depth', async () => {
+  const db=await setup()
+  try {
+    await upgrade(db)
+    const check=s=>db.query('select public.seosmith_check_raw_report($1)',[s])
+    for (const n of [16370,16371,16372,16373,16374,16375,16376,16377,16378,16379,16380,16381,16382,16383,16384]) {
+      const prefix='{"padding":"'+ 'é'.repeat(n)+'\\\"[{]","schema_vers\\u0069on":2,"x":'
+      await check(prefix+'0}')
+      await assert.rejects(()=>check(prefix+'{"a":1,"\\u0061":2}}'),/duplicate/)
+    }
+    const deep='{"schema_version":2,"x":'+ '{"x":'.repeat(64)+'0'+'}'.repeat(64)+'}'
+    await assert.rejects(()=>check(deep),/report_depth_limit/)
+    await assert.rejects(()=>check('{"schema_version"   : 2, "a":1, "a":2}'),/duplicate/)
+    const exact='{"schema_version":2,"x":'+ '{"x":'.repeat(63)+'0'+'}'.repeat(63)+'}'
+    await check(exact)
+  } finally { await db.close() }
+})
+
+test('token-heavy schema-2 input at the 16 MiB bound stays bounded', async () => {
+  const db=await setup()
+  try {
+    await upgrade(db)
+    const raw='{"schema_version":2,"padding":['+'0,'.repeat(7_999_000)+'0]}'
+    assert.ok(Buffer.byteLength(raw)<16777216)
+    const start=performance.now()
+    await db.query('select public.seosmith_check_raw_report($1)',[raw])
+    assert.ok(performance.now()-start<120000,'bounded token scan exceeded two minutes')
+  } finally { await db.close() }
+})
