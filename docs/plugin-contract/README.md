@@ -51,7 +51,7 @@ and future adapter skills under #18; no new operation skill ships in this change
 Host packages vendor a reviewed HTP commit plus hashes and contract version.
 Keep common workflow text byte-identical; put host tool naming, login, paths and
 packaging overrides in host descriptors/references, with explicit override reasons.
-A common skill change updates the lock and all three host parity checks in the
+A common skill change updates the lock and the HTP skill lock check (host parity checks remain release gates) in the
 same release sequence. Breaking operation/result changes require a new contract
 major and deliberate host migration; additive operations require a minor release.
 Corrections to documentation/fixtures use patch versions and reviewed re-pinning.
@@ -65,7 +65,7 @@ Use Node 22 or newer, with no dependencies:
     node scripts/check-plugin-contract.mjs --results /path/results.json
 
 The checker verifies HTP tool inventory against source, shared skill hashes, three
-host descriptors and 31 normalized scenarios. Tests mutate transcripts to ensure
+host descriptors and 38 synthetic normalized scenarios. Tests mutate transcripts to ensure
 unsafe results are rejected. Inputs are capped at 1 MiB, 128 scenarios and 16 MiB
 reported payload size. The checker does not execute hosts, read credentials or
 crawl. Expected fixture self-checks are offline specification evidence only.
@@ -108,8 +108,8 @@ observations, and even that does not verify producer provenance or live support.
 These fixtures do not exercise S01 evaluation pass/fail semantics.
 
 `crawlRunsCreated` counts only SEOsmith crawl runs. `collectionRegistered`
-separately records HTP provider collection registration; a pending report request
-has zero crawl runs and registration true. Saved reads have both zero/false.
+separately records HTP provider collection registration; every successful report request
+has zero crawl runs and registration true, including ready/stale/error sync states. Saved reads have both zero/false.
 HTP `idempotency` and `destructive` mirror MCP annotations and are drift checked.
 An idempotency hint does not authorize automatic retry or replace explicit intent.
 Import dedupe, explicit delete, and non-owner writes have synthetic scenarios.
@@ -123,3 +123,39 @@ Capabilities requires no database. Start is synchronous under lock; exact retrie
 return existing state without resuming. Cancellation acceptance is distinct from
 terminal cancellation. Evidence v2, staging, and CI remain false. Adapter
 integration and live host acceptance are still unverified.
+
+
+### Normalization scope and current behavior
+
+`--results` is an exact synthetic golden transcript match mode. Every field,
+including bytes, retryable and code, must match; outcome must be `unknown`.
+It cannot validate varied real backend results or S01 pass/fail/inconclusive.
+A separate evidence-aware adapter acceptance validator remains a release gate.
+
+`collectionRegistered` means registration or refresh extension occurred, not
+that a new row was created. Current request_google_report always upserts
+google_report_jobs (migration 20261101060136_page_performance_samples.sql);
+ready/stale/error sync state does not undo that write. Repository binding also
+initiates background collection. Future read-only report behavior in #32 is
+gated and must not be inferred from the current handler.
+
+Normalized statuses are ok, accepted, pending, running, cancelling, cancelled,
+error and unsupported. Error codes are bounded lowercase identifiers, not a
+complete backend enum. Proposed mappings require adapter evidence:
+
+| Backend evidence | Normalized target |
+| --- | --- |
+| Explicit unauthorized / authorization_required | auth_required |
+| Explicit access_denied for an authenticated non-owner | forbidden |
+| website_not_found without ownership evidence | preserve unavailable; do not infer forbidden |
+| Private HTTP submit 409 | ambiguous conflict or queue full; no identity_conflict inference |
+| Private HTTP report/status 404 | unavailable; no not_ready/absent/expired inference |
+| Private HTTP cancel 409 | ambiguous absent or not cancellable |
+| CLI status typed state/report_available | preserve observed state; absence proves neither terminal nor clean |
+
+CLI report errors may include run_not_found, report_unavailable, report_too_large,
+but stderr reasons are not a complete stable typed taxonomy. Generic DB/IO failures
+remain possible. Legacy HTTP outage/auth fixtures are synthetic target cases,
+not evidence of local CLI behavior. SEOsmith null idempotency/destructive metadata
+means unverified adapter semantics; exact retry expectations do not establish
+blanket replay safety. Credentials never belong in host packages.

@@ -853,6 +853,105 @@
         "crawlRunsCreated": 0,
         "collectionRegistered": false
       }
+    },
+    {
+      "id": "htp.report.collect.ready",
+      "operation": "htp.request_website_report",
+      "context": {
+        "mode": "htp",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "syncState": "ready"
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "provider-collection",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false,
+        "crawlRunsCreated": 0,
+        "collectionRegistered": true
+      }
+    },
+    {
+      "id": "htp.report.collect.stale",
+      "operation": "htp.request_website_report",
+      "context": {
+        "mode": "htp",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "syncState": "stale"
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "provider-collection",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false,
+        "crawlRunsCreated": 0,
+        "collectionRegistered": true
+      }
+    },
+    {
+      "id": "htp.report.collect.error",
+      "operation": "htp.request_website_report",
+      "context": {
+        "mode": "htp",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true,
+        "syncState": "error"
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "provider-collection",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false,
+        "crawlRunsCreated": 0,
+        "collectionRegistered": true
+      }
+    },
+    {
+      "id": "htp.repository.collection",
+      "operation": "htp.set_website_repository",
+      "context": {
+        "mode": "htp",
+        "authorized": true,
+        "capability": true,
+        "contractMajor": 1,
+        "explicit": true
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "requestId": null,
+        "coverage": "unknown",
+        "outcome": "unknown",
+        "source": "provider-collection",
+        "reportSchema": null,
+        "bytes": 0,
+        "retryable": false,
+        "crawlRunsCreated": 0,
+        "collectionRegistered": true
+      }
     }
   ],
   "evidenceKind": "synthetic"

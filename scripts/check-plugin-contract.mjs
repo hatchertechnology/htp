@@ -21,9 +21,9 @@ const actualTools = [...source.matchAll(/#\[tool\([\s\S]*?\)\]\s*(?:async )?fn (
 assert.deepEqual(ops.filter(o => o.service === 'htp').map(o => o.binding).sort(), actualTools, 'HTP tool inventory drift');
 const annotations = new Map([...source.matchAll(/#\[tool\(([\s\S]*?)\)\]\s*(?:async )?fn (\w+)\(/g)].map(m => [m[2], m[1]]));
 for (const op of ops.filter(o => o.service === 'htp')) {
-  for (const [field, hint] of [['idempotency', 'idempotent_hint'], ['destructive', 'destructive_hint']]) {
+  for (const [field, hint] of [['idempotency', 'idempotent_hint'], ['destructive', 'destructive_hint'], ['effect', 'read_only_hint']]) {
     const match = annotations.get(op.binding).match(new RegExp(hint + '\\s*=\\s*(true|false)'));
-    assert.equal(op[field], match[1] === 'true', 'HTP annotation drift: ' + op.binding + ':' + field);
+    assert.equal(op[field], field === 'effect' ? (match?.[1] === 'true' ? 'read' : 'write') : match?.[1] === 'true', 'HTP annotation drift: ' + op.binding + ':' + field);
   }
 }
 for (const op of ops) {
@@ -44,6 +44,7 @@ for (const f of lock.files) {
 for (const host of ['claude', 'codex', 'pi']) {
   const profile = readJson(resolve(dir, `hosts/${host}.json`));
   assert.equal(profile.host, host);
+  assert.ok(!/\/(?:home|Users|mnt|tmp)\//.test(JSON.stringify(profile)), 'nonportable absolute host path');
   assert.equal(profile.minimumVersion, null, 'minimum host version requires new acceptance evidence');
   assert.ok(profile.observedVersion && profile.packageStatus && profile.sources.length && profile.gates.length);
   assert.equal(profile.auth.method, 'host-oauth');
@@ -57,6 +58,6 @@ const args = process.argv.slice(2);
 if (args.length) {
   assert.ok(args.length === 2 && args[0] === '--results', 'usage: node scripts/check-plugin-contract.mjs [--results results.json]');
   validateResults(fixtures, readJson(resolve(args[1])), ops);
-  console.log('External normalized observations conform (producer provenance/live side effects are not verified).');
+  console.log('External synthetic golden transcripts match exactly; outcome must be unknown. This is not varied backend semantic conformance or live support evidence.');
 }
 console.log(`Synthetic offline contract OK: ${ops.length} operations, ${fixtures.scenarios.length} scenarios, 3 host profiles; no live integration tested.`);

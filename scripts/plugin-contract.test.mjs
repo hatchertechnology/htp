@@ -67,3 +67,16 @@ for (const [name, id, patch] of [
   ['deduplicated import starts crawl', 'htp.import.dedupe', { crawlRunsCreated: 1 }],
   ['delete loses acknowledgement', 'htp.delete.explicit', { status: 'pending' }],
 ]) test(`reject ${name}`, () => assert.throws(() => check(change(id, result => Object.assign(result, patch)))));
+test('collection refresh registration is independent of stored sync state', () => {
+  for (const state of ['ready', 'stale', 'error']) {
+    const id = 'htp.report.collect.' + state;
+    check(results());
+    assert.throws(() => check(change(id, r => { r.collectionRegistered = false; })));
+  }
+});
+test('repository collection registration is preserved', () => {
+  assert.throws(() => check(change('htp.repository.collection', r => { r.collectionRegistered = false; })));
+});
+test('external mode deliberately requires golden unknown outcome', () => {
+  assert.throws(() => check(change('seosmith.report.complete', r => { r.outcome = 'pass'; })));
+});

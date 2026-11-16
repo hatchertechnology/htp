@@ -37,7 +37,7 @@ export function validateObservation(scenario, value, operations) {
   }
   const c = scenario.context;
   assert.equal(typeof value.collectionRegistered, 'boolean');
-  assert.equal(value.collectionRegistered, scenario.operation === 'htp.request_website_report' && value.status === 'pending', 'collection registration differs');
+  assert.equal(value.collectionRegistered, scenario.expected.collectionRegistered, 'collection registration differs');
   if (c.websiteOwned === false) assert.equal(value.code, 'forbidden', 'owner denial required');
   if (!c.authorized) assert.ok(['auth_required', 'forbidden'].includes(value.code), 'authorization must fail closed');
   if (!c.capability) assert.equal(value.status, 'unsupported', 'missing capability must be explicit');

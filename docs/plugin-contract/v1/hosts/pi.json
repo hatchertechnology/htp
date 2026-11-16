@@ -46,8 +46,6 @@
     "cliVersion": "1.5.2",
     "package": "@earendil-works/pi-coding-agent",
     "packageVersion": "1.5.2",
-    "releaseRoot": "/home/kwhatcher/.pi/agent/install/releases/1.5.2",
-    "docsDir": "/home/kwhatcher/.pi/agent/install/releases/1.5.2/node_modules/@earendil-works/pi-coding-agent/docs",
     "docsUsed": [
       "mcp.md",
       "extensions.md",
@@ -57,6 +55,6 @@
       "security.md",
       "environment-variables.md"
     ],
-    "note": "Pinned local package docs are authoritative; the declared GitHub repo earendil-works/pi may be private (doc URLs 404)."
+    "note": "Versioned npm tarball docs are the portable reference; declared repository docs may be private."
   }
 }
