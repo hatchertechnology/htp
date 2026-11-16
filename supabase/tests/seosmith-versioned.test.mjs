@@ -356,3 +356,21 @@ test('compact v2 summary preserves results and rejection errors for unrelated ro
     for(let i=0;i<cases.length;i++) assert.deepEqual(await evaluate(cases[i]),expected[i],`case ${i}`)
   } finally {await db.close()}
 })
+
+test('RPC timeout migration changes only intended function configuration', async () => {
+  const db=await setup()
+  try {
+    await upgrade(db)
+    const snapshot=async()=> (await db.query(`select p.oid::regprocedure::text name,p.proconfig,p.proacl from pg_proc p where p.oid in ('public.ingest_seosmith_audit(text,uuid,text,text)'::regprocedure,'public.import_seosmith_audit(uuid,text)'::regprocedure,'public.seosmith_receiver_capabilities()'::regprocedure) order by 1`)).rows
+    const roles=async()=> (await db.query("select rolname,rolconfig from pg_roles where rolname in ('anon','authenticated') order by rolname")).rows
+    const before=await snapshot(),beforeRoles=await roles()
+    await db.exec(await readFile(new URL('../migrations/20261116233148_seosmith_rpc_timeout.sql',import.meta.url),'utf8'))
+    const after=await snapshot()
+    for(let i=0;i<before.length;i++) {
+      assert.deepEqual(after[i].proacl,before[i].proacl)
+      if(after[i].name.startsWith('seosmith_receiver_capabilities')) assert.deepEqual(after[i].proconfig,before[i].proconfig)
+      else assert.ok(after[i].proconfig.includes('statement_timeout=8s'))
+    }
+    assert.deepEqual(await roles(),beforeRoles)
+  } finally {await db.close()}
+})

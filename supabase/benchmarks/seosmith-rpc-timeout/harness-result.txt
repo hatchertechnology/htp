@@ -1,0 +1,44 @@
+PostgREST 14.18
+16/Nov/2026:23:36:39 +0000: Starting PostgREST 14.18...
+db-hoisted-tx-settings = "statement_timeout,plan_filter.statement_cost_limit,default_transaction_isolation"
+timeout_unrelated_probe 500 3.002948
+timeout_unrelated_probe 200 4.006064
+timeout_auth_limit 500 8.002331
+timeout_hoist_success 200 4.009032
+timeout_hoisted_probe 500 4.002250
+SET
+ERROR:  canceling statement due to statement timeout
+CONTEXT:  SQL statement "SELECT pg_sleep(4)"
+PL/pgSQL function timeout_hoist_success() line 1 at PERFORM
+# token-worker-0
+ingest_seosmith_audit 200 2.821189
+# token-import-0
+import_seosmith_audit 200 2.832870
+# token-worker-1
+ingest_seosmith_audit 200 2.528406
+# token-import-1
+import_seosmith_audit 200 2.390969
+# token-worker-2
+ingest_seosmith_audit 200 2.277464
+# token-import-2
+import_seosmith_audit 200 2.405517
+# string-worker-0
+ingest_seosmith_audit 200 1.037712
+# string-import-0
+import_seosmith_audit 200 0.983870
+# string-worker-1
+ingest_seosmith_audit 200 0.980857
+# string-import-1
+import_seosmith_audit 200 0.992460
+# string-worker-2
+ingest_seosmith_audit 200 0.941225
+# string-import-2
+import_seosmith_audit 200 0.977980
+ingest_seosmith_audit 200 1.368903
+ingest_seosmith_audit 409 1.397919
+ingest_seosmith_audit 401 0.126739
+ingest_seosmith_audit 400 0.374160
+12 receipt/raw/report/hash checks passed
+ingest_seosmith_audit 200 2.124053
+ingest_seosmith_audit 400 0.143055
+exact 16 MiB accepted; 16 MiB + 1 rejected

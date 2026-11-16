@@ -1,0 +1,9 @@
+# exact16m
+HTTP 200 time 3.220145
+{"sha256": "5dc8ba2fbda1b0be7f4ac041c10a08da64c649f0851320d0e2b3bcc8227fcf49", "accepted": true, "delivery_id": "00000000-0000-4000-8000-000000000087"}
+# too-large
+HTTP 400 time 0.135085
+{"code":"22023","details":null,"hint":null,"message":"invalid_delivery"}
+# duplicate
+HTTP 400 time 0.383034
+{"code":"22023","details":null,"hint":null,"message":"invalid_or_duplicate_json_keys"}
