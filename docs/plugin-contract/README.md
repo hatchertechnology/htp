@@ -1,11 +1,20 @@
 # Shared HTP and SEOsmith plugin contract
 
-Version 1.0.0 is the Wave 0 source of truth for Claude Code, Codex CLI and Pi.
+The accepted version 1.0.0 baseline is the Wave 0 source of truth for Claude Code, Codex CLI and Pi.
 The JSON inventory in `v1/capabilities.json` records actual bindings, effects,
 authorization, bounds, result descriptions, versions and activation gates.
 `v1/hosts/` records observed host versions, transport/auth differences and package
 readiness. Minimum supported versions remain unverified. No full host package is
 created here. Existing HTP package functionality is documented in ../mcp-seo.md.
+
+The additive [provider request profile 1.1.0](v1.1/README.md) now defines
+caller intent/job association, retry, reconciliation and scoped withdrawal with
+versioned semantic traces. Backend implementation is scheduled under #34;
+acceptance/deployment and host activation remain gated. The original `v1/`
+artifacts and accepted host pins remain historical 1.0.0 evidence. Current shared
+skill source is pinned by `v1.1/skills.lock.json`; it gates the new workflow on
+deployed capability support. The checker validates both scenario sets and that
+current source lock. It does not promote an old host pin to the extension.
 
 ## Authorization and discovery
 
@@ -18,8 +27,9 @@ not remove saved history. Never place tokens in packages, prompts, logs or repor
 Provider grants and privileged worker credentials stay outside host packages.
 
 Saved-data reads must create zero collection jobs. request_website_report is an
-explicit provider collection write, not durable SEOsmith scan scheduling; it has
-no plugin-level durable request identity guarantee. URL inspection calls a provider.
+explicit provider collection write, not durable SEOsmith scan scheduling. The
+1.0.0 unkeyed baseline has no plugin-level durable request identity guarantee;
+the gated 1.1.0 keyed extension defines that guarantee separately. URL inspection calls a provider.
 Website deletion is destructive; website creation is not safely replayable.
 
 SEOsmith local execution requires explicit scope and a configured executable/private
@@ -61,7 +71,7 @@ Corrections to documentation/fixtures use patch versions and reviewed re-pinning
 Use Node 22 or newer, with no dependencies:
 
     node scripts/check-plugin-contract.mjs
-    node --test scripts/plugin-contract.test.mjs
+    node --test scripts/plugin-contract.test.mjs scripts/provider-request-contract.test.mjs
     node scripts/check-plugin-contract.mjs --results /path/results.json
 
 The checker verifies HTP tool inventory against source, shared skill hashes, three

@@ -74,6 +74,40 @@ Pending, stale, disabled and error states must stay visible; never call them zer
 traffic or a completed collection. Existing Google/Bing grants must authorize
 the requested provider. Do not claim Business Profile availability while paused.
 
+### Durable provider requests (contract 1.1.0; activation gated)
+
+Use this extension only after deployed backend support and tool/input-schema
+verification for `request_key`, `get_website_report_request`, and
+`cancel_website_report_request`. Existing host pins do not establish support.
+Without the extension, report registration retains its legacy behavior; disclose
+that durable caller intent/reconciliation/withdrawal is unavailable.
+
+For explicit collection intent, choose a non-secret ASCII `request_key`
+(`[A-Za-z0-9._~-]`, 1–128 characters) and retain it with the exact website UUID
+and supplied provider inputs. The same key retries the same intent without
+extending its seven-day deadline. Changed inputs conflict; a deliberate new
+intent or renewal uses a new key. Never silently renew after a timeout.
+Inspect `collection.requestKey`, `status`, `expiresAt` and `association` in the
+response. The association is a provider job natural key, not a completed report.
+Bing shares one website/FQDN job and has null property/date association fields;
+its requested date inputs still participate in conflict detection.
+
+After a lost response, use `get_website_report_request` with `website_id` and
+`request_key`, or retry exactly the same request. Lookup creates no collection
+work. A transport failure or UNAVAILABLE can leave registration uncertain.
+NOT_FOUND permits an identical retry; it does not justify changing the key.
+Withdraw only the requested intent with `cancel_website_report_request` using
+those same arguments. Withdrawal is idempotent and does not stop already leased,
+shared, scheduled or legacy work or delete saved data. Expired/withdrawn retries
+stay terminal. Status describes intent acceptance, not provider completion;
+read stored sources/snapshots separately for data and collection errors.
+
+At most 100 active and 1,000 retained identities exist per website. Terminal keys
+remain reserved until website deletion; at LIMIT_EXCEEDED reconcile existing
+keys and explain the limit. Do not delete a website or invent a renewal key to
+bypass a cap. Keep authorization, invalid input, conflict, limit and unavailable
+errors visible and bounded; never put provider credentials into keys or reports.
+
 ## Technical SEO audits
 
 Use `website_audit_history` with `website_id` and optional `limit` (1–100,

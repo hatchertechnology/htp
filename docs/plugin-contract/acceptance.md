@@ -58,3 +58,24 @@ SEOsmith #18 owns operation adapter integration. Backend gates above and live
 host evidence remain open. The coordinator must record exact reviewed commits,
 validation and evidence for each literal criterion before changing its checklist
 or closing #34. This documentation does not authorize closure or alter scope.
+
+## Provider definition/conformance extension (1.1.0)
+
+[Version 1.1.0](v1.1/README.md) defines the finite provider gap identified by
+the 2026-11-16 acceptance audit: caller key scoped by website, Google/Bing public
+natural-key association, immutable seven-day intent, retry/new intent/conflict,
+read-only reconciliation, scoped withdrawal and races, retained data, shared and
+scheduled work, fixed storage/input limits and bounded/uncertain errors. Twenty
+synthetic lifecycle traces and independent invariant mutation tests add definition
+evidence. The new semantic validator accepts lawful variation; it still cannot
+verify context/provenance or measure backend effects.
+
+The accepted v1 inventory and host pins above remain historical. The shared
+website-management source has a capability-gated extension with a separate
+1.1.0 skill lock; hosts require deliberate reviewed repinning. Backend/MCP delivery
+is scheduled now under literal #34 with t2 in the provider-lifecycle worktree;
+it is not silently deferred to host rollout. Definition tests do not establish
+backend acceptance or production activation. Keep the provider checklist open
+until exact-head backend/MCP tests and review evidence satisfy it. Host release
+gates, unrelated backend issues and the coordinator's issue-closure ownership
+remain as stated above.
