@@ -158,10 +158,15 @@ enum ReportKind {
     BusinessProfile,
     BusinessPerformance,
     Bing,
+    #[serde(other)]
+    #[schemars(skip)]
+    Unknown,
 }
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ReportToolInput {
+    /// Stable caller-supplied intent identity; omit for legacy registration.
+    request_key: Option<String>,
     #[schemars(with = "String")]
     website_id: uuid::Uuid,
     kind: ReportKind,
@@ -172,6 +177,13 @@ struct ReportToolInput {
     /// Inclusive YYYY-MM-DD; required except for properties and Bing. Bing defaults to the last 28 completed UTC days when both are omitted.
     start_date: Option<String>,
     end_date: Option<String>,
+}
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ReportRequestInput {
+    #[schemars(with = "String")]
+    website_id: uuid::Uuid,
+    request_key: String,
 }
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -349,6 +361,27 @@ async fn web_management_request(
             .await
             .map_err(|_| crate::websites::WebsiteError::Unavailable),
     )
+}
+
+fn lifecycle_result(
+    result: Result<serde_json::Value, crate::websites::WebsiteError>,
+) -> CallToolResult {
+    let value = match result {
+        Ok(value) => value,
+        Err(crate::websites::WebsiteError::Invalid(_)) => {
+            serde_json::json!({"code":"INVALID_ARGUMENT"})
+        }
+        Err(crate::websites::WebsiteError::Forbidden | crate::websites::WebsiteError::NotFound) => {
+            serde_json::json!({"code":"NOT_FOUND"})
+        }
+        Err(_) => serde_json::json!({"code":"UNAVAILABLE"}),
+    };
+    let error = value.get("code").is_some();
+    let mut result = CallToolResult::structured(value);
+    if error {
+        result.is_error = Some(true);
+    }
+    result
 }
 
 fn saved_tool_result(
@@ -624,6 +657,16 @@ impl WebsiteMcp {
             ReportKind::BusinessProfile => "business_profile",
             ReportKind::BusinessPerformance => "business_performance",
             ReportKind::Bing => "bing",
+            ReportKind::Unknown => {
+                if input.request_key.is_some() {
+                    return lifecycle_result(Err(crate::websites::WebsiteError::Invalid(
+                        "Invalid report kind.",
+                    )));
+                }
+                return saved_tool_result(Err(crate::websites::WebsiteError::Invalid(
+                    "Invalid report kind.",
+                )));
+            }
         };
         let (suffix, body) = match input.kind {
             ReportKind::Bing => {
@@ -667,6 +710,23 @@ impl WebsiteMcp {
                 )
             }
         };
+        let property = if matches!(kind_name, "properties" | "bing") {
+            ""
+        } else {
+            input.property_id.as_deref().unwrap_or("")
+        };
+        let keyed = if let Some(key) = &input.request_key {
+            let result = self.store.rpc(&parts.headers, "register_provider_report_request", serde_json::json!({
+                "p_website_id":input.website_id, "p_request_key":key, "p_kind":kind_name,
+                "p_property_id":property, "p_start_date":input.start_date, "p_end_date":input.end_date
+            })).await;
+            match result {
+                Ok(value) if value.get("collection").is_some() => Some(value),
+                other => return lifecycle_result(other),
+            }
+        } else {
+            None
+        };
         let read = self
             .management_call(
                 &parts.headers,
@@ -675,6 +735,16 @@ impl WebsiteMcp {
                 body.clone(),
             )
             .await;
+        if let Some(value) = keyed {
+            if read.is_error == Some(true) {
+                return CallToolResult::structured(value);
+            }
+            let mut output = read
+                .structured_content
+                .unwrap_or_else(|| serde_json::json!({}));
+            output["collection"] = value["collection"].clone();
+            return CallToolResult::structured(output);
+        }
         if read.is_error == Some(true) {
             return read;
         }
@@ -713,6 +783,40 @@ impl WebsiteMcp {
             }
             Err(error) => saved_tool_result(Err(error)),
         }
+    }
+    #[tool(
+        description = "Look up a keyed provider collection request for an owned website.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true
+        )
+    )]
+    async fn get_website_report_request(
+        &self,
+        rmcp::handler::server::wrapper::Parameters(input): rmcp::handler::server::wrapper::Parameters<ReportRequestInput>,
+        rmcp::handler::server::tool::Extension(parts): rmcp::handler::server::tool::Extension<
+            axum::http::request::Parts,
+        >,
+    ) -> CallToolResult {
+        lifecycle_result(self.store.rpc(&parts.headers, "get_provider_report_request", serde_json::json!({"p_website_id":input.website_id,"p_request_key":input.request_key})).await)
+    }
+    #[tool(
+        description = "Withdraw a keyed provider collection request for an owned website; shared work and saved data remain.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true
+        )
+    )]
+    async fn cancel_website_report_request(
+        &self,
+        rmcp::handler::server::wrapper::Parameters(input): rmcp::handler::server::wrapper::Parameters<ReportRequestInput>,
+        rmcp::handler::server::tool::Extension(parts): rmcp::handler::server::tool::Extension<
+            axum::http::request::Parts,
+        >,
+    ) -> CallToolResult {
+        lifecycle_result(self.store.rpc(&parts.headers, "cancel_provider_report_request", serde_json::json!({"p_website_id":input.website_id,"p_request_key":input.request_key})).await)
     }
     #[tool(
         description = "List saved Seosmith audit summaries and trends for an owned website. Follow the returned next_cursor with both before and before_id.",
