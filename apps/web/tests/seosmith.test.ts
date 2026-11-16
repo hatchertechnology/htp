@@ -189,3 +189,20 @@ it('does not use a changed media type to resolve image or media-type findings', 
   before[0]!.rule = 'incorrect_media_type'
   expect(findingChanges(current, previous, [], before, [{ ...page, status: 404 }])?.unverified).toBe(1)
 })
+it('keeps versioned partial/unknown evidence and legacy-v2 pairs from resolving findings', () => {
+  const current = run('new', '2026-11-01T02:00:00Z'), previous = run('old', '2026-11-01T01:00:00Z')
+  const page = { ...measured('https://example.com/')[0]!, title: 'Corrected title' }
+  const before = [{ rule: 'missing_title', url: page.url, evidence: 'Empty' }] as AuditFinding[]
+  current.summary.schema_version = 2
+  expect(findingChanges(current, previous, [], before, [page])).toBeNull()
+  previous.summary.schema_version = 2
+  for (const complete of [undefined, null, false]) {
+    current.summary.evaluation_coverage_complete = complete
+    previous.summary.evaluation_coverage_complete = true
+    expect(findingChanges(current, previous, [], before, [page])).toBeNull()
+  }
+  current.summary.evaluation_coverage_complete = true
+  expect(findingChanges(current, previous, [], before, [page])?.resolved).toBe(1)
+  current.summary.coverage_complete = false
+  expect(findingChanges(current, previous, [], before, [page])).toBeNull()
+})

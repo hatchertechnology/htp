@@ -8,8 +8,10 @@ export function auditValue(run: AuditRun, metric: AuditMetric): number | null {
 }
 export function comparable(a: AuditRun, b: AuditRun): boolean {
   return [a, b].every(run => run.summary.coverage_complete === true
+    && (run.summary.schema_version !== 2 || run.summary.evaluation_coverage_complete === true)
     && run.summary.outcome === 'completed'
     && (!run.summary.stop_reason || run.summary.stop_reason === 'frontier_exhausted'))
+    && a.summary.schema_version === b.summary.schema_version
     && !!a.summary.engine_version && a.summary.engine_version === b.summary.engine_version
     && !!a.summary.ruleset_version && a.summary.ruleset_version === b.summary.ruleset_version
     && a.summary.comparison_key === b.summary.comparison_key
