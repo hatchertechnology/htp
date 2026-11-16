@@ -1,0 +1,6 @@
+SET
+Timing is on.
+ERROR:  canceling statement due to statement timeout
+CONTEXT:  SQL statement "SELECT pg_sleep(4)"
+PL/pgSQL function timeout_hoist_success() line 1 at PERFORM
+Time: 3000.785 ms (00:03.001)

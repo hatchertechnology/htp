@@ -1,0 +1,18 @@
+# anon-unrelated
+HTTP 500 time 3.053047
+{"code":"57014","details":null,"hint":null,"message":"canceling statement due to statement timeout"}
+# auth-unrelated
+HTTP 200 time 4.083056
+"done"
+# hoisted-success
+HTTP 200 time 4.004725
+"5s"
+# hoisted-timeout-rollback
+HTTP 500 time 4.004174
+{"code":"57014","details":null,"hint":null,"message":"canceling statement due to statement timeout"}
+# ingest-valid
+HTTP 200 time 3.740756
+{"sha256": "19c085f6de8000a8f564488097ed871df5dcc7dc084bbe86c4a49d9bcf5fe252", "accepted": true, "delivery_id": "cd5e8831-d220-44ae-9a80-3d6ee96cdbb7"}
+# ingest-retry
+HTTP 200 time 2.098685
+{"sha256": "19c085f6de8000a8f564488097ed871df5dcc7dc084bbe86c4a49d9bcf5fe252", "accepted": true, "delivery_id": "cd5e8831-d220-44ae-9a80-3d6ee96cdbb7"}
