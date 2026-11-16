@@ -174,6 +174,8 @@ alter table public.google_report_jobs add column collection_class text not null 
   check (collection_class in ('legacy','current','recovery'));
 alter table public.google_report_jobs add column recovery_generation uuid;
 alter table public.google_report_jobs add column last_claimed_at timestamptz;
+-- Explicit intent is independent of the scheduler class and survives rollover.
+alter table public.google_report_jobs add column explicit_until timestamptz;
 
 create function public.seed_history_recovery() returns void
 language plpgsql security definer set search_path='' as $$
@@ -279,9 +281,16 @@ begin
   update public.google_report_jobs set collection_class='current'
     where (start_date=date '1970-01-01' and end_date=date '1970-01-01')
       or (start_date=(now() at time zone 'UTC')::date-28 and end_date=(now() at time zone 'UTC')::date-1);
+  -- An explicit subscription can overlap a rolling job. Keep its independent
+  -- deadline when the rolling range ages out, including before its first claim.
+  update public.google_report_jobs set collection_class='explicit',
+    refresh_until=greatest(refresh_until,explicit_until)
+    where collection_class='current' and end_date<>date '1970-01-01'
+      and end_date<(now() at time zone 'UTC')::date-1 and explicit_until>now();
   update public.google_report_jobs set refresh_until=now()
-    where collection_class='legacy' or (collection_class='current' and end_date<>date '1970-01-01'
-      and end_date<(now() at time zone 'UTC')::date-1);
+    where (collection_class='legacy' and coalesce(explicit_until,'-infinity'::timestamptz)<=now())
+      or (collection_class='current' and end_date<>date '1970-01-01'
+      and end_date<(now() at time zone 'UTC')::date-1 and coalesce(explicit_until,'-infinity'::timestamptz)<=now());
   perform public.seed_history_recovery();
   select q.* into j from public.google_report_jobs q
     join public.websites w on w.id=q.website_id and w.fqdn=q.fqdn
@@ -309,5 +318,3 @@ begin
 end $$;
 revoke all on function public.claim_google_report() from public,anon,authenticated;
 grant execute on function public.claim_google_report() to service_role;
-
-

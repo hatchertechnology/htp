@@ -20,7 +20,7 @@ begin
   -- This RPC is directly callable by authenticated clients; do not rely on
   -- the HTTP handler or eventual worker to reject foreign Search properties.
   if p_kind='search' and not (
-    (p_property_id ~ '^sc-domain:[a-z0-9][a-z0-9.-]*$'
+    (p_property_id ~ '^sc-domain:[a-z0-9][a-z0-9.-]*$' and strpos(substr(p_property_id,11),'.')>0
       and (substr(p_property_id,11)=w.fqdn or right(w.fqdn,length(substr(p_property_id,11))+1)='.'||substr(p_property_id,11)))
     or ((starts_with(p_property_id,'https://'||w.fqdn||'/') or starts_with(p_property_id,'http://'||w.fqdn||'/'))
       and right(p_property_id,1)='/' and p_property_id !~ '[[:space:]?#]' and strpos(p_property_id,chr(92))=0)
@@ -42,10 +42,11 @@ begin
     and j.kind=p_kind and j.property_id=p_property_id and j.start_date=p_start_date and j.end_date=p_end_date;
   if not found and (select count(*) from public.google_report_jobs j where j.website_id=w.id and j.refresh_until>now())>=100 then
     raise program_limit_exceeded using message='Too many active report ranges'; end if;
-  insert into public.google_report_jobs(website_id,fqdn,kind,property_id,start_date,end_date,refresh_until,collection_class)
-    values(w.id,w.fqdn,p_kind,p_property_id,p_start_date,p_end_date,now()+interval '7 days','explicit')
+  insert into public.google_report_jobs(website_id,fqdn,kind,property_id,start_date,end_date,refresh_until,collection_class,explicit_until)
+    values(w.id,w.fqdn,p_kind,p_property_id,p_start_date,p_end_date,now()+interval '7 days','explicit',now()+interval '7 days')
     on conflict(website_id,fqdn,kind,property_id,start_date,end_date) do update
       set refresh_until=greatest(public.google_report_jobs.refresh_until,excluded.refresh_until),
+        explicit_until=greatest(coalesce(public.google_report_jobs.explicit_until,'-infinity'::timestamptz),excluded.explicit_until),
         collection_class=case when public.google_report_jobs.collection_class='current' then 'current' else 'explicit' end;
   return jsonb_build_object('collectionRegistered',true);
 end $$;

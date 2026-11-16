@@ -48,9 +48,10 @@ test('disconnected arbitrary ranges use canonical Google and Bing days without r
     await db.exec('reset role'); assert.deepEqual(await counts(),before)
     await db.exec('set role authenticated')
     const register=async()=> (await db.query("select public.register_report_collection($1,'analytics','123','2026-10-02','2026-10-05') r",[site])).rows[0].r
-    for (const property of ['sc-domain:other.example','https://other.example/','https://example.com.evil.test/','https://example.com/path','https://example.com/?q=1','https://example.com/evil#x','https://example.com/\\evil']) {
+    for (const property of ['sc-domain:other.example','sc-domain:com','https://other.example/','https://example.com.evil.test/','https://example.com/path','https://example.com/?q=1','https://example.com/evil#x','https://example.com/\\evil']) {
       await assert.rejects(() => db.query("select public.register_report_collection($1,'search',$2,'2026-10-02','2026-10-05')",[site,property]),/Invalid Search property/)
     }
+    assert.equal((await db.query("select public.register_report_collection($1,'search','sc-domain:example.com','2026-10-02','2026-10-05') r",[site])).rows[0].r.collectionRegistered,true)
     assert.equal((await db.query("select public.register_report_collection($1,'search','https://example.com/','2026-10-02','2026-10-05') r",[site])).rows[0].r.collectionRegistered,true)
     assert.equal((await register()).collectionRegistered,true); assert.equal((await register()).collectionRegistered,true)
     assert.equal((await db.query("select public.register_report_collection($1,'bing','','1970-01-01','1970-01-01') r",[site])).rows[0].r.collectionRegistered,true)
@@ -60,7 +61,7 @@ test('disconnected arbitrary ranges use canonical Google and Bing days without r
     await assert.rejects(register,/Website not found/)
     await db.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({sub:owner,is_anonymous:false})])
     await db.exec('reset role')
-    assert.deepEqual(await counts(),{g:before.g+2,b:before.b},'explicit requests are idempotent and separate from reads')
+    assert.deepEqual(await counts(),{g:before.g+3,b:before.b},'explicit requests are idempotent and separate from reads')
     assert.equal((await db.query("select collection_class from public.google_report_jobs where kind='analytics' and start_date='2026-10-02' and end_date='2026-10-05'")).rows[0].collection_class,'explicit')
     await db.exec("update public.google_connections set status='connected',scopes=array['https://www.googleapis.com/auth/analytics.readonly']; set role service_role")
     for (let i=0;i<12;i++) { const job=(await db.query('select public.claim_google_report() j')).rows[0].j; if (!job) break; if (job.collection_class==='explicit') { assert.equal(job.start_date.slice(0,10),'2026-10-02'); break } await db.query('select public.complete_google_report($1,$2,$3,$4,null)',[job.id,job.lease,job.generation,{}]) }
@@ -123,5 +124,42 @@ test('scheduled recovery is bounded and does not starve another site', async () 
     await claim()
     const rolled=(await db.query("select count(distinct property_id)::int n from public.google_report_jobs where kind='search' and start_date=current_date-28 and end_date=current_date-1")).rows[0].n
     assert.equal(rolled,2,'both discovered properties roll forward')
+  } finally { await db.close() }
+})
+
+test('explicit registration overlapping rolling work survives rollover and backlog', async () => {
+  const db=new PGlite()
+  try {
+    await db.exec(`create role anon; create role authenticated; create role service_role bypassrls; create schema auth; create table auth.users(id uuid primary key);
+      create function auth.jwt() returns jsonb language sql stable as $$ select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb $$;
+      create function auth.uid() returns uuid language sql stable as $$ select (auth.jwt()->>'sub')::uuid $$;
+      grant usage on schema auth,public to authenticated,anon,service_role;`)
+    const dir=new URL('../migrations/',import.meta.url)
+    for (const f of (await readdir(dir)).filter(f=>f.endsWith('.sql')).sort()) await db.exec(await readFile(new URL(f,dir),'utf8'))
+    const owner='00000000-0000-0000-0000-000000000001', site='00000000-0000-0000-0000-000000000003'
+    await db.exec(`insert into auth.users values('${owner}'); insert into public.websites(id,owner_id,fqdn,ga4_property_id) values('${site}','${owner}','example.com','123');
+      insert into public.google_connections(owner_id,encrypted_grant,scopes,status) values('${owner}','x',array['https://www.googleapis.com/auth/analytics.readonly'],'connected');`)
+    await db.exec('set role service_role'); await db.query('select public.claim_google_report()')
+    await db.exec('reset role; set role authenticated'); await db.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({sub:owner,is_anonymous:false})])
+    const register=()=>db.query("select public.register_report_collection($1,'analytics','123',current_date-28,current_date-1)",[site])
+    await register(); await register()
+    await db.exec('reset role')
+    const job=(await db.query("select id,explicit_until from public.google_report_jobs where kind='analytics' and start_date=current_date-28 and end_date=current_date-1")).rows[0]
+    assert.ok(job.explicit_until)
+    // Move the rolling interval back a day, equivalent to crossing UTC midnight;
+    // clear its lease to simulate a job that was never serviced under backlog.
+    await db.query("update public.google_report_jobs set start_date=start_date-1,end_date=end_date-1,lease=null,leased_until=null,next_run_at=now()-interval '1 hour' where id=$1",[job.id])
+    await db.exec('set role service_role')
+    let seen=false
+    for(let i=0;i<30;i++) {
+      await db.exec("update public.google_report_jobs set next_run_at=now()-interval '1 minute' where collection_class='current' and leased_until is null")
+      const claimed=(await db.query('select public.claim_google_report() j')).rows[0].j
+      if (!claimed) break
+      if (claimed.id===job.id) { seen=true; assert.equal(claimed.collection_class,'explicit'); break }
+      await db.query('select public.complete_google_report($1,$2,$3,$4,null)',[claimed.id,claimed.lease,claimed.generation,{}])
+    }
+    assert.equal(seen,true,'explicit subscription remains claimable through rollover under current backlog')
+    const retained=(await db.query('select refresh_until>now() active,explicit_until>now() intent from public.google_report_jobs where id=$1',[job.id])).rows[0]
+    assert.deepEqual(retained,{active:true,intent:true})
   } finally { await db.close() }
 })
