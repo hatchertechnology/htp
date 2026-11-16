@@ -15,6 +15,12 @@ begin
     -- Skip complete string-content units without crossing an unescaped quote.
     -- A trailing backslash is left for the state machine, preserving escapes
     -- that span chunks. Root strings use key discovery until they exceed its 255-character bound.
+    -- Complete a backslash escape split at the chunk boundary before batching.
+    if in_string and (not root_string or length(key_text)>=256) and escaped then
+      escaped:=false;
+      offset_bytes:=offset_bytes+1;
+      continue;
+    end if;
     if in_string and (not root_string or length(key_text)>=256) and not escaped and left(chunk,1)='"' then
       in_string:=false;
       offset_bytes:=offset_bytes+1;
