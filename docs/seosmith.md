@@ -229,3 +229,12 @@ corrected title resolves, and an unchecked external target remains unverified.
 External checking enabled, unexpected missing targets, resource limits and
 truncation still prevent comparisons. The isolated test website and its six
 reports were removed after verification.
+
+## Evidence transport (design, not implemented)
+
+[ADR 0001](adr/0001-bounded-inline-evidence-transport.md) records the Wave 0
+decision for HTP #19: the pilot keeps bounded inline transport with the existing
+16 MiB exact-report cap and record budgets. It also sets the requirements for
+S01 v2 evidence, the receiver-first rollout, and a future chunk or artifact
+protocol. Nothing in that document is deployed or advertised. Screenshot and
+object upload are not available.
