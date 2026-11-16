@@ -171,3 +171,39 @@ test('raw parser vectors enforce decoded uniqueness and depth without changing l
     await assert.rejects(()=>db.query('select public.seosmith_check_raw_report($1)', ['{"schema_vers\\u0069on":2,"x":{"a":1,"a":2}}']),/duplicate/)
   } finally { await db.close() }
 })
+
+test('legacy rows that fail modern derivation are cached as unknown without changing bytes', async () => {
+  const db=await setup()
+  try {
+    const raw=JSON.stringify(legacy), id=legacy.request.request_id
+    await identity(db)
+    await db.query('select public.import_seosmith_audit($1,$2)',[site,raw])
+    await db.exec('reset role;alter table public.seosmith_audits disable trigger seosmith_immutable_audit')
+    await db.query("update public.seosmith_audits set report=jsonb_set(report,'{pages}','null'::jsonb) where delivery_id=$1",[id])
+    await db.exec('alter table public.seosmith_audits enable trigger seosmith_immutable_audit')
+    await upgrade(db)
+    const cached=(await db.query('select summary from public.seosmith_summary_cache where delivery_id=$1',[id])).rows[0].summary
+    assert.equal(cached.summary_derivation_failed,true)
+    assert.equal(cached.coverage_complete,false)
+    assert.equal((await db.query('select raw_report_json from public.seosmith_audits where delivery_id=$1',[id])).rows[0].raw_report_json,raw)
+    await identity(db)
+    assert.deepEqual((await db.query('select public.seosmith_audit_history($1) as h',[site])).rows[0].h.items[0].summary,cached)
+  } finally { await db.close() }
+})
+
+test('raw scanning skips token-heavy legacy and rejects obvious excessive v2 depth promptly', async () => {
+  const db=await setup()
+  try {
+    await upgrade(db)
+    const legacyRaw='{"schema_version":1,"padding":['+'0,'.repeat(7_999_000)+'0]}'
+    const started=performance.now()
+    await db.query('select public.seosmith_check_raw_report($1)',[legacyRaw])
+    assert.ok(performance.now()-started<10000,'legacy fast path must avoid token-by-token iteration')
+    const deep='{"schema_version":2,"padding":'+'['.repeat(1_000_000)+'0'+']'.repeat(1_000_000)+'}'
+    const startDeep=performance.now()
+    await assert.rejects(()=>db.query('select public.seosmith_check_raw_report($1)',[deep]),/report_depth_limit/)
+    assert.ok(performance.now()-startDeep<10000,'deep v2 must reject before token materialization')
+    const safe='{"schema_version":2,"text":"'+'['.repeat(65)+'"}'
+    await db.query('select public.seosmith_check_raw_report($1)',[safe])
+  } finally { await db.close() }
+})

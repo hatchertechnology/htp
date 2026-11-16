@@ -351,6 +351,19 @@ language plpgsql immutable set search_path='' as $$
 declare tok text[]; token text; depth integer:=0; max_depth integer:=0;
   awaiting_colon boolean:=false; awaiting_version boolean:=false; is_v2 boolean:=false;
 begin
+  -- Fast negative prefilter: an escaped spelling and every numeric notation are
+  -- considered. False positives take the full scanner; false negatives must not.
+  if raw !~ $pattern$"(?:s|\\u0073)(?:c|\\u0063)(?:h|\\u0068)(?:e|\\u0065)(?:m|\\u006[dD])(?:a|\\u0061)(?:_|\\u005[fF])(?:v|\\u0076)(?:e|\\u0065)(?:r|\\u0072)(?:s|\\u0073)(?:i|\\u0069)(?:o|\\u006[fF])(?:n|\\u006[eE])"[[:space:]]*:[[:space:]]*(2|[0-9]+[.eE])$pattern$ then
+    return;
+  end if;
+  -- Refuse obvious deeply nested input before regexp_matches can materialize it.
+  if raw ~ $depth$^(?:[^"\[]|"(?:[^"\\]|\\.)*"|\[)*(\[[[:space:]]*){65}$depth$ then
+    -- Only reject after a root v2 declaration is established below. The common
+    -- producer form puts the version first; other forms use the complete scanner.
+    if raw ~ $version$^[[:space:]]*\{[[:space:]]*"(?:s|\\u0073)(?:c|\\u0063)(?:h|\\u0068)(?:e|\\u0065)(?:m|\\u006[dD])(?:a|\\u0061)(?:_|\\u005[fF])(?:v|\\u0076)(?:e|\\u0065)(?:r|\\u0072)(?:s|\\u0073)(?:i|\\u0069)(?:o|\\u006[fF])(?:n|\\u006[eE])"[[:space:]]*:[[:space:]]*2([,}[:space:]]|\.0+([,}[:space:]]))$version$ then
+      raise exception 'report_depth_limit' using errcode='22023';
+    end if;
+  end if;
   for tok in select regexp_matches(raw, '"(?:[^"\\]|\\.)*"|[{}\[\]:,]|-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|true|false|null', 'g') loop
     token:=tok[1];
     if awaiting_colon then
@@ -364,6 +377,7 @@ begin
     end if;
     if token in ('{','[') then depth:=depth+1; max_depth:=greatest(max_depth,depth);
     elsif token in ('}',']') then depth:=depth-1; end if;
+    if is_v2 and depth>64 then raise exception 'report_depth_limit' using errcode='22023'; end if;
   end loop;
   if is_v2 then
     if max_depth>64 then raise exception 'report_depth_limit' using errcode='22023'; end if;
@@ -385,8 +399,20 @@ create table public.seosmith_summary_cache (
 alter table public.seosmith_summary_cache enable row level security;
 revoke all on public.seosmith_summary_cache from public,anon,authenticated;
 grant all on public.seosmith_summary_cache to service_role;
+-- A legacy report may predate today's stricter validation. Keep it readable and
+-- clearly non-comparable without blocking migration or rewriting its source.
+create function public.seosmith_cached_legacy_summary(report jsonb, old_summary jsonb)
+returns jsonb language plpgsql stable set search_path='' as $$
+begin
+  return public.seosmith_summary(report);
+exception when others then
+  return coalesce(old_summary,'{}'::jsonb) || jsonb_build_object(
+    'summary_version',4,'coverage_complete',false,'evaluation_coverage_complete',null,
+    'evidence_state','legacy_unknown','summary_derivation_failed',true);
+end $$;
+revoke all on function public.seosmith_cached_legacy_summary(jsonb,jsonb) from public,anon,authenticated;
 insert into public.seosmith_summary_cache(delivery_id,summary_version,summary)
-select delivery_id,4,public.seosmith_summary(report) from public.seosmith_audits
+select delivery_id,4,public.seosmith_cached_legacy_summary(report,summary) from public.seosmith_audits
 where summary->>'summary_version' is distinct from '4';
 
 create or replace function public.ingest_seosmith_audit(p_token text,p_delivery_id uuid,p_sha256 text,p_report_json text)
