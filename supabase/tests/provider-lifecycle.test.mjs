@@ -66,3 +66,36 @@ test('keyed requests reconcile, conflict and withdraw without changing legacy wo
     assert.equal((await get('a')).collection.status,'withdrawn')
   } finally { await db.close() }
 })
+
+test('undated and ignored provider inputs normalize at the RPC boundary', async () => {
+  const db = new PGlite()
+  const owner='00000000-0000-0000-0000-000000000011', site='00000000-0000-0000-0000-000000000013'
+  try {
+    await db.exec(`create role anon; create role authenticated; create role service_role bypassrls; create schema auth; create table auth.users(id uuid primary key);
+      create function auth.jwt() returns jsonb language sql stable as $$ select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb $$;
+      create function auth.uid() returns uuid language sql stable as $$ select (auth.jwt()->>'sub')::uuid $$;
+      grant usage on schema auth,public to authenticated,anon,service_role;`)
+    const dir=new URL('../migrations/',import.meta.url)
+    for (const f of (await readdir(dir)).filter(f=>f.endsWith('.sql')).sort()) await db.exec(await readFile(new URL(f,dir),'utf8'))
+    await db.exec(`insert into auth.users values('${owner}'); insert into public.websites(id,owner_id,fqdn) values('${site}','${owner}','example.com');
+      insert into public.website_business_locations(website_id,fqdn,location_id) values('${site}','example.com','locations/10');
+      create or replace function public.business_profile_enabled() returns boolean language sql immutable set search_path='' as $$ select true $$; set role authenticated;`)
+    await db.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({sub:owner,is_anonymous:false})])
+    const register=async(key,kind,property,start=null,end=null)=>(await db.query('select public.register_provider_report_request($1,$2,$3,$4,$5,$6) r',[site,key,kind,property,start,end])).rows[0].r
+    for (const [kind, property] of [['pagespeed','mobile'],['crux','PHONE'],['business_locations',''],['business_profile','locations/10'],['properties','ignored']]) {
+      const first=await register(kind,kind,property)
+      assert.equal(first.collection.status,'accepted',kind)
+      assert.equal(first.collection.association.startDate,'1970-01-01')
+      assert.deepEqual(await register(kind,kind,kind==='properties'?'different':property,null,null),first)
+      assert.equal((await register(kind,kind,property,'2025-01-01','2025-01-28')).code,'CONFLICT')
+      assert.equal((await register('invalid-'+kind,kind,property,'2024-01-01','2025-01-02')).code,'INVALID_ARGUMENT')
+      assert.equal((await register('partial-'+kind,kind,property,null,'2025-01-28')).code,'INVALID_ARGUMENT')
+    }
+    assert.equal((await register('bad-source','pagespeed','attacker')).code,'INVALID_ARGUMENT')
+    assert.equal((await register('dated','analytics','123')).code,'INVALID_ARGUMENT')
+    const bing=await register('bing','bing','ignored')
+    assert.equal(bing.collection.status,'accepted'); assert.equal(bing.collection.association.propertyId,null)
+    assert.deepEqual(await register('bing','bing','other'),bing)
+    assert.equal((await register('bing','bing','ignored','2025-01-01','2025-01-28')).code,'CONFLICT')
+  } finally { await db.close() }
+})

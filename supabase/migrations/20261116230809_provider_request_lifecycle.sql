@@ -60,7 +60,7 @@ end $$;
 
 create function public.register_provider_report_request(p_website_id uuid,p_request_key text,p_kind text,p_property_id text,p_start_date date,p_end_date date) returns jsonb
 language plpgsql security definer set search_path='' as $$
-declare w public.websites; r public.provider_report_requests; oldjob public.google_report_jobs; j public.google_report_jobs; bid uuid; s date:=p_start_date; e date:=p_end_date; prop text:=coalesce(p_property_id,'');
+declare w public.websites; r public.provider_report_requests; oldjob public.google_report_jobs; j public.google_report_jobs; bid uuid; s date:=p_start_date; e date:=p_end_date; prop text:=case when p_kind in ('properties','bing') then '' else coalesce(p_property_id,'') end;
 begin
   select * into w from public.websites where id=p_website_id and owner_id=auth.uid() and coalesce(auth.jwt()->>'is_anonymous','true')='false' for no key update;
   if not found then return jsonb_build_object('code','NOT_FOUND'); end if;
@@ -75,9 +75,11 @@ begin
   if (select count(*) from public.provider_report_requests where website_id=w.id)>=1000
     or (select count(*) from public.provider_report_requests where website_id=w.id and withdrawn_at is null and expires_at>now())>=100 then
     return jsonb_build_object('code','LIMIT_EXCEEDED'); end if;
-  if p_kind='bing' and (prop<>'' or (p_start_date is null)<>(p_end_date is null) or (p_start_date is not null and (p_start_date<date '2000-01-01' or p_end_date<p_start_date or p_end_date-p_start_date>365))) then
+  if p_kind='bing' and ((p_start_date is null)<>(p_end_date is null) or (p_start_date is not null and (p_start_date<date '2000-01-01' or p_end_date<p_start_date or p_end_date-p_start_date>365))) then
     return jsonb_build_object('code','INVALID_ARGUMENT'); end if;
-  if p_kind not in ('bing','properties') and (p_start_date is null or p_end_date is null or p_end_date<p_start_date or p_end_date-p_start_date>365) then
+  if p_kind in ('properties','pagespeed','crux','business_locations','business_profile') and ((p_start_date is null)<>(p_end_date is null) or (p_start_date is not null and (p_end_date<p_start_date or p_end_date-p_start_date>365))) then
+    return jsonb_build_object('code','INVALID_ARGUMENT'); end if;
+  if p_kind not in ('bing','properties','pagespeed','crux','business_locations','business_profile') and (p_start_date is null or p_end_date is null or p_end_date<p_start_date or p_end_date-p_start_date>365) then
     return jsonb_build_object('code','INVALID_ARGUMENT'); end if;
   if p_kind in ('properties','pagespeed','crux','business_locations','business_profile') then s:=date '1970-01-01'; e:=s; end if;
   if p_kind<>'bing' then

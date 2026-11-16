@@ -158,6 +158,9 @@ enum ReportKind {
     BusinessProfile,
     BusinessPerformance,
     Bing,
+    #[serde(other)]
+    #[schemars(skip)]
+    Unknown,
 }
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -654,6 +657,16 @@ impl WebsiteMcp {
             ReportKind::BusinessProfile => "business_profile",
             ReportKind::BusinessPerformance => "business_performance",
             ReportKind::Bing => "bing",
+            ReportKind::Unknown => {
+                if input.request_key.is_some() {
+                    return lifecycle_result(Err(crate::websites::WebsiteError::Invalid(
+                        "Invalid report kind.",
+                    )));
+                }
+                return saved_tool_result(Err(crate::websites::WebsiteError::Invalid(
+                    "Invalid report kind.",
+                )));
+            }
         };
         let (suffix, body) = match input.kind {
             ReportKind::Bing => {

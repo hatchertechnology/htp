@@ -144,6 +144,17 @@ async fn official_mcp_client_authenticates_every_request() {
         let tools = client.list_tools(None).await.unwrap();
         assert_eq!(tools.tools.len(), 20);
         assert!(tools.tools.iter().any(|tool| tool.name == "create_website"));
+        let report = tools
+            .tools
+            .iter()
+            .find(|tool| tool.name == "request_website_report")
+            .unwrap();
+        let schema = serde_json::to_string(&report.input_schema).unwrap();
+        assert!(schema.contains("analytics"));
+        assert!(
+            !schema.contains("unknown"),
+            "unknown kinds must not appear in the advertised enum: {schema}"
+        );
         let result = client
             .call_tool(CallToolRequestParams::new("hello_world_secured"))
             .await
@@ -1496,7 +1507,7 @@ async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
                         saved_ranges.lock().await.push(body.clone());
                     }
                     if name.ends_with("provider_report_request") {
-                        return (StatusCode::OK, Json(if body["p_request_key"] == "conflict" {
+                        return (StatusCode::OK, Json(if body["p_request_key"] == "conflict" || (body["p_request_key"] == "undated" && !body["p_start_date"].is_null()) {
                             json!({"code":"CONFLICT"})
                         } else {
                             json!({"collection":{"requestKey":body["p_request_key"],"status":if name.starts_with("cancel") {"withdrawn"} else {"accepted"}}})
@@ -1649,6 +1660,45 @@ async fn mcp_report_and_audit_management_use_fixed_owner_scoped_handlers() {
             "{result}"
         );
     }
+    // Both omitted and explicit JSON null dates are forwarded as null; an
+    // explicit range is a different intent signature and the RPC reports conflict.
+    for dates in [json!({}), json!({"start_date":null,"end_date":null})] {
+        let mut args = json!({"website_id":id,"kind":"pagespeed","property_id":"mobile","request_key":"undated"});
+        args.as_object_mut()
+            .unwrap()
+            .extend(dates.as_object().unwrap().clone());
+        let result = response_json(
+            research_mcp_call(&auth, Some(&token), "request_website_report", args).await,
+        )
+        .await;
+        assert_eq!(
+            result["result"]["structuredContent"]["collection"]["status"], "accepted",
+            "{result}"
+        );
+    }
+    let changed = response_json(research_mcp_call(&auth, Some(&token), "request_website_report", json!({"website_id":id,"kind":"pagespeed","property_id":"mobile","request_key":"undated","start_date":"2025-01-01","end_date":"2025-01-28"})).await).await;
+    assert_eq!(changed["result"]["isError"], true);
+    assert_eq!(changed["result"]["structuredContent"]["code"], "CONFLICT");
+    let unknown_kind = "x".repeat(4096);
+    let invalid = response_json(
+        research_mcp_call(
+            &auth,
+            Some(&token),
+            "request_website_report",
+            json!({"website_id":id,"kind":unknown_kind,"request_key":"invalid"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(invalid["result"]["isError"], true);
+    assert_eq!(
+        invalid["result"]["structuredContent"]["code"],
+        "INVALID_ARGUMENT"
+    );
+    assert!(
+        invalid.to_string().len() < 1024,
+        "invalid kind must not be echoed"
+    );
     let conflict = response_json(
         research_mcp_call(
             &auth,
