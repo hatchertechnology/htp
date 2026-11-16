@@ -1,0 +1,96 @@
+{
+  "contractVersion": "1.1.0",
+  "extends": "1.0.0",
+  "capability": "htp.provider-request-lifecycle",
+  "backend": "merged-postchecks-pending",
+  "activationGate": "HTP #34 exact-head SQL/API/MCP acceptance, deployment and discovered input schemas; host releases must explicitly repin",
+  "operations": [
+    {
+      "binding": "request_website_report",
+      "effect": "write",
+      "extension": "optional request_key; existing unkeyed behavior retained",
+      "authorization": "htp-owner-oauth",
+      "idempotency": true,
+      "destructive": false,
+      "version": "1.1.0 (activation gated)",
+      "unsupported": "Fail explicitly when tool/input/deployed backend support is absent; never emulate with another write"
+    },
+    {
+      "binding": "get_website_report_request",
+      "effect": "read",
+      "arguments": [
+        "website_id",
+        "request_key"
+      ],
+      "authorization": "htp-owner-oauth",
+      "idempotency": true,
+      "destructive": false,
+      "version": "1.1.0 (activation gated)",
+      "unsupported": "Fail explicitly when tool/input/deployed backend support is absent; never emulate with another write"
+    },
+    {
+      "binding": "cancel_website_report_request",
+      "effect": "write",
+      "arguments": [
+        "website_id",
+        "request_key"
+      ],
+      "authorization": "htp-owner-oauth",
+      "idempotency": true,
+      "destructive": false,
+      "version": "1.1.0 (activation gated)",
+      "unsupported": "Fail explicitly when tool/input/deployed backend support is absent; never emulate with another write"
+    }
+  ],
+  "identity": [
+    "website_id",
+    "request_key"
+  ],
+  "limits": {
+    "keyPattern": "^[A-Za-z0-9._~-]{1,128}$",
+    "ttlSeconds": 604800,
+    "activeIntentsPerWebsite": 100,
+    "retainedIdentitiesPerWebsite": 1000,
+    "googleActiveRanges": 100,
+    "sampledUrls": 10,
+    "inclusiveRangeDays": 366
+  },
+  "statuses": [
+    "accepted",
+    "expired",
+    "withdrawn"
+  ],
+  "backendErrors": [
+    "INVALID_ARGUMENT",
+    "NOT_FOUND",
+    "CONFLICT",
+    "LIMIT_EXCEEDED",
+    "UNAVAILABLE"
+  ],
+  "localErrors": [
+    "AUTH_REQUIRED",
+    "FORBIDDEN",
+    "UNSUPPORTED"
+  ],
+  "associationFields": [
+    "provider",
+    "kind",
+    "propertyId",
+    "startDate",
+    "endDate",
+    "fqdn"
+  ],
+  "collectionFields": [
+    "requestKey",
+    "status",
+    "expiresAt",
+    "association"
+  ],
+  "retention": "No automatic key eviction/reuse. Terminal identities retained until website deletion. At cap use existing read/retry/cancel; new key fails LIMIT_EXCEEDED.",
+  "backendEvidence": {
+    "pullRequest": 45,
+    "reviewedRevision": "edd55b83059122fbb3d83781be7e567e1680bbc9",
+    "mergeRevision": "48485a55773b1ca97e165a4715d343704270266e",
+    "status": "coordinator reports backend merged after dual approval; postchecks pending; contract/deployment/host activation acceptance separate"
+  }
+}
