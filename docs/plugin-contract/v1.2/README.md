@@ -184,9 +184,11 @@ source does not silently promote any host pin or deployed backend.
 
 After reviewed canonical merge, three coordinator-owned companion readiness PRs
 must preserve each old pin and add a separate1.2 lock/vendor tree. Required
-canonical paths: this profile README/JSON/conformance/source-lock, the three
-`audit-export-*.mjs` modules, standalone checker, `scripts/plugin-contract.mjs`
+canonical paths: this profile README/JSON/conformance/source-lock, `scripts/audit-export-contract.mjs` and `scripts/audit-export-fixtures.mjs`,
+standalone checker, `scripts/plugin-contract.mjs`
 (readJson dependency), and all four skills/reference files in the new lock.
+The canonical test file also exercises source/API inventory and is not a
+standalone host test; companions add scoped wrapper/semantic mutation tests.
 Reuse the validator; verify exact file hashes/pin, host-specific results target,
 semantic/drift negatives and synthetic/measured labeling. Claude must also update
 actual shipped shared skills and verify them against the1.2 lock. Codex/Pi remain
