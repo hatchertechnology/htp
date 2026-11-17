@@ -114,6 +114,58 @@ Use `website_audit_history` with `website_id` and optional `limit` (1–100,
 default 50). Follow the returned cursor using both `before` (scan timestamp) and
 `before_id` (delivery UUID), keeping the website fixed. Use
 `website_audit_detail` with `website_id` and `delivery_id` to read full evidence.
+For safely small results its existing complete result is unchanged. A large or
+unsafe inline result may explicitly fail with `EXPORT_REQUIRED`; this is not a
+partial report or a successful read. Use the versioned workflow below only after
+its tools are discovered and deployed backend support is verified.
+
+### Complete audit export (contract 1.2.0; activation gated)
+
+Discover `website_audit_export_start_v1`, `website_audit_export_chunk_v1`, and
+`website_audit_export_close_v1` and their input schemas. Canonical documentation
+or an old host pin does not prove deployment. If unavailable, explain that full
+large-detail retrieval is unavailable through this connection; do not substitute
+history summaries, truncate evidence, launch collection, or claim a full review.
+An evidence review authorizes these saved-data reads; no new collection request
+or separate export approval is needed.
+
+1. Call start with the same `website_id` and `delivery_id`. Retain the complete
+   descriptor: `version:1`, opaque `exportId`, website/delivery IDs,
+   `representation:htp.audit-detail-json.v1`, `byteLength`, `sha256`,
+   `chunkMaxBytes:262144`, hard `expiresAt`, and `idleExpiresAt`.
+2. Call chunk with `website_id`, `delivery_id`, `exportId`, and byte `offset:0`.
+   Decode `dataBase64` into bytes, retaining the same snapshot ID, total length
+   and SHA. Verify each returned offset and `nextOffset`; continue from
+   `nextOffset` through `eof:true`. Chunks contain at most 256 KiB decoded bytes.
+   UTF-8 characters can span chunks; decode text only after byte reconstruction.
+   Retrying an offset returns identical bytes; its idle deadline may refresh.
+3. Verify total reconstructed length and SHA-256 against the start descriptor
+   before parsing JSON or claiming complete evidence. If the host cannot decode,
+   retain and hash the full bytes, report that limitation. Do not paste large
+   payloads into chat or claim a complete review from a subset of chunks.
+4. The verified document contains all saved detail metadata, summary, `report`
+   and `report_json`. Non-null `report_json`, decoded as a JSON string, is the
+   exact retained original text. Null means original raw text was not retained;
+   use the stored `report` value and disclose that legacy limitation. Historic
+   raw and stored values may diverge: preserve both. The snapshot hash verifies
+   transfer consistency; it is not the original ingestion receipt/raw digest.
+5. Close with the same IDs when finished or abandoning retrieval. Authorized
+   close returns `{version:1,closed:true}` even if already closed or expired.
+   Every read/close rechecks current owner, website/FQDN and audit existence.
+
+The idle deadline is 15 minutes, refreshed by successful chunks up to the fixed
+two-hour hard lifetime. Start replay may reuse a live snapshot without extending
+its hard deadline. `EXPORT_EXPIRED` includes process restart, instance mismatch,
+or lost snapshot: explicitly start again and discard prior partial bytes;
+never join bytes from different snapshot IDs. `EXPORT_CAPACITY` is temporary
+admission/storage pressure; `UNAVAILABLE` covers temporary upstream/IO/validation
+failure. Keep these errors visible; no bounded resource policy guarantees every
+large retrieval will succeed. `INVALID_ARGUMENT` requires correcting the offset
+or input. `NOT_FOUND` masks inaccessible/missing website or audit; refresh the
+saved inventory rather than bypassing access. Authentication may fail with
+HTTP 401 before the tool handler; reconnect through the host flow. Framework
+input errors may precede structured export errors. Cancellation yields no ready
+snapshot; cleanup is a backend obligation. Never expose private paths or tokens.
 
 For a requested import, pass the complete report text to `import_website_audit`
 as `report_json` with the target `website_id`. The report must match its hostname

@@ -52,3 +52,22 @@ Account management tools are documented in the
 website CRUD, GA4 and Business Profile bindings, background report registration,
 and Seosmith audit history, detail and import, using the same validation and
 ownership checks as HTP's REST API. OAuth consent remains interactive.
+
+
+## Full technical audit detail (export-v1; activation gated)
+
+`website_audit_detail(website_id,delivery_id)` keeps its complete small result.
+An unsafe large result explicitly returns `isError:true` with `EXPORT_REQUIRED`,
+`exportVersion:1` and `startTool:website_audit_export_start_v1`; this changes the
+workflow for large callers. It is not truncation or an unchanged-inline promise.
+The [website management workflow](../../website-management/SKILL.md#complete-audit-export-contract-120-activation-gated)
+covers discovery, start/chunk/close, byte reconstruction, final SHA verification,
+expiry and access errors. Do not claim these tools are deployed from this file.
+
+Start returns a snapshot of the entire detail JSON document, not just raw report
+text. Chunks use `exportId` and byte `offset` with the same website/delivery UUIDs;
+`nextOffset`/`eof` control traversal, 262144 decoded bytes maximum. All descriptor
+identity/length/hash fields must stay consistent. The hash covers the exported
+JSON envelope bytes. Parse only after full length/hash verification; decoded
+nonnull `report_json` retains original text, null means not retained and `report`
+is the stored JSONB fallback. These saved reads create no collection or crawl.

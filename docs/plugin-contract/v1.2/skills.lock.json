@@ -1,0 +1,24 @@
+{
+  "contractVersion": "1.2.0",
+  "owner": "HTP",
+  "source": "plugins/htp/skills",
+  "files": [
+    {
+      "path": "plugins/htp/skills/repository-settings/SKILL.md",
+      "sha256": "cc7e9296146794082ebc28057040b334885da3c3a4a6b1e37e541e50fff0705d"
+    },
+    {
+      "path": "plugins/htp/skills/seo-review/SKILL.md",
+      "sha256": "6de51cb9af003acc47113f66a99029dd9dd005fae764f58301e7196fe28913bb"
+    },
+    {
+      "path": "plugins/htp/skills/seo-review/references/data.md",
+      "sha256": "b2dc920820cef70f06843421e40470bcd31d68e15334db9e5a4141d7287c5492"
+    },
+    {
+      "path": "plugins/htp/skills/website-management/SKILL.md",
+      "sha256": "74883c11c79fe126eb87f504bc9fdbe3d815ec786bfcbe05be51e2121de67353"
+    }
+  ],
+  "seosmithOwner": "SEOsmith #18; no operation skill shipped until adapter contract is implemented"
+}

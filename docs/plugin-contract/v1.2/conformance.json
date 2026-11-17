@@ -27,6 +27,10 @@
         },
         {
           "action": "chunk",
+          "offset": 524288
+        },
+        {
+          "action": "chunk",
           "offset": "end"
         },
         {
@@ -116,6 +120,15 @@
         {
           "action": "chunk",
           "offset": 0
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "subject": "other"
+        },
+        {
+          "action": "close",
+          "subject": "other"
         },
         {
           "action": "close"
@@ -401,6 +414,89 @@
         },
         {
           "action": "close"
+        }
+      ]
+    },
+    {
+      "id": "unknown-export",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "exportId": "unknown"
+        },
+        {
+          "action": "close",
+          "exportId": "unknown"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        }
+      ]
+    },
+    {
+      "id": "auth-isolation",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "start",
+          "subject": "missing"
+        },
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "subject": "anonymous"
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "subject": "invalid"
+        },
+        {
+          "action": "close",
+          "subject": "anonymous"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        }
+      ]
+    },
+    {
+      "id": "invalid-offset",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": -1,
+          "parseInvalid": true
+        },
+        {
+          "action": "chunk",
+          "offset": 0.5,
+          "parseInvalid": true
+        },
+        {
+          "action": "chunk",
+          "offset": "pastEnd"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
         }
       ]
     }

@@ -14,19 +14,34 @@
       "binding": "website_audit_export_start_v1",
       "effect": "read",
       "authorization": "fresh nonanonymous owner, website/FQDN and delivery existence on every call",
-      "collection": false
+      "collection": false,
+      "inputs": {
+        "website_id": "UUID",
+        "delivery_id": "UUID"
+      }
     },
     {
       "binding": "website_audit_export_chunk_v1",
       "effect": "read",
       "authorization": "fresh nonanonymous owner, website/FQDN and delivery existence on every call",
-      "collection": false
+      "collection": false,
+      "inputs": {
+        "website_id": "UUID",
+        "delivery_id": "UUID",
+        "exportId": "opaque snapshot ID",
+        "offset": "nonnegative integer byte offset"
+      }
     },
     {
       "binding": "website_audit_export_close_v1",
       "effect": "read",
       "authorization": "fresh nonanonymous owner, website/FQDN and delivery existence on every call",
-      "collection": false
+      "collection": false,
+      "inputs": {
+        "website_id": "UUID",
+        "delivery_id": "UUID",
+        "exportId": "opaque snapshot ID"
+      }
     }
   ],
   "limits": {
@@ -76,5 +91,20 @@
     "instance routing and private snapshot storage verified",
     "backend deployed and rediscovered schemas",
     "three host source/readiness companions at exact canonical merge; runtime support separately verified"
+  ],
+  "inlineTransition": {
+    "binding": "website_audit_detail",
+    "small": "existing complete result unchanged",
+    "unsafe": "isError EXPORT_REQUIRED; explicit new workflow required; unchanged large clients incompatible"
+  },
+  "errorFields": [
+    "code",
+    "exportVersion",
+    "message"
+  ],
+  "exportRequiredAdditionalFields": [
+    "startTool",
+    "websiteId",
+    "deliveryId"
   ]
 }

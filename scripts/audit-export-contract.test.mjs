@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync,writeFileSync,rmSync } from 'node:fs';
+import { mkdtempSync,writeFileSync,rmSync,cpSync,mkdirSync,readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +30,7 @@ for(const [name,id,i,mutate] of [
   ['IO erased','io',0,r=>r.code='EXPORT_CAPACITY'],
   ['validation erased','validation',0,r=>r.code='EXPORT_CAPACITY'],
   ['large silently succeeds','full-retry-eof-close',0,r=>r.code='UNAVAILABLE'],
+  ['unknown export disclosed','unknown-export',1,r=>r.code='UNAVAILABLE'],
   ['descriptor disclosure','full-retry-eof-close',1,r=>r.path='/private/file'],
 ])test('reject '+name,()=>{const r=syntheticExportResults();mutate(payload(r,id,i));assert.throws(()=>validateExportResults(r));});
 test('reject collection, crawl, case erasure, missing field, fake cancellation success',()=>{
@@ -44,7 +45,7 @@ test('reject collection, crawl, case erasure, missing field, fake cancellation s
 function variedResults() {
   return {contractVersion:'1.2.0',host:'backend',observations:exportFixtures.scenarios.map(s=>{
     const c=syntheticContext(s);c.originMs+=123456789;c.websiteId='12345678-1234-4000-8000-000000000001';c.deliveryId='12345678-1234-4000-8000-000000000002';c.owner='observed-owner';c.other='observed-other';c.evidenceRefs=['evidence://isolated-run/source-and-control-ledger'];
-    const d=JSON.parse(Buffer.from(c.bytesBase64,'base64'));d.delivery_id=c.deliveryId;d.summary={measured:'varied'};d.report.padding=s.large?'y'.repeat(262160):'varied';
+    const d=JSON.parse(Buffer.from(c.bytesBase64,'base64'));d.delivery_id=c.deliveryId;d.summary={measured:'varied'};d.report.padding=s.large?'y'.repeat(262160):'varied';if(s.sourceCase==='exact')d.report_json=JSON.stringify(d.report,null,2)+'\n';
     c.bytesBase64=Buffer.from(JSON.stringify(d,null,1)).toString('base64');
     return {id:s.id,context:c,steps:syntheticExportTrace(s,c)};
   })};
@@ -61,5 +62,40 @@ test('CLI labels synthetic vs measured and rejects mutation',()=>{
     assert.match(run(syntheticExportResults()).stdout,/Synthetic/);
     const varied=variedResults();const ok=run(varied);assert.equal(ok.status,0,ok.stderr);assert.match(ok.stdout,/Measured context/);
     payload(varied,'full-retry-eof-close',4).sha256='f'.repeat(64);assert.notEqual(run(varied).status,0);
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
+test('denied auth, framework parsing and snapshot-owner isolation cannot return success',()=>{
+  for(const mutate of [
+    r=>trace(r,'auth-isolation')[0].result={isError:false,structuredContent:{}},
+    r=>trace(r,'invalid-offset')[1].result={isError:false,structuredContent:{}},
+    r=>payload(r,'owner-isolation',6).code='NOT_FOUND',
+    r=>payload(r,'full-retry-eof-close',6).dataBase64='AA==',
+    r=>payload(r,'full-retry-eof-close',7).code='EXPORT_EXPIRED',
+  ]) {const r=syntheticExportResults();mutate(r);assert.throws(()=>validateExportResults(r));}
+});
+test('empty EOF does not allow measured context to omit full reconstruction',()=>{
+  const r=variedResults(),o=r.observations.find(o=>o.id==='full-retry-eof-close');
+  const d=JSON.parse(Buffer.from(o.context.bytesBase64,'base64'));d.report.padding='z'.repeat(600000);d.report_json=JSON.stringify(d.report,null,2)+'\n';
+  o.context.bytesBase64=Buffer.from(JSON.stringify(d)).toString('base64');
+  o.steps=syntheticExportTrace(exportFixtures.scenarios.find(s=>s.id===o.id),o.context);
+  assert.throws(()=>validateExportResults(r),/full reconstruction/);
+});
+
+test('canonical checker rejects current skill, accepted1.1 snapshot/lock and source inventory drift',()=>{
+  const dir=mkdtempSync(join(tmpdir(),'audit-source-')),root=fileURLToPath(new URL('../',import.meta.url));
+  try {
+    for(const p of ['scripts','docs/plugin-contract','plugins/htp/skills'])cpSync(join(root,p),join(dir,p),{recursive:true});
+    mkdirSync(join(dir,'apps/api/src'),{recursive:true});cpSync(join(root,'apps/api/src/mcp.rs'),join(dir,'apps/api/src/mcp.rs'));
+    const run=()=>spawnSync(process.execPath,[join(dir,'scripts/check-plugin-contract.mjs')],{encoding:'utf8',timeout:10000});
+    const baseline=run();assert.equal(baseline.status,0,baseline.stderr);
+    for(const path of ['plugins/htp/skills/website-management/SKILL.md',
+      'docs/plugin-contract/v1.2/historical-v1.1-source/plugins/htp/skills/website-management/SKILL.md',
+      'docs/plugin-contract/v1.1/skills.lock.json']) {
+      const file=join(dir,path),old=readFileSync(file);writeFileSync(file,Buffer.concat([old,Buffer.from('drift')]));
+      assert.notEqual(run().status,0,path);writeFileSync(file,old);
+    }
+    const file=join(dir,'apps/api/src/mcp.rs');writeFileSync(file,readFileSync(file,'utf8')+'\n#[tool(description="partial")]\nasync fn website_audit_export_start_v1() {}\n');
+    assert.notEqual(run().status,0,'partial tool inventory');
   } finally {rmSync(dir,{recursive:true,force:true});}
 });

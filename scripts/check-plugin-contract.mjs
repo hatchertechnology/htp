@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { resolve, relative } from 'node:path';
 import { readJson, validateResults } from './plugin-contract.mjs';
 import { profile, validateProviderResults } from './provider-request-contract.mjs';
+import { exportProfile, validateExportResults } from './audit-export-contract.mjs';
+import { syntheticExportResults } from './audit-export-fixtures.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const dir = resolve(root, 'docs/plugin-contract/v1');
@@ -18,8 +20,20 @@ for (const f of historicalLock.files) {
   assert.ok(f.path.startsWith('plugins/htp/skills/') && !f.path.includes('..'), 'unsafe historical path');
   assert.equal(createHash('sha256').update(readFileSync(resolve(root, 'docs/plugin-contract/v1.1/historical-v1-source', f.path))).digest('hex'), f.sha256, 'historical v1 skill snapshot drift: ' + f.path);
 }
-// Current shared source uses the additive profile lock.
-const lock = readJson(resolve(root, 'docs/plugin-contract/v1.1/skills.lock.json'));
+// Accepted1.1 lock still describes its accepted source, never the current source.
+const acceptedProviderLockPath = resolve(root, 'docs/plugin-contract/v1.1/skills.lock.json');
+assert.equal(createHash('sha256').update(readFileSync(acceptedProviderLockPath)).digest('hex'), '10d37755a8fa97c887dc2a76b3390606fefc7c421c444fb69d92eea0f08613a9', 'accepted1.1 lock drift');
+const providerLock = readJson(acceptedProviderLockPath);
+const archiveRoot = resolve(root, 'docs/plugin-contract/v1.2/historical-v1.1-source');
+const archiveFiles = readdirSync(archiveRoot, { recursive:true, withFileTypes:true }).filter(f=>f.isFile())
+  .map(f=>relative(archiveRoot,resolve(f.parentPath ?? f.path,f.name))).sort();
+assert.deepEqual(archiveFiles,providerLock.files.map(f=>f.path).sort(),'accepted1.1 archive inventory');
+for (const f of providerLock.files) {
+  assert.ok(f.path.startsWith('plugins/htp/skills/') && !f.path.includes('..'), 'unsafe accepted1.1 path');
+  assert.equal(createHash('sha256').update(readFileSync(resolve(archiveRoot,f.path))).digest('hex'),f.sha256,'accepted1.1 source snapshot drift: '+f.path);
+}
+// Current source is explicitly pinned by the new1.2 lock.
+const lock = readJson(resolve(root, 'docs/plugin-contract/v1.2/skills.lock.json'));
 const providerFixtures = readJson(resolve(root, 'docs/plugin-contract/v1.1/conformance.json'));
 const ops = inventory.operations;
 assert.equal(inventory.contractVersion, '1.0.0');
@@ -28,7 +42,7 @@ assert.equal(new Set(ops.map(o => o.id)).size, ops.length);
 const source = readFileSync(resolve(root, 'apps/api/src/mcp.rs'), 'utf8');
 const actualTools = [...source.matchAll(/#\[tool\([\s\S]*?\)\]\s*(?:async )?fn (\w+)\(/g)]
   .map(m => m[1]).filter(n => !n.startsWith('hello_world')).sort();
-assert.deepEqual(ops.filter(o => o.service === 'htp').map(o => o.binding).sort(), actualTools.filter(n => !profile.operations.some(op => op.binding !== 'request_website_report' && op.binding === n)), 'HTP tool inventory drift');
+assert.deepEqual(ops.filter(o => o.service === 'htp').map(o => o.binding).sort(), actualTools.filter(n => !exportProfile.operations.some(op=>op.binding===n) && !profile.operations.some(op => op.binding !== 'request_website_report' && op.binding === n)), 'HTP tool inventory drift');
 const annotations = new Map([...source.matchAll(/#\[tool\(([\s\S]*?)\)\]\s*(?:async )?fn (\w+)\(/g)].map(m => [m[2], m[1]]));
 for (const op of ops.filter(o => o.service === 'htp')) {
   for (const [field, hint] of [['idempotency', 'idempotent_hint'], ['destructive', 'destructive_hint'], ['effect', 'read_only_hint']]) {
@@ -42,7 +56,17 @@ for (const op of ops) {
   assert.ok(['htp', 'seosmith'].includes(op.service));
   if (op.backend === 'gated') assert.ok(op.gate);
 }
-assert.equal(lock.contractVersion, profile.contractVersion);
+assert.equal(providerLock.contractVersion, profile.contractVersion);
+assert.equal(lock.contractVersion, exportProfile.contractVersion);
+assert.deepEqual(exportProfile.extends,[inventory.contractVersion,profile.contractVersion]);
+const exportTools=exportProfile.operations.map(op=>op.binding);
+assert.deepEqual(exportTools,['website_audit_export_start_v1','website_audit_export_chunk_v1','website_audit_export_close_v1']);
+const implementedExports=actualTools.filter(n=>exportTools.includes(n));
+assert.ok(implementedExports.length===0 || implementedExports.length===exportTools.length,'partial export source implementation');
+for(const op of exportProfile.operations) {
+  assert.equal(op.effect,'read');assert.equal(op.collection,false);assert.ok(op.authorization);
+}
+for(const host of ['backend','claude','codex','pi'])validateExportResults(syntheticExportResults(host));
 assert.equal(profile.extends, inventory.contractVersion);
 for (const op of profile.operations) {
   if (!annotations.has(op.binding)) continue; // not deployed/implemented in this baseline
@@ -88,3 +112,5 @@ if (args.length) {
 console.log(`Synthetic offline contract OK: ${ops.length} operations, ${fixtures.scenarios.length} scenarios, 3 host profiles; no live integration tested.`);
 
 console.log(`Provider profile ${profile.contractVersion}: ${providerFixtures.scenarios.length} synthetic lifecycle traces; implementation/release gates remain open.`);
+
+console.log(`Audit export profile ${exportProfile.contractVersion}: synthetic semantic assertions only; backend implementation/deployment and three-host current-source parity remain gated.`);

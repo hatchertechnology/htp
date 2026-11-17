@@ -16,8 +16,9 @@ const decode = s => {
   assert.equal(b.toString('base64'),s,'canonical base64'); return b;
 };
 export function syntheticContext(s) {
-  const raw=s.sourceCase==='null' ? null : s.sourceCase==='divergent' ? '{ "schema_version": 1, "old": true }\n' : '{ "schema_version": 1, "title": "é😀" }\n';
-  const detail={delivery_id:'00000000-0000-4000-8000-000000000002',scan_at:'2026-11-01T00:00:00Z',received_at:'2026-11-02T00:00:00Z',ingestion_source:'owner',summary:{count:1},report:{schema_version:1,title:'é😀',padding:s.large?'x'.repeat(262144):''},report_json:raw};
+  const report={schema_version:1,title:'é😀',padding:s.large?'x'.repeat(262144):''};
+  const raw=s.sourceCase==='null' ? null : s.sourceCase==='divergent' ? '{ "schema_version": 1, "old": true }\n' : JSON.stringify(report,null,1)+'\n';
+  const detail={delivery_id:'00000000-0000-4000-8000-000000000002',scan_at:'2026-11-01T00:00:00Z',received_at:'2026-11-02T00:00:00Z',ingestion_source:'owner',summary:{count:1},report,report_json:raw};
   return {evidenceRefs:['synthetic://audit-export/'+s.id],originMs:Date.parse('2026-11-16T00:00:00Z'),websiteId:'00000000-0000-4000-8000-000000000001',deliveryId:detail.delivery_id,owner:'owner-fixture',other:'other-fixture',bytesBase64:Buffer.from(JSON.stringify(detail)).toString('base64')};
 }
 export function validateExportTrace(s, observations, context=syntheticContext(s)) {
@@ -36,8 +37,10 @@ export function validateExportTrace(s, observations, context=syntheticContext(s)
   if(detail.report_json!==null) {
     assert.equal(typeof detail.report_json,'string');
     const raw=JSON.parse(detail.report_json);
-    assert.equal(JSON.stringify(raw)!==JSON.stringify(detail.report),true,'raw/stored syntax or value distinction must remain observable');
-    if(s.sourceCase==='divergent') assert.notDeepEqual(raw.title,detail.report.title,'legacy divergence case retained');
+    if(s.sourceCase==='exact') {
+      assert.deepEqual(raw,detail.report,'matching raw and stored value case retained');
+      assert.notEqual(detail.report_json,JSON.stringify(raw),'original raw syntax distinction retained');
+    } else assert.notDeepEqual(raw,detail.report,'legacy divergence case retained');
   }
   assert.equal(bytes.length>262144,s.large,'chunk boundary case retained');
   assert.equal(observations.length,s.steps.length,'step coverage');
@@ -58,9 +61,13 @@ export function validateExportTrace(s, observations, context=syntheticContext(s)
       continue;
     }
     const subject=step.subject==='other'?context.other:context.owner;
-    const allowed=subject===owner && exists && !step.website && !step.delivery;
+    if(['missing','anonymous','invalid'].includes(step.subject)) {
+      fields(o.result,['httpStatus']);assert.equal(o.result.httpStatus,401,'authentication middleware denial');continue;
+    }
+    if(step.parseInvalid) {fields(o.result,['rpcError']);assert.equal(o.result.rpcError,-32602,'framework input rejection');continue;}
+    const allowed=subject===owner && exists && !renamed && !step.website && !step.delivery;
     const state=active && snapshots.get(active);
-    const expired=!state || now>=state.hard || now>=state.idle || state.closed || state.generation!==generation;
+    const expired=!state || now>=state.hard || now>=state.idle || state.closed || state.generation!==generation || step.exportId==='unknown' || state.owner!==subject;
     let error=null;
     if(!allowed)error='NOT_FOUND';
     else if(step.action==='detail' && s.large)error='EXPORT_REQUIRED';
@@ -83,7 +90,7 @@ export function validateExportTrace(s, observations, context=syntheticContext(s)
     assert.equal(o.result.isError,false,'success');
     if(step.action==='detail') {assert.deepEqual(r,detail,'unchanged complete small inline result');continue;}
     if(step.action==='close') {
-      fields(r,exportProfile.closeFields);assert.deepEqual(r,{version:1,closed:true});if(state)state.closed=true;continue;
+      fields(r,exportProfile.closeFields);assert.deepEqual(r,{version:1,closed:true});if(state && !step.exportId && state.owner===subject)state.closed=true;continue;
     }
     assert.equal(r.version,1);
     if(step.action==='start') {
@@ -96,7 +103,7 @@ export function validateExportTrace(s, observations, context=syntheticContext(s)
       else {
         assert.ok(!generations.has(r.exportId),'never reuse old snapshot identity');
         assert.equal(hard,now+7200000,'fixed two-hour hard deadline');assert.equal(idle,now+900000,'initial idle deadline');
-        snapshots.set(r.exportId,{hard,idle,closed:false,generation,ranges:[]});generations.set(r.exportId,true);active=r.exportId;
+        snapshots.set(r.exportId,{hard,idle,closed:false,generation,owner:subject,ranges:[]});generations.set(r.exportId,true);active=r.exportId;
       }
     } else {
       assert.equal(step.action,'chunk');fields(r,exportProfile.chunkFields);
@@ -107,7 +114,7 @@ export function validateExportTrace(s, observations, context=syntheticContext(s)
       assert.equal(r.byteLength,bytes.length);assert.equal(r.sha256,hash,'immutable snapshot hash');
       assert.equal(instant(r.idleExpiresAt),Math.min(now+900000,state.hard),'idle refresh bounded by hard lifetime');state.idle=instant(r.idleExpiresAt);
       state.ranges.push({offset,bytes:chunk});
-      if(r.eof && offset!==bytes.length) {
+      if(r.eof) {
         let pos=0;const parts=[];
         for(const p of [...state.ranges].sort((a,b)=>a.offset-b.offset)) {if(p.offset===pos){parts.push(p.bytes);pos+=p.bytes.length;}}
         assert.equal(pos,bytes.length,'full reconstruction before completed retrieval');

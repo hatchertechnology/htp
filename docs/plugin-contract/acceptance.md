@@ -81,3 +81,22 @@ backend acceptance or production activation. Keep the provider checklist open
 until exact-head backend/MCP tests and review evidence satisfy it. Host release
 gates, unrelated backend issues and the coordinator's issue-closure ownership
 remain as stated above.
+
+
+## Audit export profile1.2 definition — implementation and activation gated
+
+The additive [1.2 profile](v1.2/README.md) defines full-detail start/chunk/close,
+raw/null handling, hash/offset/reconstruction, fresh owner/delivery checks,
+expiry/capacity/cancellation and explicit EXPORT_REQUIRED migration for unsafe
+large inline results. Small inline behavior remains unchanged. No unchanged
+large-client compatibility is claimed. The current1.2 source lock and accepted1.1
+source archive let both histories be verified without editing their old pins.
+
+Offline semantic/mutation tests validate synthetic observations and externally
+supplied context against independent source bytes and canonical control events.
+They do not prove context provenance, actual cleanup/no collection, live auth,
+memory/storage/routing or feature availability. Backend export implementation,
+exact-head reviews, 256MiB/concurrency/failure evidence, deployed endpoint tests
+and schema discovery remain required. Three host source/readiness companions
+must follow canonical merge; none is supplied here. Existing v1/accepted1.1 host
+pins remain historical evidence. Full #34 and runtime gates are not closed.
