@@ -41,7 +41,13 @@ For each relevant FQDN:
    profile never changed outside HTP's observation history.
 4. Read `website_audit_history` for Seosmith technical SEO runs and use
    `website_audit_detail` for complete findings. Follow both scan timestamp and
-   delivery UUID cursors. No runs means no saved audit, not a passing website.
+   delivery UUID cursors. If detail returns `EXPORT_REQUIRED`, follow the
+   [complete audit export workflow](../website-management/SKILL.md#complete-audit-export-contract-120-activation-gated)
+   using discovered deployed export-v1 tools. Reconstruct and verify full bytes,
+   length and SHA before interpreting the report. Missing export support or a
+   host unable to verify full bytes is a coverage limitation, not a passing
+   audit. Keep retained raw/null and stored report distinctions visible. No runs
+   means no saved audit, not a passing website.
 5. Read `website_repository_history` to correlate changes with traffic, search,
    conversions or health. Supply explicit UTC date ranges of up to 366 inclusive
    days; split longer periods into contiguous ranges. Follow commit `before_id`
