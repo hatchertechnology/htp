@@ -1815,12 +1815,32 @@ async fn repository_issues_check_owner_and_handle_missing_binding() {
     }
 }
 
+// Snapshot success requires disk-backed temporary storage. Avoid mutating the
+// process-wide TMPDIR while other integration tests are running in parallel.
+fn export_test_storage_available() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        tempfile::tempfile()
+            .ok()
+            .and_then(|file| rustix::fs::fstatfs(&file).ok())
+            .is_some_and(|stats| stats.f_type != 0x0102_1994 && stats.f_type != 0x8584_58f6)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn audit_export_mcp_reconstructs_full_snapshot_and_checks_revocation() {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use sha2::{Digest as _, Sha256};
     use std::sync::atomic::AtomicBool;
+    if !export_test_storage_available() {
+        let _ = std::io::Write::write_all(&mut std::io::stderr(), b"SKIP audit_export_mcp_reconstructs_full_snapshot_and_checks_revocation: disk-backed TMPDIR required; rerun with TMPDIR=/var/tmp (or another verified disk directory)\n");
+        return;
+    }
     let allowed = Arc::new(AtomicBool::new(true));
     let access = allowed.clone();
     let detail_calls = Arc::new(AtomicUsize::new(0));
@@ -2073,6 +2093,10 @@ async fn profile_large_audit_export_mcp() {
 #[tokio::test]
 async fn audit_export_legacy_null_preserves_stored_report() {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
+    if !export_test_storage_available() {
+        let _ = std::io::Write::write_all(&mut std::io::stderr(), b"SKIP audit_export_legacy_null_preserves_stored_report: disk-backed TMPDIR required; rerun with TMPDIR=/var/tmp (or another verified disk directory)\n");
+        return;
+    }
     let expected = json!({"delivery_id":uuid::Uuid::from_u128(2),"summary":{"legacy":true},"report":{"schema_version":1,"retained":true},"report_json":null});
     let detail = expected.clone();
     let routes = Router::new()
@@ -2191,4 +2215,53 @@ async fn profile_concurrent_inline_mcp() {
             130_001
         );
     }
+}
+
+#[tokio::test]
+#[ignore = "local 10-second upstream timeout diagnostic"]
+async fn profile_slow_audit_export_fails_without_snapshot() {
+    use futures_util::StreamExt as _;
+    assert!(
+        export_test_storage_available(),
+        "diagnostic requires a verified disk-backed TMPDIR"
+    );
+    let routes = Router::new()
+        .route(
+            "/rest/v1/rpc/seosmith_audit_export_access",
+            axum::routing::post(|| async { Json(true) }),
+        )
+        .route(
+            "/rest/v1/rpc/seosmith_audit_detail",
+            axum::routing::post(|| async {
+                let first = futures_util::stream::once(async {
+                    Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"{\"report\":"))
+                });
+                let second = futures_util::stream::once(async {
+                    tokio::time::sleep(std::time::Duration::from_secs(11)).await;
+                    Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"{}}"))
+                });
+                Body::from_stream(first.chain(second))
+            }),
+        );
+    let auth = TestAuth::with_routes(routes).await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let start = std::time::Instant::now();
+    let result = response_json(
+        research_mcp_call(
+            &auth,
+            Some(&token),
+            "website_audit_export_start_v1",
+            json!({"website_id":uuid::Uuid::from_u128(1),"delivery_id":uuid::Uuid::from_u128(2)}),
+        )
+        .await,
+    )
+    .await;
+    eprintln!("SLOW_EXPORT elapsed_ms={}", start.elapsed().as_millis());
+    assert_eq!(result["result"]["isError"], true);
+    assert_eq!(result["result"]["structuredContent"]["code"], "UNAVAILABLE");
+    assert!(
+        result["result"]["structuredContent"]
+            .get("exportId")
+            .is_none()
+    );
 }

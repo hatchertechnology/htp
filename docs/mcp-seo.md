@@ -265,7 +265,23 @@ writable disk-backed filesystem. Verify that filesystem and instance routing
 before deployment. Multiple nonsticky instances can lose snapshot affinity;
 clients must restart the export rather than combine partial snapshots. This is
 an explicit large-detail workflow change, not transparent compatibility for an
-unchanged inline caller.
+unchanged inline caller. The four snapshots and 512 MiB are shared across all
+owners; one owner can occupy the available slots. Snapshot preparation, chunk
+reads, close and expiry cleanup are serialized by a process-wide lock, so a
+slow export can delay other export operations. These are availability limits,
+not limits on the stored report format.
+
+The upstream detail request has a 10-second total deadline, including the
+streamed response body. If the transfer does not finish within that deadline,
+export returns `UNAVAILABLE` without a ready snapshot. Local loopback profiles
+do not establish that a large PostgREST response can arrive in time over the
+production network; verify that transfer separately before relying on export.
+
+Export happy-path tests require a disk-backed `TMPDIR`. Tests that cannot find
+one print a skip diagnostic and return without exercising snapshot creation;
+run `TMPDIR=/var/tmp cargo test -p htp-api -- --nocapture` only after verifying
+that `/var/tmp` is disk-backed, or select another verified disk directory.
+The ignored memory and timeout profiles also require disk-backed storage.
 
 See the packaged [management workflow](../plugins/htp/skills/website-management/SKILL.md)
 for report kinds and source formats. Reads of saved data do not fetch providers;

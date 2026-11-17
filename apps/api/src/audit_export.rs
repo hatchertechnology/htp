@@ -485,6 +485,10 @@ mod tests {
     }
     #[tokio::test]
     async fn malformed_or_truncated_json_never_produces_ready_snapshot() {
+        if !tempfile::tempfile().is_ok_and(|file| disk_backed(&file)) {
+            let _ = std::io::Write::write_all(&mut std::io::stderr(), b"SKIP malformed_or_truncated_json_never_produces_ready_snapshot: disk-backed TMPDIR required; rerun with TMPDIR=/var/tmp (or another verified disk directory)\n");
+            return;
+        }
         let (store, server) = access_store().await;
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer test".parse().unwrap());
@@ -521,6 +525,10 @@ mod tests {
     }
     #[tokio::test]
     async fn capacity_failure_never_publishes_partial_snapshot() {
+        if !tempfile::tempfile().is_ok_and(|file| disk_backed(&file)) {
+            let _ = std::io::Write::write_all(&mut std::io::stderr(), b"SKIP capacity_failure_never_publishes_partial_snapshot: disk-backed TMPDIR required; rerun with TMPDIR=/var/tmp (or another verified disk directory)\n");
+            return;
+        }
         let (store, server) = access_store().await;
         let management = Router::new().route(
             "/{*path}",
@@ -553,6 +561,10 @@ mod tests {
     }
     #[tokio::test]
     async fn cancelled_preparation_releases_lock_and_never_publishes_snapshot() {
+        if !tempfile::tempfile().is_ok_and(|file| disk_backed(&file)) {
+            let _ = std::io::Write::write_all(&mut std::io::stderr(), b"SKIP cancelled_preparation_releases_lock_and_never_publishes_snapshot: disk-backed TMPDIR required; rerun with TMPDIR=/var/tmp (or another verified disk directory)\n");
+            return;
+        }
         let (store, server) = access_store().await;
         let notified = Arc::new(tokio::sync::Notify::new());
         let signal = notified.clone();

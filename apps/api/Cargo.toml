@@ -25,7 +25,6 @@ tower.workspace = true
 rustix = { version = "1", features = ["fs"] }
 
 [dev-dependencies]
-sha2 = "0.10"
 rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }
 
 [lints]
