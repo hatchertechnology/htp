@@ -1,6 +1,6 @@
 //! Authenticated website persistence through Supabase's user-scoped Data API.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::{
     Json, Router,
@@ -73,6 +73,7 @@ impl WebsiteStore {
         let authorization = headers
             .get(header::AUTHORIZATION)
             .ok_or(WebsiteError::Unauthorized)?;
+        let started = Instant::now();
         let response = self
             .client
             .post(format!(
@@ -85,7 +86,19 @@ impl WebsiteStore {
             .json(&body)
             .send()
             .await
-            .map_err(|_| WebsiteError::Unavailable)?;
+            .map_err(|error| {
+                if name == "import_seosmith_audit" {
+                    log_ingest_failure("owner", started, &error);
+                }
+                WebsiteError::Unavailable
+            })?;
+        if name == "import_seosmith_audit" && !response.status().is_success() {
+            eprintln!(
+                "seosmith owner upstream status={} elapsed_ms={}",
+                response.status().as_u16(),
+                started.elapsed().as_millis()
+            );
+        }
         match response.status() {
             StatusCode::UNAUTHORIZED => return Err(WebsiteError::Unauthorized),
             StatusCode::FORBIDDEN => return Err(WebsiteError::Forbidden),
@@ -107,7 +120,83 @@ impl WebsiteStore {
             status if !status.is_success() => return Err(WebsiteError::Unavailable),
             _ => {}
         }
-        response.json().await.map_err(|_| WebsiteError::Unavailable)
+        response.json().await.map_err(|error| {
+            if name == "import_seosmith_audit" {
+                log_ingest_failure("owner", started, &error);
+            }
+            WebsiteError::Unavailable
+        })
+    }
+
+    /// Forward detail JSON without building a heap object for every report token.
+    pub(crate) async fn seosmith_detail(
+        &self,
+        headers: &HeaderMap,
+        website_id: Uuid,
+        delivery_id: Uuid,
+    ) -> Result<Option<Vec<u8>>, WebsiteError> {
+        // The RPC returns both the parsed report and its exact raw JSON string.
+        // Bound the upstream response independently of the 16 MiB raw report cap.
+        const MAX_DETAIL_BYTES: usize = 96 * 1024 * 1024;
+        let authorization = headers
+            .get(header::AUTHORIZATION)
+            .ok_or(WebsiteError::Unauthorized)?;
+        let mut response = self
+            .client
+            .post(format!(
+                "{}/rpc/seosmith_audit_detail",
+                self.url.trim_end_matches("/websites")
+            ))
+            .header("apikey", &self.publishable_key)
+            .header(header::AUTHORIZATION, authorization)
+            .timeout(Duration::from_secs(10))
+            .json(&json!({"p_website_id":website_id,"p_delivery_id":delivery_id}))
+            .send()
+            .await
+            .map_err(|_| WebsiteError::Unavailable)?;
+        match response.status() {
+            StatusCode::UNAUTHORIZED => return Err(WebsiteError::Unauthorized),
+            StatusCode::FORBIDDEN => return Err(WebsiteError::Forbidden),
+            StatusCode::BAD_REQUEST => {
+                return Err(WebsiteError::Invalid(
+                    "Invalid report source, range, or location binding.",
+                ));
+            }
+            status if !status.is_success() => return Err(WebsiteError::Unavailable),
+            _ => {}
+        }
+        if response
+            .content_length()
+            .is_some_and(|n| n > MAX_DETAIL_BYTES as u64)
+        {
+            return Err(WebsiteError::Unavailable);
+        }
+        let capacity = usize::try_from(response.content_length().unwrap_or(0))
+            .map_err(|_| WebsiteError::Unavailable)?;
+        let mut bytes = Vec::with_capacity(capacity);
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| WebsiteError::Unavailable)?
+        {
+            if chunk.len() > MAX_DETAIL_BYTES - bytes.len() {
+                return Err(WebsiteError::Unavailable);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        // Preserve the old RPC's malformed-JSON failure and null-to-404 behavior.
+        serde_json::from_slice::<serde::de::IgnoredAny>(&bytes)
+            .map_err(|_| WebsiteError::Unavailable)?;
+        if bytes
+            .iter()
+            .copied()
+            .filter(|b| !b.is_ascii_whitespace())
+            .eq(b"null".iter().copied())
+        {
+            Ok(None)
+        } else {
+            Ok(Some(bytes))
+        }
     }
 
     /// Read installed receiver support without advertising uninstalled migrations.
@@ -137,6 +226,7 @@ impl WebsiteStore {
             .timeout(Duration::from_secs(20))
             .build()
             .map_err(|_| WebsiteError::Unavailable)?;
+        let started = Instant::now();
         let response = client
             .post(format!(
                 "{}/rpc/ingest_seosmith_audit",
@@ -146,7 +236,17 @@ impl WebsiteStore {
             .json(&body)
             .send()
             .await
-            .map_err(|_| WebsiteError::Unavailable)?;
+            .map_err(|error| {
+                log_ingest_failure("worker", started, &error);
+                WebsiteError::Unavailable
+            })?;
+        if !response.status().is_success() {
+            eprintln!(
+                "seosmith worker upstream status={} elapsed_ms={}",
+                response.status().as_u16(),
+                started.elapsed().as_millis()
+            );
+        }
         match response.status() {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
                 return Err(WebsiteError::Unauthorized);
@@ -159,7 +259,10 @@ impl WebsiteStore {
             s if !s.is_success() => return Err(WebsiteError::Unavailable),
             _ => {}
         }
-        response.json().await.map_err(|_| WebsiteError::Unavailable)
+        response.json().await.map_err(|error| {
+            log_ingest_failure("worker", started, &error);
+            WebsiteError::Unavailable
+        })
     }
 
     pub(crate) async fn find(
@@ -384,4 +487,22 @@ impl IntoResponse for WebsiteError {
         };
         (status, Json(json!({"error": message}))).into_response()
     }
+}
+
+fn log_ingest_failure(path: &str, started: Instant, error: &reqwest::Error) {
+    let class = if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connect"
+    } else if error.is_decode() {
+        "decode"
+    } else if error.is_body() {
+        "body"
+    } else {
+        "transport"
+    };
+    eprintln!(
+        "seosmith {path} upstream error={class} elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
 }
