@@ -557,6 +557,68 @@ mod tests {
         server.abort();
     }
     #[tokio::test]
+    async fn upstream_server_error_stays_sanitized_for_worker_and_owner() {
+        let rpc = Router::new()
+            .route(
+                "/rest/v1/rpc/ingest_seosmith_audit",
+                post(|| async {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({"code":"57014","message":"synthetic private detail"})),
+                    )
+                }),
+            )
+            .route(
+                "/rest/v1/rpc/import_seosmith_audit",
+                post(|| async {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({"code":"57014","message":"synthetic private detail"})),
+                    )
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, rpc).await.unwrap() });
+        let store = WebsiteStore::new(&url, "publishable");
+        let id = "00000000-0000-0000-0000-000000000001";
+        let worker = ingest_router(store.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/integrations/seosmith/audits")
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", id)
+                    .header("authorization", format!("Bearer {}", "x".repeat(32)))
+                    .body(Body::from(
+                        json!({"delivery_id":id,"sha256":"a".repeat(64),"report_json":"{}"})
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let owner = read_router(store)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/websites/{id}/seo/audits/import"))
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer synthetic")
+                    .body(Body::from(r#"{"report_json":"{}"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        for response in [worker, owner] {
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let body = to_bytes(response.into_body(), 4096).await.unwrap();
+            assert!(!String::from_utf8_lossy(&body).contains("private"));
+            assert!(!String::from_utf8_lossy(&body).contains("57014"));
+        }
+        server.abort();
+    }
+    #[tokio::test]
     async fn database_rejection_never_becomes_a_successful_receipt() {
         let rpc = Router::new().route(
             "/rest/v1/rpc/ingest_seosmith_audit",
