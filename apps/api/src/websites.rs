@@ -76,6 +76,14 @@ impl WebsiteStore {
             .get(header::AUTHORIZATION)
             .ok_or(WebsiteError::Unauthorized)?;
         let started = Instant::now();
+        // The two Seosmith ingest RPCs have a bounded 20s database statement
+        // budget (migration 20261117120000); their client deadline must stay
+        // above it. Every other RPC keeps the original 10s deadline.
+        let timeout = if name == "import_seosmith_audit" {
+            Duration::from_secs(25)
+        } else {
+            Duration::from_secs(10)
+        };
         let response = self
             .client
             .post(format!(
@@ -84,7 +92,7 @@ impl WebsiteStore {
             ))
             .header("apikey", &self.publishable_key)
             .header(header::AUTHORIZATION, authorization)
-            .timeout(Duration::from_secs(10))
+            .timeout(timeout)
             .json(&body)
             .send()
             .await
@@ -231,7 +239,8 @@ impl WebsiteStore {
     pub(crate) async fn ingest_seosmith(&self, body: Value) -> Result<Value, WebsiteError> {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(20))
+            // Above the bounded 20s database budget for ingest_seosmith_audit.
+            .timeout(Duration::from_secs(25))
             .build()
             .map_err(|_| WebsiteError::Unavailable)?;
         let started = Instant::now();

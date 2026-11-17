@@ -1,0 +1,32 @@
+Bounded ingest budget correction — local disposable PG17.11/PostgREST14.18 evidence
+Synthetic fixtures only; no hosted database contacted.
+
+Hosted symptom (recorded by integration, not reproduced here): valid near-limit
+token-heavy worker first insert returned HTTP503 with correlated upstream HTTP500
+database_code=57014 at elapsed_ms=9561, zero rows.
+
+Baseline (before this correction), PG_CPUS=0.2, function statement_timeout=8s:
+  worker token-heavy: http=500 total=8.372155 code=57014 accepted=None
+  import token-heavy: http=500 total=8.450574 code=57014 accepted=None
+True completion time with a 90s budget, PG_CPUS=0.2:
+  worker token-heavy: http=200 total=13.573880 accepted=True
+  import token-heavy: http=200 total=13.839194 accepted=True
+  worker string-heavy: http=200 total=4.925138 accepted=True
+
+After this correction (migration 20261117120000 sets both ingest RPCs to 20s),
+committed migrations applied unmodified, PG_CPUS=0.2:
+  proconfig import_seosmith_audit: {search_path="",statement_timeout=20s}
+  proconfig ingest_seosmith_audit: {search_path="",statement_timeout=20s}
+  worker token-heavy: http=200 total=15.579591 accepted=True
+  import token-heavy: http=200 total=16.244126 accepted=True
+  worker string-heavy: http=200 total=5.894498 accepted=True
+  import string-heavy: http=200 total=4.633825 accepted=True
+  stored rows=4, max raw_report_json octet_length=15636656
+
+PostgREST hoists the function statement_timeout before the main RPC query, so the
+extension is scoped to these two functions. Role defaults (anon 3s, authenticated
+8s), validation, caps, the immutable-audit trigger, authorization and stored bytes
+are unchanged. API client deadlines are 25s (apps/api/src/websites.rs), strictly
+above the 20s database budget. Hosted effective hoisting, pooler limits and actual
+production CPU still require integration verification; local timings are not
+production acceptance.
