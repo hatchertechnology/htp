@@ -4,11 +4,13 @@ use std::time::{Duration, Instant};
 
 use axum::{
     Json, Router,
+    body::Body,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
+use futures_util::StreamExt;
 use htp_shared::{Website, WebsiteInput, WebsitePage, normalize_fqdn};
 use reqwest::Method;
 use serde::Deserialize;
@@ -134,10 +136,7 @@ impl WebsiteStore {
         headers: &HeaderMap,
         website_id: Uuid,
         delivery_id: Uuid,
-    ) -> Result<Option<Vec<u8>>, WebsiteError> {
-        // The RPC returns both the parsed report and its exact raw JSON string.
-        // Bound the upstream response independently of the 16 MiB raw report cap.
-        const MAX_DETAIL_BYTES: usize = 96 * 1024 * 1024;
+    ) -> Result<Option<Body>, WebsiteError> {
         let authorization = headers
             .get(header::AUTHORIZATION)
             .ok_or(WebsiteError::Unauthorized)?;
@@ -165,37 +164,41 @@ impl WebsiteStore {
             status if !status.is_success() => return Err(WebsiteError::Unavailable),
             _ => {}
         }
-        if response
-            .content_length()
-            .is_some_and(|n| n > MAX_DETAIL_BYTES as u64)
-        {
-            return Err(WebsiteError::Unavailable);
-        }
-        let capacity = usize::try_from(response.content_length().unwrap_or(0))
-            .map_err(|_| WebsiteError::Unavailable)?;
-        let mut bytes = Vec::with_capacity(capacity);
+        // PostgREST returns a JSON object or null. Skip JSON whitespace without
+        // accumulating it, then stream the object with downstream backpressure.
+        // After headers are committed, upstream errors terminate the body stream.
+        let mut null_pos = 0;
         while let Some(chunk) = response
             .chunk()
             .await
             .map_err(|_| WebsiteError::Unavailable)?
         {
-            if chunk.len() > MAX_DETAIL_BYTES - bytes.len() {
-                return Err(WebsiteError::Unavailable);
+            let mut index = 0;
+            while index < chunk.len() {
+                let byte = chunk[index];
+                if null_pos == 0 && matches!(byte, b' ' | b'\t' | b'\r' | b'\n') {
+                    index += 1;
+                    continue;
+                }
+                if null_pos == 0 && byte == b'{' {
+                    let prefix = chunk.slice(index..);
+                    let stream =
+                        futures_util::stream::once(async move { Ok::<_, reqwest::Error>(prefix) })
+                            .chain(response.bytes_stream());
+                    return Ok(Some(Body::from_stream(stream)));
+                }
+                if null_pos < 4 && byte == b"null"[null_pos] {
+                    null_pos += 1;
+                } else if null_pos != 4 || !matches!(byte, b' ' | b'\t' | b'\r' | b'\n') {
+                    return Err(WebsiteError::Unavailable);
+                }
+                index += 1;
             }
-            bytes.extend_from_slice(&chunk);
         }
-        // Preserve the old RPC's malformed-JSON failure and null-to-404 behavior.
-        serde_json::from_slice::<serde::de::IgnoredAny>(&bytes)
-            .map_err(|_| WebsiteError::Unavailable)?;
-        if bytes
-            .iter()
-            .copied()
-            .filter(|b| !b.is_ascii_whitespace())
-            .eq(b"null".iter().copied())
-        {
+        if null_pos == 4 {
             Ok(None)
         } else {
-            Ok(Some(bytes))
+            Err(WebsiteError::Unavailable)
         }
     }
 

@@ -18,15 +18,21 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 root = Path(__file__).resolve().parents[4]
 report = json.loads((root / 'supabase/tests/fixtures/contracts/v2-complete.json').read_text())
-# Unknown fields are allowed by the receiver. Many small tokens stress the
-# parsed JSON tree rather than only exercising one large scalar allocation.
-report['padding'] = [0] * 7_590_000
-raw = json.dumps(report, separators=(',', ':'))
-assert 15_000_000 < len(raw.encode()) < 16 * 1024 * 1024
+base = json.dumps(report, separators=(',', ':'))
+expanded = '--expanded' in sys.argv
+if expanded:
+    # PostgreSQL jsonb expands each exponent when emitting the report value.
+    raw = base[:-1] + ',"padding":[' + '1e100,' * 999_999 + '1e100]}'
+    parsed_report = base[:-1] + ',"padding":[' + ('1' + '0' * 100 + ',') * 999_999 + '1' + '0' * 100 + ']}'
+else:
+    report['padding'] = [0] * 7_590_000
+    raw = json.dumps(report, separators=(',', ':'))
+    parsed_report = raw
+assert 6_000_000 < len(raw.encode()) < 16 * 1024 * 1024
 sha = hashlib.sha256(raw.encode()).hexdigest()
 id_ = '00000000-0000-0000-0000-000000000002'
-detail = json.dumps({'delivery_id': id_, 'report': report, 'report_json': raw}, separators=(',', ':')).encode()
-del report
+detail = ('{"delivery_id":' + json.dumps(id_) + ',"report":' + parsed_report + ',"report_json":' + json.dumps(raw) + '}').encode()
+del report, parsed_report
 
 class Mock(BaseHTTPRequestHandler):
     delay = 0
@@ -56,7 +62,10 @@ with tempfile.TemporaryDirectory(prefix='htp-large-profile-') as tmp:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     env = os.environ.copy()
     env.update(HTP_PROFILE_UPSTREAM=f'http://127.0.0.1:{server.server_port}', HTP_PROFILE_ENVELOPE=str(envelope), HTP_PROFILE_SHA=sha)
+    env['HTP_PROFILE_DETAIL_SHA'] = hashlib.sha256(detail).hexdigest()
     binary = str(Path(sys.argv[1]).resolve())
+    if expanded:
+        env['HTP_PROFILE_MIN_DETAIL'] = '100000000'
     def run(test):
         subprocess.run(['systemd-run', '--user', '--scope', '-p', 'MemoryMax=256M', '-p', 'CPUQuota=100%', '/usr/bin/time', '-v', binary, '--ignored', '--exact', f'seosmith::tests::{test}', '--nocapture'], env=env, check=True)
     run('profile_detail_http')
