@@ -94,6 +94,11 @@ impl WebsiteStore {
                 }
                 WebsiteError::Unavailable
             })?;
+        if name == "import_seosmith_audit" && response.status() == StatusCode::INTERNAL_SERVER_ERROR
+        {
+            log_ingest_server_error("owner", started, response).await;
+            return Err(WebsiteError::Unavailable);
+        }
         if name == "import_seosmith_audit" && !response.status().is_success() {
             eprintln!(
                 "seosmith owner upstream status={} elapsed_ms={}",
@@ -243,6 +248,10 @@ impl WebsiteStore {
                 log_ingest_failure("worker", started, &error);
                 WebsiteError::Unavailable
             })?;
+        if response.status() == StatusCode::INTERNAL_SERVER_ERROR {
+            log_ingest_server_error("worker", started, response).await;
+            return Err(WebsiteError::Unavailable);
+        }
         if !response.status().is_success() {
             eprintln!(
                 "seosmith worker upstream status={} elapsed_ms={}",
@@ -508,4 +517,87 @@ fn log_ingest_failure(path: &str, started: Instant, error: &reqwest::Error) {
         "seosmith {path} upstream error={class} elapsed_ms={}",
         started.elapsed().as_millis()
     );
+}
+
+// PostgREST error bodies may contain database detail or client data. Only emit a
+// fixed label for the known SQLSTATE; never log the body, message, URL, or token.
+async fn log_ingest_server_error(path: &str, started: Instant, mut response: reqwest::Response) {
+    const MAX_ERROR_BYTES: usize = 4096;
+    let received = tokio::time::timeout(Duration::from_millis(250), async {
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.ok()? {
+            if chunk.len() > MAX_ERROR_BYTES - body.len() {
+                return None;
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Some(body)
+    })
+    .await
+    .ok()
+    .flatten();
+    let class = received
+        .as_deref()
+        .and_then(postgrest_error_class)
+        .unwrap_or("other_or_unavailable");
+    eprintln!(
+        "seosmith {path} upstream status=500 database_code={class} elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
+}
+
+fn postgrest_error_class(body: &[u8]) -> Option<&'static str> {
+    let value: Value = serde_json::from_slice(body).ok()?;
+    match value.get("code").and_then(Value::as_str) {
+        Some("57014") => Some("57014"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod ingest_error_tests {
+    use super::postgrest_error_class;
+    #[tokio::test]
+    async fn diagnostic_does_not_wait_for_slow_error_body() {
+        use axum::{Router, body::Body, http::StatusCode, routing::get};
+        use futures_util::{StreamExt, stream};
+        use std::{
+            io,
+            time::{Duration, Instant},
+        };
+        let app = Router::new().route(
+            "/",
+            get(|| async {
+                let body = Body::from_stream(
+                    stream::iter(vec![Ok::<_, io::Error>(&b"{"[..]), Ok(&b"}"[..])])
+                        .enumerate()
+                        .then(|(index, chunk)| async move {
+                            if index == 1 {
+                                tokio::time::sleep(Duration::from_secs(2)).await;
+                            }
+                            chunk
+                        }),
+                );
+                (StatusCode::INTERNAL_SERVER_ERROR, body)
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let response = reqwest::get(url).await.unwrap();
+        let started = Instant::now();
+        super::log_ingest_server_error("worker", started, response).await;
+        assert!(started.elapsed() < Duration::from_secs(1));
+        server.abort();
+    }
+
+    #[test]
+    fn only_explicitly_allowlisted_database_codes_are_reported() {
+        assert_eq!(
+            postgrest_error_class(br#"{"code":"57014","message":"private"}"#),
+            Some("57014")
+        );
+        assert_eq!(postgrest_error_class(br#"{"code":"private"}"#), None);
+        assert_eq!(postgrest_error_class(b"not json"), None);
+    }
 }
