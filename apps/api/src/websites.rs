@@ -1,14 +1,16 @@
 //! Authenticated website persistence through Supabase's user-scoped Data API.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::{
     Json, Router,
+    body::Body,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
+use futures_util::StreamExt;
 use htp_shared::{Website, WebsiteInput, WebsitePage, normalize_fqdn};
 use reqwest::Method;
 use serde::Deserialize;
@@ -73,6 +75,7 @@ impl WebsiteStore {
         let authorization = headers
             .get(header::AUTHORIZATION)
             .ok_or(WebsiteError::Unauthorized)?;
+        let started = Instant::now();
         let response = self
             .client
             .post(format!(
@@ -85,7 +88,19 @@ impl WebsiteStore {
             .json(&body)
             .send()
             .await
-            .map_err(|_| WebsiteError::Unavailable)?;
+            .map_err(|error| {
+                if name == "import_seosmith_audit" {
+                    log_ingest_failure("owner", started, &error);
+                }
+                WebsiteError::Unavailable
+            })?;
+        if name == "import_seosmith_audit" && !response.status().is_success() {
+            eprintln!(
+                "seosmith owner upstream status={} elapsed_ms={}",
+                response.status().as_u16(),
+                started.elapsed().as_millis()
+            );
+        }
         match response.status() {
             StatusCode::UNAUTHORIZED => return Err(WebsiteError::Unauthorized),
             StatusCode::FORBIDDEN => return Err(WebsiteError::Forbidden),
@@ -107,7 +122,84 @@ impl WebsiteStore {
             status if !status.is_success() => return Err(WebsiteError::Unavailable),
             _ => {}
         }
-        response.json().await.map_err(|_| WebsiteError::Unavailable)
+        response.json().await.map_err(|error| {
+            if name == "import_seosmith_audit" {
+                log_ingest_failure("owner", started, &error);
+            }
+            WebsiteError::Unavailable
+        })
+    }
+
+    /// Forward detail JSON without building a heap object for every report token.
+    pub(crate) async fn seosmith_detail(
+        &self,
+        headers: &HeaderMap,
+        website_id: Uuid,
+        delivery_id: Uuid,
+    ) -> Result<Option<Body>, WebsiteError> {
+        let authorization = headers
+            .get(header::AUTHORIZATION)
+            .ok_or(WebsiteError::Unauthorized)?;
+        let mut response = self
+            .client
+            .post(format!(
+                "{}/rpc/seosmith_audit_detail",
+                self.url.trim_end_matches("/websites")
+            ))
+            .header("apikey", &self.publishable_key)
+            .header(header::AUTHORIZATION, authorization)
+            .timeout(Duration::from_secs(10))
+            .json(&json!({"p_website_id":website_id,"p_delivery_id":delivery_id}))
+            .send()
+            .await
+            .map_err(|_| WebsiteError::Unavailable)?;
+        match response.status() {
+            StatusCode::UNAUTHORIZED => return Err(WebsiteError::Unauthorized),
+            StatusCode::FORBIDDEN => return Err(WebsiteError::Forbidden),
+            StatusCode::BAD_REQUEST => {
+                return Err(WebsiteError::Invalid(
+                    "Invalid report source, range, or location binding.",
+                ));
+            }
+            status if !status.is_success() => return Err(WebsiteError::Unavailable),
+            _ => {}
+        }
+        // PostgREST returns a JSON object or null. Skip JSON whitespace without
+        // accumulating it, then stream the object with downstream backpressure.
+        // After headers are committed, upstream errors terminate the body stream.
+        let mut null_pos = 0;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| WebsiteError::Unavailable)?
+        {
+            let mut index = 0;
+            while index < chunk.len() {
+                let byte = chunk[index];
+                if null_pos == 0 && matches!(byte, b' ' | b'\t' | b'\r' | b'\n') {
+                    index += 1;
+                    continue;
+                }
+                if null_pos == 0 && byte == b'{' {
+                    let prefix = chunk.slice(index..);
+                    let stream =
+                        futures_util::stream::once(async move { Ok::<_, reqwest::Error>(prefix) })
+                            .chain(response.bytes_stream());
+                    return Ok(Some(Body::from_stream(stream)));
+                }
+                if null_pos < 4 && byte == b"null"[null_pos] {
+                    null_pos += 1;
+                } else if null_pos != 4 || !matches!(byte, b' ' | b'\t' | b'\r' | b'\n') {
+                    return Err(WebsiteError::Unavailable);
+                }
+                index += 1;
+            }
+        }
+        if null_pos == 4 {
+            Ok(None)
+        } else {
+            Err(WebsiteError::Unavailable)
+        }
     }
 
     /// Read installed receiver support without advertising uninstalled migrations.
@@ -137,6 +229,7 @@ impl WebsiteStore {
             .timeout(Duration::from_secs(20))
             .build()
             .map_err(|_| WebsiteError::Unavailable)?;
+        let started = Instant::now();
         let response = client
             .post(format!(
                 "{}/rpc/ingest_seosmith_audit",
@@ -146,7 +239,17 @@ impl WebsiteStore {
             .json(&body)
             .send()
             .await
-            .map_err(|_| WebsiteError::Unavailable)?;
+            .map_err(|error| {
+                log_ingest_failure("worker", started, &error);
+                WebsiteError::Unavailable
+            })?;
+        if !response.status().is_success() {
+            eprintln!(
+                "seosmith worker upstream status={} elapsed_ms={}",
+                response.status().as_u16(),
+                started.elapsed().as_millis()
+            );
+        }
         match response.status() {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
                 return Err(WebsiteError::Unauthorized);
@@ -159,7 +262,10 @@ impl WebsiteStore {
             s if !s.is_success() => return Err(WebsiteError::Unavailable),
             _ => {}
         }
-        response.json().await.map_err(|_| WebsiteError::Unavailable)
+        response.json().await.map_err(|error| {
+            log_ingest_failure("worker", started, &error);
+            WebsiteError::Unavailable
+        })
     }
 
     pub(crate) async fn find(
@@ -384,4 +490,22 @@ impl IntoResponse for WebsiteError {
         };
         (status, Json(json!({"error": message}))).into_response()
     }
+}
+
+fn log_ingest_failure(path: &str, started: Instant, error: &reqwest::Error) {
+    let class = if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connect"
+    } else if error.is_decode() {
+        "decode"
+    } else if error.is_body() {
+        "body"
+    } else {
+        "transport"
+    };
+    eprintln!(
+        "seosmith {path} upstream error={class} elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
 }

@@ -122,16 +122,16 @@ async fn detail(
     headers: HeaderMap,
     Path((id, run)): Path<(Uuid, Uuid)>,
 ) -> Response {
-    match store
-        .rpc(
-            &headers,
-            "seosmith_audit_detail",
-            json!({"p_website_id":id,"p_delivery_id":run}),
+    match store.seosmith_detail(&headers, id, run).await {
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Ok(Some(body)) => (
+            [
+                (header::CACHE_CONTROL, "no-store"),
+                (header::CONTENT_TYPE, "application/json"),
+            ],
+            body,
         )
-        .await
-    {
-        Ok(value) if value.is_null() => StatusCode::NOT_FOUND.into_response(),
-        Ok(value) => ([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response(),
+            .into_response(),
         Err(e) => e.into_response(),
     }
 }
@@ -143,7 +143,305 @@ mod tests {
         body::{Body, to_bytes},
         http::Request,
     };
+    use sha2::{Digest, Sha256};
     use tower::ServiceExt;
+    // Local profiling hook: the mock upstream is a separate process so its fixture
+    // allocation is excluded from the API process RSS.
+    #[tokio::test]
+    #[ignore = "requires the local large-report profiling harness"]
+    async fn profile_detail_http() {
+        let url = std::env::var("HTP_PROFILE_UPSTREAM").unwrap();
+        let app = read_router(WebsiteStore::new(&url, "publishable"));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut response = reqwest::Client::new()
+            .get(format!("http://{addr}/websites/00000000-0000-0000-0000-000000000001/seo/audits/00000000-0000-0000-0000-000000000002"))
+            .header("authorization", "Bearer synthetic")
+            .send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut count = 0;
+        let mut digest = Sha256::new();
+        while let Some(chunk) = response.chunk().await.unwrap() {
+            count += chunk.len();
+            digest.update(&chunk);
+        }
+        assert_eq!(
+            format!("{:x}", digest.finalize()),
+            std::env::var("HTP_PROFILE_DETAIL_SHA").unwrap()
+        );
+        let minimum = std::env::var("HTP_PROFILE_MIN_DETAIL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30_000_000);
+        assert!(count > minimum);
+        server.abort();
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires the local large-report profiling harness"]
+    async fn profile_ingest_http() {
+        let url = std::env::var("HTP_PROFILE_UPSTREAM").unwrap();
+        let payload = std::env::var("HTP_PROFILE_ENVELOPE").unwrap();
+        let app = ingest_router(WebsiteStore::new(&url, "publishable"));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let result = tokio::task::spawn_blocking(move || {
+            std::process::Command::new("curl")
+                .args([
+                    "--silent",
+                    "--show-error",
+                    "--fail",
+                    "--max-time",
+                    "25",
+                    "-H",
+                    "content-type: application/json",
+                    "-H",
+                    "idempotency-key: 00000000-0000-0000-0000-000000000002",
+                    "-H",
+                    "authorization: Bearer xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                    "--data-binary",
+                    &format!("@{payload}"),
+                    &format!("http://{addr}/integrations/seosmith/audits"),
+                ])
+                .output()
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        if std::env::var_os("HTP_PROFILE_EXPECT_TIMEOUT").is_some() {
+            assert_eq!(result.status.code(), Some(22));
+            server.abort();
+            return;
+        }
+        assert!(result.status.success());
+        let receipt: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(receipt["accepted"], true);
+        assert_eq!(receipt["sha256"], std::env::var("HTP_PROFILE_SHA").unwrap());
+        assert_eq!(
+            receipt["delivery_id"],
+            "00000000-0000-0000-0000-000000000002"
+        );
+        server.abort();
+    }
+    #[tokio::test]
+    async fn detail_preserves_auth_json_null_and_error_contract() {
+        for (upstream_status, upstream_body, expected) in [
+            (StatusCode::OK, " \n null ", StatusCode::NOT_FOUND),
+            (
+                StatusCode::OK,
+                "{\"report\":{\"items\":[1,2]},\"report_json\":\"{ }\"}",
+                StatusCode::OK,
+            ),
+            (StatusCode::OK, "invalid", StatusCode::SERVICE_UNAVAILABLE),
+            (StatusCode::UNAUTHORIZED, "{}", StatusCode::UNAUTHORIZED),
+            (StatusCode::FORBIDDEN, "{}", StatusCode::FORBIDDEN),
+            (StatusCode::BAD_REQUEST, "{}", StatusCode::BAD_REQUEST),
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "{}",
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+        ] {
+            let rpc = Router::new().route(
+                "/rest/v1/rpc/seosmith_audit_detail",
+                post(
+                    move |headers: HeaderMap, Json(body): Json<serde_json::Value>| async move {
+                        assert_eq!(headers["apikey"], "publishable");
+                        assert_eq!(headers["authorization"], "Bearer synthetic");
+                        assert_eq!(body["p_website_id"], "00000000-0000-0000-0000-000000000001");
+                        assert_eq!(
+                            body["p_delivery_id"],
+                            "00000000-0000-0000-0000-000000000002"
+                        );
+                        (upstream_status, upstream_body)
+                    },
+                ),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let store = WebsiteStore::new(
+                &format!("http://{}", listener.local_addr().unwrap()),
+                "publishable",
+            );
+            let server = tokio::spawn(async move { axum::serve(listener, rpc).await.unwrap() });
+            let app = read_router(store);
+            let request = || {
+                Request::builder().uri("/websites/00000000-0000-0000-0000-000000000001/seo/audits/00000000-0000-0000-0000-000000000002")
+            };
+            let missing = app
+                .clone()
+                .oneshot(request().body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+            let response = app
+                .oneshot(
+                    request()
+                        .header("authorization", "Bearer synthetic")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+            if expected == StatusCode::OK {
+                assert_eq!(response.headers()["content-type"], "application/json");
+                assert_eq!(response.headers()["cache-control"], "no-store");
+                assert_eq!(
+                    &to_bytes(response.into_body(), 4096).await.unwrap()[..],
+                    upstream_body.as_bytes()
+                );
+            }
+            server.abort();
+        }
+    }
+    #[tokio::test]
+    async fn detail_stream_propagates_truncation_and_classifies_split_null() {
+        use futures_util::{StreamExt, stream};
+        use std::io;
+        for truncated in [false, true] {
+            let rpc = Router::new().route(
+                "/rest/v1/rpc/seosmith_audit_detail",
+                post(move || async move {
+                    let chunks: Vec<Result<&'static [u8], io::Error>> = if truncated {
+                        vec![
+                            Ok(b"{\"report\":"),
+                            Err(io::Error::other("synthetic disconnect")),
+                        ]
+                    } else {
+                        vec![Ok(b"  n"), Ok(b"u"), Ok(b"ll \n")]
+                    };
+                    Body::from_stream(stream::iter(chunks).then(|chunk| async move {
+                        if chunk.is_err() {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        }
+                        chunk
+                    }))
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let store = WebsiteStore::new(
+                &format!("http://{}", listener.local_addr().unwrap()),
+                "publishable",
+            );
+            let server = tokio::spawn(async move { axum::serve(listener, rpc).await.unwrap() });
+            let response = read_router(store).oneshot(Request::builder()
+                .uri("/websites/00000000-0000-0000-0000-000000000001/seo/audits/00000000-0000-0000-0000-000000000002")
+                .header("authorization", "Bearer synthetic").body(Body::empty()).unwrap()).await.unwrap();
+            if truncated {
+                assert_eq!(response.status(), StatusCode::OK);
+                assert!(to_bytes(response.into_body(), 4096).await.is_err());
+            } else {
+                assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            }
+            server.abort();
+        }
+    }
+    #[tokio::test]
+    async fn detail_client_disconnect_cancels_upstream_stream() {
+        use futures_util::stream;
+        use std::{
+            io,
+            sync::{
+                Arc, Mutex,
+                atomic::{AtomicUsize, Ordering},
+            },
+            time::Duration,
+        };
+        struct OnDrop(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for OnDrop {
+            fn drop(&mut self) {
+                if let Some(tx) = self.0.take() {
+                    let _ = tx.send(());
+                }
+            }
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let tx = Arc::new(Mutex::new(Some(tx)));
+        let count = Arc::new(AtomicUsize::new(0));
+        let upstream_count = count.clone();
+        let rpc = Router::new().route(
+            "/rest/v1/rpc/seosmith_audit_detail",
+            post(move || {
+                let guard = OnDrop(tx.lock().unwrap().take());
+                let upstream_count = upstream_count.clone();
+                async move {
+                    let chunk = axum::body::Bytes::from(vec![b' '; 64 * 1024]);
+                    let prefix = axum::body::Bytes::from_static(b"{\"data\":\"");
+                    Body::from_stream(stream::unfold(
+                        (guard, chunk, Some(prefix), upstream_count),
+                        |(guard, chunk, prefix, count)| async move {
+                            let value = prefix.unwrap_or_else(|| chunk.clone());
+                            count.fetch_add(1, Ordering::Relaxed);
+                            Some((Ok::<_, io::Error>(value), (guard, chunk, None, count)))
+                        },
+                    ))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let store = WebsiteStore::new(
+            &format!("http://{}", listener.local_addr().unwrap()),
+            "publishable",
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, rpc).await.unwrap() });
+        let response = read_router(store).oneshot(Request::builder()
+            .uri("/websites/00000000-0000-0000-0000-000000000001/seo/audits/00000000-0000-0000-0000-000000000002")
+            .header("authorization", "Bearer synthetic").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            count.load(Ordering::Relaxed) < 512,
+            "upstream was drained without a downstream consumer"
+        );
+        drop(response);
+        tokio::time::timeout(Duration::from_secs(3), rx)
+            .await
+            .unwrap()
+            .unwrap();
+        server.abort();
+    }
+    #[tokio::test]
+    #[ignore = "exercises the real ten-second upstream deadline"]
+    async fn detail_stream_times_out_after_headers() {
+        use futures_util::{StreamExt, stream};
+        use std::{
+            io,
+            time::{Duration, Instant},
+        };
+        let rpc = Router::new().route(
+            "/rest/v1/rpc/seosmith_audit_detail",
+            post(|| async {
+                Body::from_stream(
+                    stream::iter(vec![Ok::<_, io::Error>(&b"{"[..]), Ok(&b"}"[..])])
+                        .enumerate()
+                        .then(|(index, item)| async move {
+                            if index == 1 {
+                                tokio::time::sleep(Duration::from_secs(12)).await;
+                            }
+                            item
+                        }),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let store = WebsiteStore::new(
+            &format!("http://{}", listener.local_addr().unwrap()),
+            "publishable",
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, rpc).await.unwrap() });
+        let started = Instant::now();
+        let response = read_router(store).oneshot(Request::builder()
+            .uri("/websites/00000000-0000-0000-0000-000000000001/seo/audits/00000000-0000-0000-0000-000000000002")
+            .header("authorization", "Bearer synthetic").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(to_bytes(response.into_body(), 4096).await.is_err());
+        assert!(
+            started.elapsed() >= Duration::from_secs(9)
+                && started.elapsed() < Duration::from_secs(12)
+        );
+        server.abort();
+    }
     #[tokio::test]
     async fn capabilities_reflect_installed_database_and_fail_closed() {
         for available in [true, false] {
@@ -155,7 +453,7 @@ mod tests {
                     if available {
                         (
                             StatusCode::OK,
-                            Json(json!({"schema_versions":[1],"max_report_bytes":16777216})),
+                            Json(json!({"schema_versions":[1],"max_report_bytes":16_777_216})),
                         )
                     } else {
                         (
