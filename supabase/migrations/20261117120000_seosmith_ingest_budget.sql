@@ -2,8 +2,9 @@
 --
 -- The earlier 8s function budget (20261116233148) was measured against warm,
 -- unconstrained local CPU. A valid near-limit token-heavy schema-2 report
--- (15,236,654 raw bytes, ~7.6M-element unrelated root array) needs ~13.6-13.8s
--- on a 0.2-CPU local PostgreSQL 17 / PostgREST 14.18 stack. Hosted ingest was
+-- needs ~13.6-13.8s on a 0.2-CPU local PostgreSQL 17 / PostgREST 14.18 stack
+-- (synthetic harness report 15,236,654 raw bytes, ~7.6M-element unrelated root
+-- array; hosted retained report 15,237,086 raw bytes). Hosted ingest was
 -- cancelled with SQLSTATE 57014 (query cancellation, consistent with
 -- statement_timeout) at ~9.5s, leaving zero rows.
 --
@@ -12,5 +13,14 @@
 -- validation, caps, the immutable-audit trigger, authorization and stored
 -- bytes are unchanged. The API client deadlines are kept strictly above this
 -- budget (worker ingest and owner import use 25s in apps/api/src/websites.rs).
+--
+-- Applies immediately at runtime; producer v2 stays OFF. Rollback is a single
+-- idempotent function setting with no data/schema change (no downmigration):
+--   alter function public.ingest_seosmith_audit(text,uuid,text,text) set statement_timeout = '8s';
+--   alter function public.import_seosmith_audit(uuid,text) set statement_timeout = '8s';
+-- (or re-run 20261116233148_seosmith_rpc_timeout.sql). An already-running
+-- statement is not shortened. A future CREATE OR REPLACE FUNCTION on either
+-- ingest function that omits the SET clause would silently clear this setting
+-- and must retain it.
 alter function public.ingest_seosmith_audit(text,uuid,text,text) set statement_timeout = '20s';
 alter function public.import_seosmith_audit(uuid,text) set statement_timeout = '20s';

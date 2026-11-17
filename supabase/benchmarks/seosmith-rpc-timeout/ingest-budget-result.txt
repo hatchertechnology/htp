@@ -1,6 +1,10 @@
 Bounded ingest budget correction — local disposable PG17.11/PostgREST14.18 evidence
 Synthetic fixtures only; no hosted database contacted.
 
+Byte figures: the synthetic harness token-heavy report is 15,236,654 raw bytes;
+the hosted retained report that failed is 15,237,086 raw bytes (recorded by
+integration, not generated here).
+
 Hosted symptom (recorded by integration, not reproduced here): valid near-limit
 token-heavy worker first insert returned HTTP503 with correlated upstream HTTP500
 database_code=57014 at elapsed_ms=9561, zero rows.
@@ -21,7 +25,8 @@ committed migrations applied unmodified, PG_CPUS=0.2:
   import token-heavy: http=200 total=16.244126 accepted=True
   worker string-heavy: http=200 total=5.894498 accepted=True
   import string-heavy: http=200 total=4.633825 accepted=True
-  stored rows=4, max raw_report_json octet_length=15636656
+  stored rows=4; token-heavy raw_report_json octet_length=15236654 each;
+  max across all four rows (the larger string-heavy shape)=15636656
 
 PostgREST hoists the function statement_timeout before the main RPC query, so the
 extension is scoped to these two functions. Role defaults (anon 3s, authenticated
@@ -30,3 +35,15 @@ are unchanged. API client deadlines are 25s (apps/api/src/websites.rs), strictly
 above the 20s database budget. Hosted effective hoisting, pooler limits and actual
 production CPU still require integration verification; local timings are not
 production acceptance.
+
+Timing limits and margin: worst observed completion under the 20s budget is
+~16.2s (author) / ~13.9s (independent t3n), leaving only ~3.8s of headroom at the
+high end. The bound is bounded by the 16 MiB raw cap but is a modest, not
+comfortable, margin; verify with a production-like transfer before relying on it.
+
+Rollback (no downmigration; no data/schema change):
+  alter function public.ingest_seosmith_audit(text,uuid,text,text) set statement_timeout='8s';
+  alter function public.import_seosmith_audit(uuid,text) set statement_timeout='8s';
+and restore the API deadlines (import back to 10s, worker back to 20s). The
+migration applies immediately at runtime; an already-running statement is not
+shortened.
