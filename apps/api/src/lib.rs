@@ -1,6 +1,7 @@
 //! HTTP and MCP routes for the HTP API.
 
 pub mod analytics;
+mod audit_export;
 pub mod auth;
 mod bing;
 mod insights;
@@ -42,9 +43,16 @@ pub fn app_with_analytics(
 ) -> Router {
     let oauth_routes = oauth::router(auth.project_url());
     let seosmith_ingest = seosmith::ingest_router(websites.clone());
+    let mcp_limit = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+    let mcp_routes = Router::new()
+        .nest_service("/mcp/secured", mcp::secured_service(websites.clone()))
+        .layer(middleware::from_fn_with_state(
+            mcp_limit,
+            limit_mcp_responses,
+        ));
     let protected = Router::new()
         .route("/secured", get(async || Json(secured_message())))
-        .nest_service("/mcp/secured", mcp::secured_service(websites.clone()))
+        .merge(mcp_routes)
         .merge(analytics::router(websites.clone(), analytics))
         .merge(search::router(
             websites.clone(),
@@ -75,4 +83,46 @@ fn message() -> MessageResponse {
     MessageResponse {
         message: "hello world".to_owned(),
     }
+}
+
+// An expensive tool reserves its request-local slot; the body owns that slot
+// until the client consumes or drops it, including rmcp serialization time.
+#[derive(Clone)]
+pub(crate) struct McpAdmission {
+    limit: std::sync::Arc<tokio::sync::Semaphore>,
+    held: std::sync::Arc<std::sync::Mutex<Option<tokio::sync::OwnedSemaphorePermit>>>,
+}
+impl McpAdmission {
+    pub(crate) fn acquire(&self) -> bool {
+        let Ok(permit) = self.limit.clone().try_acquire_owned() else {
+            return false;
+        };
+        let Ok(mut held) = self.held.lock() else {
+            return false;
+        };
+        if held.is_some() {
+            return false;
+        }
+        *held = Some(permit);
+        true
+    }
+}
+async fn limit_mcp_responses(
+    axum::extract::State(limit): axum::extract::State<std::sync::Arc<tokio::sync::Semaphore>>,
+    mut request: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    use futures_util::StreamExt as _;
+    let held = std::sync::Arc::new(std::sync::Mutex::new(None));
+    request.extensions_mut().insert(McpAdmission {
+        limit,
+        held: held.clone(),
+    });
+    let response = next.run(request).await;
+    let (parts, body) = response.into_parts();
+    let stream = body.into_data_stream().map(move |result| {
+        let _keep = &held;
+        result
+    });
+    axum::response::Response::from_parts(parts, axum::body::Body::from_stream(stream))
 }

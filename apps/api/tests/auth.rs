@@ -142,8 +142,23 @@ async fn official_mcp_client_authenticates_every_request() {
         );
         let client = ClientConfig::default().serve(transport).await.unwrap();
         let tools = client.list_tools(None).await.unwrap();
-        assert_eq!(tools.tools.len(), 20);
+        assert_eq!(tools.tools.len(), 23);
+        for name in [
+            "website_audit_export_start_v1",
+            "website_audit_export_chunk_v1",
+            "website_audit_export_close_v1",
+        ] {
+            assert!(tools.tools.iter().any(|tool| tool.name == name));
+        }
         assert!(tools.tools.iter().any(|tool| tool.name == "create_website"));
+        let export = tools
+            .tools
+            .iter()
+            .find(|tool| tool.name == "website_audit_export_chunk_v1")
+            .unwrap();
+        let export_schema = serde_json::to_string(&export.input_schema).unwrap();
+        assert!(export_schema.contains("exportId"));
+        assert!(!export_schema.contains("export_id"));
         let report = tools
             .tools
             .iter()
@@ -1797,5 +1812,383 @@ async fn repository_issues_check_owner_and_handle_missing_binding() {
         } else {
             assert!(!body.to_string().contains("private database detail"));
         }
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn audit_export_mcp_reconstructs_full_snapshot_and_checks_revocation() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use sha2::{Digest as _, Sha256};
+    use std::sync::atomic::AtomicBool;
+    let allowed = Arc::new(AtomicBool::new(true));
+    let access = allowed.clone();
+    let detail_calls = Arc::new(AtomicUsize::new(0));
+    let detail_count = detail_calls.clone();
+    let raw = format!(
+        "{{\"schema_version\":2,\"padding\":\"{}\"}}",
+        "é".repeat(200_000)
+    );
+    let expected = json!({"delivery_id":uuid::Uuid::from_u128(2),"summary":{"complete":true},"report":{"schema_version":2},"report_json":raw});
+    let body = expected.clone();
+    let routes = Router::new()
+        .route(
+            "/rest/v1/rpc/seosmith_audit_export_access",
+            axum::routing::post(move || {
+                let access = access.clone();
+                async move { Json(access.load(Ordering::SeqCst)) }
+            }),
+        )
+        .route(
+            "/rest/v1/rpc/seosmith_audit_detail",
+            axum::routing::post(move || {
+                let count = detail_count.clone();
+                let body = body.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    Json(body)
+                }
+            }),
+        );
+    let auth = TestAuth::with_routes(routes).await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let args =
+        json!({"website_id":uuid::Uuid::from_u128(1),"delivery_id":uuid::Uuid::from_u128(2)});
+    let no_auth =
+        research_mcp_call(&auth, None, "website_audit_export_start_v1", args.clone()).await;
+    assert_eq!(no_auth.status(), StatusCode::UNAUTHORIZED);
+    let inline = response_json(
+        research_mcp_call(&auth, Some(&token), "website_audit_detail", args.clone()).await,
+    )
+    .await;
+    assert_eq!(
+        inline["result"]["structuredContent"]["code"],
+        "EXPORT_REQUIRED"
+    );
+    let (first_response, second_response) = tokio::join!(
+        research_mcp_call(
+            &auth,
+            Some(&token),
+            "website_audit_export_start_v1",
+            args.clone()
+        ),
+        research_mcp_call(
+            &auth,
+            Some(&token),
+            "website_audit_export_start_v1",
+            args.clone()
+        )
+    );
+    let start = response_json(first_response).await;
+    let second = response_json(second_response).await;
+    assert_eq!(start["result"]["isError"], false, "{start}");
+    let desc = &start["result"]["structuredContent"];
+    let export_id = desc["exportId"].as_str().unwrap();
+    assert_eq!(second["result"]["structuredContent"]["exportId"], export_id);
+    assert_eq!(detail_calls.load(Ordering::SeqCst), 2); // one inline attempt and one export
+    let mut out = Vec::new();
+    let mut offset = 0_u64;
+    loop {
+        let input = json!({"website_id":uuid::Uuid::from_u128(1),"delivery_id":uuid::Uuid::from_u128(2),"exportId":export_id,"offset":offset});
+        let response = response_json(
+            research_mcp_call(&auth, Some(&token), "website_audit_export_chunk_v1", input).await,
+        )
+        .await;
+        assert_eq!(response["result"]["isError"], false, "{response}");
+        let chunk = &response["result"]["structuredContent"];
+        out.extend(
+            STANDARD
+                .decode(chunk["dataBase64"].as_str().unwrap())
+                .unwrap(),
+        );
+        offset = chunk["nextOffset"].as_u64().unwrap();
+        if chunk["eof"] == true {
+            break;
+        }
+    }
+    assert_eq!(out.len() as u64, desc["byteLength"].as_u64().unwrap());
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&out)),
+        desc["sha256"].as_str().unwrap()
+    );
+    assert_eq!(serde_json::from_slice::<Value>(&out).unwrap(), expected);
+    let chunk_args = |at: u64| json!({"website_id":uuid::Uuid::from_u128(1),"delivery_id":uuid::Uuid::from_u128(2),"exportId":export_id,"offset":at});
+    let eof = response_json(
+        research_mcp_call(
+            &auth,
+            Some(&token),
+            "website_audit_export_chunk_v1",
+            chunk_args(offset),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(eof["result"]["structuredContent"]["eof"], true);
+    assert_eq!(eof["result"]["structuredContent"]["dataBase64"], "");
+    let past = response_json(
+        research_mcp_call(
+            &auth,
+            Some(&token),
+            "website_audit_export_chunk_v1",
+            chunk_args(offset + 1),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        past["result"]["structuredContent"]["code"],
+        "INVALID_ARGUMENT"
+    );
+    let first = response_json(
+        research_mcp_call(
+            &auth,
+            Some(&token),
+            "website_audit_export_chunk_v1",
+            chunk_args(0),
+        )
+        .await,
+    )
+    .await;
+    let repeat = response_json(
+        research_mcp_call(
+            &auth,
+            Some(&token),
+            "website_audit_export_chunk_v1",
+            chunk_args(0),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        first["result"]["structuredContent"]["dataBase64"],
+        repeat["result"]["structuredContent"]["dataBase64"]
+    );
+    let mut foreign_claims = auth.claims();
+    foreign_claims["sub"] = json!("a19a3adb-148d-4714-9278-c2d709fe0ad2");
+    let foreign_token = TestAuth::token(&foreign_claims, "test-key");
+    let foreign = response_json(
+        research_mcp_call(
+            &auth,
+            Some(&foreign_token),
+            "website_audit_export_chunk_v1",
+            chunk_args(0),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        foreign["result"]["structuredContent"]["code"],
+        "EXPORT_EXPIRED"
+    );
+    let close_args = json!({"website_id":uuid::Uuid::from_u128(1),"delivery_id":uuid::Uuid::from_u128(2),"exportId":export_id});
+    let foreign_close = response_json(
+        research_mcp_call(
+            &auth,
+            Some(&foreign_token),
+            "website_audit_export_close_v1",
+            close_args,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(foreign_close["result"]["structuredContent"]["closed"], true);
+    let still_available = response_json(
+        research_mcp_call(
+            &auth,
+            Some(&token),
+            "website_audit_export_chunk_v1",
+            chunk_args(0),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(still_available["result"]["isError"], false);
+    allowed.store(false, Ordering::SeqCst);
+    let denied = response_json(research_mcp_call(&auth,Some(&token),"website_audit_export_chunk_v1",json!({"website_id":uuid::Uuid::from_u128(1),"delivery_id":uuid::Uuid::from_u128(2),"exportId":export_id,"offset":0})).await).await;
+    assert_eq!(denied["result"]["structuredContent"]["code"], "NOT_FOUND");
+    allowed.store(true, Ordering::SeqCst);
+    let expired = response_json(research_mcp_call(&auth,Some(&token),"website_audit_export_chunk_v1",json!({"website_id":uuid::Uuid::from_u128(1),"delivery_id":uuid::Uuid::from_u128(2),"exportId":export_id,"offset":0})).await).await;
+    assert_eq!(
+        expired["result"]["structuredContent"]["code"],
+        "EXPORT_EXPIRED"
+    );
+}
+
+#[tokio::test]
+#[ignore = "local synthetic MCP memory profile"]
+async fn profile_large_audit_export_mcp() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use sha2::{Digest as _, Sha256};
+    let upstream = std::env::var("HTP_MCP_PROFILE_UPSTREAM").expect("profile upstream");
+    let mut auth = TestAuth::new().await;
+    auth.app = htp_api::app_with_services(
+        SupabaseAuth::new(&auth.url),
+        htp_api::websites::WebsiteStore::new(&upstream, "fixture"),
+    );
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let args =
+        json!({"website_id":uuid::Uuid::from_u128(1),"delivery_id":uuid::Uuid::from_u128(2)});
+    let response = response_json(
+        research_mcp_call(&auth, Some(&token), "website_audit_export_start_v1", args).await,
+    )
+    .await;
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let desc = &response["result"]["structuredContent"];
+    let export_id = desc["exportId"].as_str().unwrap();
+    let mut hasher = Sha256::new();
+    let mut offset = 0_u64;
+    let mut chunks = 0;
+    loop {
+        let input = json!({"website_id":uuid::Uuid::from_u128(1),"delivery_id":uuid::Uuid::from_u128(2),"exportId":export_id,"offset":offset});
+        let response = response_json(
+            research_mcp_call(&auth, Some(&token), "website_audit_export_chunk_v1", input).await,
+        )
+        .await;
+        assert_eq!(response["result"]["isError"], false, "{response}");
+        let chunk = &response["result"]["structuredContent"];
+        hasher.update(
+            STANDARD
+                .decode(chunk["dataBase64"].as_str().unwrap())
+                .unwrap(),
+        );
+        offset = chunk["nextOffset"].as_u64().unwrap();
+        chunks += 1;
+        if chunk["eof"] == true {
+            break;
+        }
+    }
+    let minimum = std::env::var("HTP_MCP_PROFILE_MIN")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(100_000_000);
+    assert!(offset > minimum);
+    assert_eq!(offset, desc["byteLength"].as_u64().unwrap());
+    assert_eq!(
+        format!("{:x}", hasher.finalize()),
+        desc["sha256"].as_str().unwrap()
+    );
+    eprintln!("MCP_PROFILE bytes={offset} chunks={chunks}");
+}
+
+#[tokio::test]
+async fn audit_export_legacy_null_preserves_stored_report() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    let expected = json!({"delivery_id":uuid::Uuid::from_u128(2),"summary":{"legacy":true},"report":{"schema_version":1,"retained":true},"report_json":null});
+    let detail = expected.clone();
+    let routes = Router::new()
+        .route(
+            "/rest/v1/rpc/seosmith_audit_export_access",
+            axum::routing::post(|| async { Json(true) }),
+        )
+        .route(
+            "/rest/v1/rpc/seosmith_audit_detail",
+            axum::routing::post(move || {
+                let d = detail.clone();
+                async move { Json(d) }
+            }),
+        );
+    let auth = TestAuth::with_routes(routes).await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let args =
+        json!({"website_id":uuid::Uuid::from_u128(1),"delivery_id":uuid::Uuid::from_u128(2)});
+    let start = response_json(
+        research_mcp_call(&auth, Some(&token), "website_audit_export_start_v1", args).await,
+    )
+    .await;
+    assert_eq!(start["result"]["isError"], false, "{start}");
+    let id = start["result"]["structuredContent"]["exportId"]
+        .as_str()
+        .unwrap();
+    let args = json!({"website_id":uuid::Uuid::from_u128(1),"delivery_id":uuid::Uuid::from_u128(2),"exportId":id,"offset":0});
+    let chunk = response_json(
+        research_mcp_call(&auth, Some(&token), "website_audit_export_chunk_v1", args).await,
+    )
+    .await;
+    let bytes = STANDARD
+        .decode(
+            chunk["result"]["structuredContent"]["dataBase64"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), expected);
+    let args = json!({"website_id":uuid::Uuid::from_u128(1),"delivery_id":uuid::Uuid::from_u128(2),"exportId":id});
+    for _ in 0..2 {
+        let close = response_json(
+            research_mcp_call(
+                &auth,
+                Some(&token),
+                "website_audit_export_close_v1",
+                args.clone(),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(close["result"]["structuredContent"]["closed"], true);
+    }
+}
+
+#[tokio::test]
+async fn mcp_admission_holds_permit_only_for_expensive_response_bodies() {
+    let routes = Router::new().route(
+        "/rest/v1/rpc/seosmith_audit_detail",
+        axum::routing::post(|| async { Json(json!({"report":{"schema_version":2}})) }),
+    );
+    let auth = TestAuth::with_routes(routes).await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let args =
+        json!({"website_id":uuid::Uuid::from_u128(1),"delivery_id":uuid::Uuid::from_u128(2)});
+    let mut responses = Vec::new();
+    for _ in 0..4 {
+        let response =
+            research_mcp_call(&auth, Some(&token), "website_audit_detail", args.clone()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        responses.push(response);
+    }
+    let rejected = response_json(
+        research_mcp_call(&auth, Some(&token), "website_audit_detail", args.clone()).await,
+    )
+    .await;
+    assert_eq!(
+        rejected["result"]["structuredContent"]["code"],
+        "EXPORT_CAPACITY"
+    );
+    let unrelated = research_mcp_call(&auth, Some(&token), "hello_world_secured", json!({})).await;
+    assert_eq!(response_json(unrelated).await["result"]["isError"], false);
+    drop(responses.pop());
+    let accepted =
+        response_json(research_mcp_call(&auth, Some(&token), "website_audit_detail", args).await)
+            .await;
+    assert_eq!(accepted["result"]["isError"], false);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "local concurrent inline memory profile"]
+async fn profile_concurrent_inline_mcp() {
+    let upstream = std::env::var("HTP_MCP_PROFILE_UPSTREAM").expect("profile upstream");
+    let mut auth = TestAuth::new().await;
+    auth.app = htp_api::app_with_services(
+        SupabaseAuth::new(&auth.url),
+        htp_api::websites::WebsiteStore::new(&upstream, "fixture"),
+    );
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let args =
+        json!({"website_id":uuid::Uuid::from_u128(1),"delivery_id":uuid::Uuid::from_u128(2)});
+    let (a, b, c, d) = tokio::join!(
+        research_mcp_call(&auth, Some(&token), "website_audit_detail", args.clone()),
+        research_mcp_call(&auth, Some(&token), "website_audit_detail", args.clone()),
+        research_mcp_call(&auth, Some(&token), "website_audit_detail", args.clone()),
+        research_mcp_call(&auth, Some(&token), "website_audit_detail", args)
+    );
+    for response in [a, b, c, d] {
+        let value = response_json(response).await;
+        assert_eq!(value["result"]["isError"], false);
+        assert_eq!(
+            value["result"]["structuredContent"]["report"]
+                .as_array()
+                .unwrap()
+                .len(),
+            130_001
+        );
     }
 }
