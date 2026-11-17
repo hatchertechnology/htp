@@ -1,0 +1,408 @@
+{
+  "contractVersion": "1.2.0",
+  "evidenceKind": "synthetic",
+  "scenarios": [
+    {
+      "id": "full-retry-eof-close",
+      "sourceCase": "exact",
+      "large": true,
+      "steps": [
+        {
+          "action": "detail"
+        },
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        },
+        {
+          "action": "chunk",
+          "offset": 262144
+        },
+        {
+          "action": "chunk",
+          "offset": "end"
+        },
+        {
+          "action": "chunk",
+          "offset": "pastEnd"
+        },
+        {
+          "action": "close"
+        },
+        {
+          "action": "close"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        }
+      ]
+    },
+    {
+      "id": "legacy-null",
+      "sourceCase": "null",
+      "large": false,
+      "steps": [
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        },
+        {
+          "action": "close"
+        }
+      ]
+    },
+    {
+      "id": "divergent-raw",
+      "sourceCase": "divergent",
+      "large": false,
+      "steps": [
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        },
+        {
+          "action": "close"
+        }
+      ]
+    },
+    {
+      "id": "small-inline",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "detail"
+        }
+      ]
+    },
+    {
+      "id": "owner-isolation",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "subject": "other"
+        },
+        {
+          "action": "close",
+          "subject": "other"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        },
+        {
+          "action": "transferOwner"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        },
+        {
+          "action": "close"
+        }
+      ]
+    },
+    {
+      "id": "delivery-revoked",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "start"
+        },
+        {
+          "action": "deleteDelivery"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        },
+        {
+          "action": "close"
+        }
+      ]
+    },
+    {
+      "id": "fqdn-rebound",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "start"
+        },
+        {
+          "action": "renameWebsite"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        }
+      ]
+    },
+    {
+      "id": "wrong-target",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "website": "other"
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "delivery": "other"
+        },
+        {
+          "action": "close",
+          "delivery": "other"
+        }
+      ]
+    },
+    {
+      "id": "idle-expiry",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "afterSeconds": 899
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "afterSeconds": 900
+        },
+        {
+          "action": "close"
+        },
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        }
+      ]
+    },
+    {
+      "id": "hard-expiry",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "afterSeconds": 899
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "afterSeconds": 899
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "afterSeconds": 899
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "afterSeconds": 899
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "afterSeconds": 899
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "afterSeconds": 899
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "afterSeconds": 899
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "afterSeconds": 899
+        },
+        {
+          "action": "chunk",
+          "offset": 0,
+          "afterSeconds": 8
+        },
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        }
+      ]
+    },
+    {
+      "id": "start-reuse",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "start"
+        },
+        {
+          "action": "start",
+          "afterSeconds": 1
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        },
+        {
+          "action": "close"
+        }
+      ]
+    },
+    {
+      "id": "restart-loss",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "start"
+        },
+        {
+          "action": "restart"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        },
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        }
+      ]
+    },
+    {
+      "id": "capacity",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "start",
+          "fault": "capacity"
+        },
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        },
+        {
+          "action": "close"
+        }
+      ]
+    },
+    {
+      "id": "io",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "start",
+          "fault": "io"
+        },
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        },
+        {
+          "action": "close"
+        }
+      ]
+    },
+    {
+      "id": "validation",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "start",
+          "fault": "validation"
+        },
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        },
+        {
+          "action": "close"
+        }
+      ]
+    },
+    {
+      "id": "cancel",
+      "sourceCase": "exact",
+      "large": false,
+      "steps": [
+        {
+          "action": "start",
+          "fault": "cancel"
+        },
+        {
+          "action": "start"
+        },
+        {
+          "action": "chunk",
+          "offset": 0
+        },
+        {
+          "action": "close"
+        }
+      ]
+    }
+  ]
+}
