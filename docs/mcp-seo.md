@@ -239,8 +239,49 @@ provider grants and performs the same checks as dashboard operations.
 | `set_website_business_location` | `website_id`, `location_id`, `linked` | Current location configuration; feature flag enforced |
 | `request_website_report` | `website_id`, `kind`, optional source `property_id` and inclusive `start_date`/`end_date` | Saved report and sync metadata, or pending; explicitly registers bounded background collection |
 | `website_audit_history` | `website_id`, optional `limit`, `before`, `before_id` | Paginated Seosmith summaries/trends |
-| `website_audit_detail` | `website_id`, `delivery_id` UUID | Full saved Seosmith report |
+| `website_audit_detail` | `website_id`, `delivery_id` UUID | Saved detail inline when safe; otherwise `EXPORT_REQUIRED` with export-v1 instructions |
+| `website_audit_export_start_v1` | `website_id`, `delivery_id` UUID | Start or reuse an owner-scoped snapshot of the complete saved detail JSON |
+| `website_audit_export_chunk_v1` | `website_id`, `delivery_id`, `exportId`, byte `offset` | At most 256 KiB of base64-encoded snapshot bytes |
+| `website_audit_export_close_v1` | `website_id`, `delivery_id`, `exportId` | Release a snapshot; authorized close is idempotent |
 | `import_website_audit` | `website_id`, `report_json` string | Validated, deduplicated Seosmith import (16 MiB report limit) |
+
+For an `EXPORT_REQUIRED` response, discover and call export-v1 explicitly. Read
+chunks in byte order, concatenate decoded bytes, and verify the descriptor's
+length and SHA-256 before parsing the complete JSON. The saved `report_json`
+string is exact original text when non-null; null means original raw text was
+not retained, and `report` is the stored JSONB evidence. Snapshots have a
+15-minute idle expiry and a two-hour hard expiry, are bound to the preparing
+owner and API instance, and must be restarted after expiry or instance loss.
+Every chunk and close checks current owner, website and audit access. Snapshot
+storage and concurrent work are finite; `EXPORT_CAPACITY` is temporary and does
+not mean an audit is absent or complete. Four concurrent detail/start/chunk
+responses are admitted until their bodies are consumed or dropped. Other MCP
+tools do not consume that admission budget.
+
+The API uses private unlinked temporary files with an aggregate 512 MiB snapshot
+budget and four live snapshots per instance. On Linux, memory-backed tmpfs and
+ramfs are rejected with `EXPORT_CAPACITY`; the temporary directory must be on a
+writable disk-backed filesystem. Verify that filesystem and instance routing
+before deployment. Multiple nonsticky instances can lose snapshot affinity;
+clients must restart the export rather than combine partial snapshots. This is
+an explicit large-detail workflow change, not transparent compatibility for an
+unchanged inline caller. The four snapshots and 512 MiB are shared across all
+owners; one owner can occupy the available slots. Snapshot preparation, chunk
+reads, close and expiry cleanup are serialized by a process-wide lock, so a
+slow export can delay other export operations. These are availability limits,
+not limits on the stored report format.
+
+The upstream detail request has a 10-second total deadline, including the
+streamed response body. If the transfer does not finish within that deadline,
+export returns `UNAVAILABLE` without a ready snapshot. Local loopback profiles
+do not establish that a large PostgREST response can arrive in time over the
+production network; verify that transfer separately before relying on export.
+
+Export happy-path tests require a disk-backed `TMPDIR`. Tests that cannot find
+one print a skip diagnostic and return without exercising snapshot creation;
+run `TMPDIR=/var/tmp cargo test -p htp-api -- --nocapture` only after verifying
+that `/var/tmp` is disk-backed, or select another verified disk directory.
+The ignored memory and timeout profiles also require disk-backed storage.
 
 See the packaged [management workflow](../plugins/htp/skills/website-management/SKILL.md)
 for report kinds and source formats. Reads of saved data do not fetch providers;

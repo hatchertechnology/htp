@@ -49,6 +49,7 @@ pub(crate) fn service() -> StreamableHttpService<HelloWorldMcp, LocalSessionMana
 pub(crate) struct WebsiteMcp {
     store: crate::websites::WebsiteStore,
     management: axum::Router,
+    exports: crate::audit_export::SharedExports,
 }
 
 #[derive(serde::Deserialize, rmcp::schemars::JsonSchema)]
@@ -215,6 +216,64 @@ struct AuditImportInput {
 }
 
 impl WebsiteMcp {
+    // Bound the inline token tree before serde_json allocates it. Larger complete
+    // details are retrieved through the versioned export workflow.
+    async fn audit_detail_inline(
+        &self,
+        headers: &axum::http::HeaderMap,
+        website_id: uuid::Uuid,
+        delivery_id: uuid::Uuid,
+    ) -> CallToolResult {
+        use futures_util::StreamExt as _;
+        use tower::ServiceExt as _;
+        const INLINE_BYTES: usize = 256 * 1024;
+        let Some(authorization) = headers.get(axum::http::header::AUTHORIZATION) else {
+            return saved_tool_result(Err(crate::websites::WebsiteError::Unauthorized));
+        };
+        let Ok(request) = axum::http::Request::builder()
+            .method(axum::http::Method::GET)
+            .uri(format!("/websites/{website_id}/seo/audits/{delivery_id}"))
+            .header(axum::http::header::AUTHORIZATION, authorization)
+            .body(axum::body::Body::empty())
+        else {
+            return saved_tool_result(Err(crate::websites::WebsiteError::Unavailable));
+        };
+        let response = match self.management.clone().oneshot(request).await {
+            Ok(response) => response,
+            Err(error) => match error {},
+        };
+        let status = response.status();
+        let mut stream = response.into_body().into_data_stream();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let Ok(chunk) = chunk else {
+                return saved_tool_result(Err(crate::websites::WebsiteError::Unavailable));
+            };
+            if chunk.len() > INLINE_BYTES.saturating_sub(bytes.len()) {
+                if !status.is_success() {
+                    return saved_tool_result(Err(crate::websites::WebsiteError::Unavailable));
+                }
+                let mut result = CallToolResult::structured(serde_json::json!({
+                    "code":"EXPORT_REQUIRED", "exportVersion":1,
+                    "startTool":"website_audit_export_start_v1",
+                    "websiteId":website_id, "deliveryId":delivery_id,
+                    "message":"Use the export tools to retrieve the complete audit."
+                }));
+                result.is_error = Some(true);
+                return result;
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| serde_json::json!({"error":"Invalid request or response."}));
+        if !status.is_success() {
+            value["status"] = serde_json::json!(status.as_u16());
+        }
+        let mut result = CallToolResult::structured(value);
+        result.is_error = Some(!status.is_success());
+        result
+    }
+
     // Dispatch only hard-coded routes through the same handlers as REST. Never accept
     // caller-selected URLs, arbitrary RPC names, credentials, or ownership fields.
     async fn management_call(
@@ -871,16 +930,108 @@ impl WebsiteMcp {
             axum::http::request::Parts,
         >,
     ) -> CallToolResult {
-        self.management_call(
+        if !parts
+            .extensions
+            .get::<crate::McpAdmission>()
+            .is_some_and(crate::McpAdmission::acquire)
+        {
+            return crate::audit_export::failure(
+                "EXPORT_CAPACITY",
+                "Audit response capacity is temporarily unavailable.",
+            );
+        }
+        self.audit_detail_inline(&parts.headers, input.website_id, input.delivery_id)
+            .await
+    }
+    #[tool(
+        description = "Start a versioned complete audit export for an owned website.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true
+        )
+    )]
+    async fn website_audit_export_start_v1(
+        &self,
+        rmcp::handler::server::wrapper::Parameters(input): rmcp::handler::server::wrapper::Parameters<crate::audit_export::StartInput>,
+        rmcp::handler::server::tool::Extension(parts): rmcp::handler::server::tool::Extension<
+            axum::http::request::Parts,
+        >,
+    ) -> CallToolResult {
+        let Some(owner) = parts.extensions.get::<crate::auth::AuthenticatedUser>() else {
+            return saved_tool_result(Err(crate::websites::WebsiteError::Unauthorized));
+        };
+        if !parts
+            .extensions
+            .get::<crate::McpAdmission>()
+            .is_some_and(crate::McpAdmission::acquire)
+        {
+            return crate::audit_export::failure(
+                "EXPORT_CAPACITY",
+                "Audit response capacity is temporarily unavailable.",
+            );
+        }
+        crate::audit_export::start(
+            &self.exports,
+            &self.store,
+            &self.management,
             &parts.headers,
-            axum::http::Method::GET,
-            format!(
-                "/websites/{}/seo/audits/{}",
-                input.website_id, input.delivery_id
-            ),
-            serde_json::Value::Null,
+            owner.id,
+            input,
         )
         .await
+    }
+    #[tool(
+        description = "Read a bounded byte chunk from a versioned audit export.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true
+        )
+    )]
+    async fn website_audit_export_chunk_v1(
+        &self,
+        rmcp::handler::server::wrapper::Parameters(input): rmcp::handler::server::wrapper::Parameters<crate::audit_export::ChunkInput>,
+        rmcp::handler::server::tool::Extension(parts): rmcp::handler::server::tool::Extension<
+            axum::http::request::Parts,
+        >,
+    ) -> CallToolResult {
+        let Some(owner) = parts.extensions.get::<crate::auth::AuthenticatedUser>() else {
+            return saved_tool_result(Err(crate::websites::WebsiteError::Unauthorized));
+        };
+        if !parts
+            .extensions
+            .get::<crate::McpAdmission>()
+            .is_some_and(crate::McpAdmission::acquire)
+        {
+            return crate::audit_export::failure(
+                "EXPORT_CAPACITY",
+                "Audit response capacity is temporarily unavailable.",
+            );
+        }
+        crate::audit_export::chunk(&self.exports, &self.store, &parts.headers, owner.id, input)
+            .await
+    }
+    #[tool(
+        description = "Release a versioned audit export.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true
+        )
+    )]
+    async fn website_audit_export_close_v1(
+        &self,
+        rmcp::handler::server::wrapper::Parameters(input): rmcp::handler::server::wrapper::Parameters<crate::audit_export::ExportInput>,
+        rmcp::handler::server::tool::Extension(parts): rmcp::handler::server::tool::Extension<
+            axum::http::request::Parts,
+        >,
+    ) -> CallToolResult {
+        let Some(owner) = parts.extensions.get::<crate::auth::AuthenticatedUser>() else {
+            return saved_tool_result(Err(crate::websites::WebsiteError::Unauthorized));
+        };
+        crate::audit_export::close(&self.exports, &self.store, &parts.headers, owner.id, input)
+            .await
     }
     #[tool(
         description = "Import a Seosmith JSON report for an owned website. Validates hostname and run identity; retries of the same report are deduplicated. Does not start a crawl.",
@@ -1080,9 +1231,22 @@ impl ServerHandler for WebsiteMcp {
 pub(crate) fn secured_service(
     store: crate::websites::WebsiteStore,
 ) -> StreamableHttpService<WebsiteMcp, LocalSessionManager> {
+    let exports: crate::audit_export::SharedExports = std::sync::Arc::default();
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        let weak = std::sync::Arc::downgrade(&exports);
+        handle.spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let Some(exports) = weak.upgrade() else { break };
+                exports.lock().await.reap();
+            }
+        });
+    }
     StreamableHttpService::new(
         move || {
             Ok(WebsiteMcp {
+                exports: exports.clone(),
                 store: store.clone(),
                 management: crate::websites::router(store.clone())
                     .merge(crate::insights::router(store.clone()))
@@ -1133,6 +1297,71 @@ mod management_tests {
         http::{HeaderMap, Method, StatusCode},
         routing::any,
     };
+
+    #[tokio::test]
+    async fn audit_inline_retains_small_fields_and_explicitly_requires_export_for_large() {
+        let app = Router::new().route("/{*path}", any(|axum::extract::OriginalUri(uri): axum::extract::OriginalUri| async move {
+            if uri.path().ends_with("00000000-0000-0000-0000-000000000002") {
+                Json(serde_json::json!({"report":{"schema_version":2},"report_json":"{\"schema_version\":2}","summary":{"x":1}}))
+            } else {
+                Json(serde_json::json!({"report":{"padding":"x".repeat(300_000)}}))
+            }
+        }));
+        let mcp = WebsiteMcp {
+            store: crate::websites::WebsiteStore::new("http://127.0.0.1:1", "test"),
+            management: app,
+            exports: std::sync::Arc::default(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer owner-token".parse().unwrap());
+        let site = uuid::Uuid::from_u128(1);
+        let small = mcp
+            .audit_detail_inline(&headers, site, uuid::Uuid::from_u128(2))
+            .await;
+        assert_eq!(small.is_error, Some(false));
+        let detail = small.structured_content.unwrap();
+        assert_eq!(detail["report"]["schema_version"], 2);
+        assert_eq!(detail["report_json"], "{\"schema_version\":2}");
+        assert_eq!(detail["summary"]["x"], 1);
+        let large = mcp
+            .audit_detail_inline(&headers, site, uuid::Uuid::from_u128(3))
+            .await;
+        assert_eq!(large.is_error, Some(true));
+        assert_eq!(large.structured_content.unwrap()["code"], "EXPORT_REQUIRED");
+    }
+
+    #[tokio::test]
+    #[ignore = "local memory profile"]
+    async fn profile_inline_token_heavy() {
+        let app = Router::new().route(
+            "/{*path}",
+            any(|| async {
+                let mut body = String::with_capacity(256 * 1024);
+                body.push_str("{\"report\":[");
+                body.push_str(&"0,".repeat(130_000));
+                body.push_str("0]}");
+                body
+            }),
+        );
+        let mcp = WebsiteMcp {
+            store: crate::websites::WebsiteStore::new("http://127.0.0.1:1", "test"),
+            management: app,
+            exports: std::sync::Arc::default(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer owner-token".parse().unwrap());
+        let result = mcp
+            .audit_detail_inline(&headers, uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(2))
+            .await;
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(
+            result.structured_content.unwrap()["report"]
+                .as_array()
+                .unwrap()
+                .len(),
+            130_001
+        );
+    }
 
     #[tokio::test]
     async fn provider_bridge_forwards_only_identity_and_never_follows_redirects() {
