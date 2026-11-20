@@ -17,6 +17,17 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+/// Client deadline for a Data API RPC. The two Seosmith ingest RPCs have a
+/// bounded 20s database statement budget (migration 20261117120000), so their
+/// client deadline stays strictly above it; every other RPC keeps 10s.
+fn rpc_deadline(name: &str) -> Duration {
+    if name == "import_seosmith_audit" {
+        Duration::from_secs(25)
+    } else {
+        Duration::from_secs(10)
+    }
+}
+
 /// User-scoped access to Supabase; no privileged database credential is used.
 #[derive(Clone)]
 pub struct WebsiteStore {
@@ -76,6 +87,7 @@ impl WebsiteStore {
             .get(header::AUTHORIZATION)
             .ok_or(WebsiteError::Unauthorized)?;
         let started = Instant::now();
+        let timeout = rpc_deadline(name);
         let response = self
             .client
             .post(format!(
@@ -84,7 +96,7 @@ impl WebsiteStore {
             ))
             .header("apikey", &self.publishable_key)
             .header(header::AUTHORIZATION, authorization)
-            .timeout(Duration::from_secs(10))
+            .timeout(timeout)
             .json(&body)
             .send()
             .await
@@ -231,7 +243,8 @@ impl WebsiteStore {
     pub(crate) async fn ingest_seosmith(&self, body: Value) -> Result<Value, WebsiteError> {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(20))
+            // Above the bounded 20s database budget for ingest_seosmith_audit.
+            .timeout(Duration::from_secs(25))
             .build()
             .map_err(|_| WebsiteError::Unavailable)?;
         let started = Instant::now();
@@ -589,6 +602,23 @@ mod ingest_error_tests {
         super::log_ingest_server_error("worker", started, response).await;
         assert!(started.elapsed() < Duration::from_secs(1));
         server.abort();
+    }
+
+    #[test]
+    fn ingest_rpc_deadline_stays_above_the_database_budget() {
+        use std::time::Duration;
+        assert_eq!(
+            super::rpc_deadline("import_seosmith_audit"),
+            Duration::from_secs(25)
+        );
+        assert_eq!(
+            super::rpc_deadline("request_google_report"),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            super::rpc_deadline("seosmith_audit_history"),
+            Duration::from_secs(10)
+        );
     }
 
     #[test]
