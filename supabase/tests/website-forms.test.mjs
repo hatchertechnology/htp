@@ -151,7 +151,7 @@ test('verified recipients receive a single queued delivery and failed sends can 
       create function auth.jwt() returns jsonb language sql stable as $$ select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb $$;
       create function auth.uid() returns uuid language sql stable as $$ select (auth.jwt()->>'sub')::uuid $$;
       grant usage on schema auth,public to authenticated,anon,service_role;`)
-    for(const file of ['20261028142440_create_websites.sql','20261122000000_website_forms.sql','20261122000100_forms_acceptance.sql','20261122000200_forms_host_verification.sql','20261122000300_forms_management.sql','20261122000400_forms_notifications.sql','20261122000500_forms_response_deletion.sql','20261122000600_forms_rename_safety.sql']) await db.exec(await readFile(new URL(`../migrations/${file}`,import.meta.url),'utf8'))
+    for(const file of ['20261028142440_create_websites.sql','20261122000000_website_forms.sql','20261122000100_forms_acceptance.sql','20261122000200_forms_host_verification.sql','20261122000300_forms_management.sql','20261122000400_forms_notifications.sql','20261122000500_forms_response_deletion.sql','20261122000600_forms_rename_safety.sql','20261122000700_forms_ingress_gate.sql']) await db.exec(await readFile(new URL(`../migrations/${file}`,import.meta.url),'utf8'))
     const owner='00000000-0000-0000-0000-000000000001', other='00000000-0000-0000-0000-000000000002', site='00000000-0000-0000-0000-000000000003', form='00000000-0000-0000-0000-000000000004', response='00000000-0000-0000-0000-000000000005'
     await db.query('insert into auth.users values($1),($2)',[owner,other])
     await db.query("insert into public.websites(id,owner_id,fqdn) values($1,$2,'example.com')",[site,owner])
@@ -204,6 +204,15 @@ test('verified recipients receive a single queued delivery and failed sends can 
     assert.equal((await db.query('select count(*)::int n from public.website_form_responses')).rows[0].n,0)
     await db.query('update public.website_forms set fields=$1 where id=$2',[JSON.stringify([{key:'name',label:'Name',kind:'text',required:false,max_length:100}]),form])
     const newId='00000000-0000-0000-0000-000000000008'
+    await db.exec('set role anon')
+    await assert.rejects(()=>db.query('select public.charge_form_ingress($1)',[form]),/permission denied/)
+    await db.exec('reset role; set role service_role')
+    assert.equal((await db.query('select public.charge_form_ingress($1) result',[form])).rows[0].result,'ok')
+    await db.exec('reset role')
+    await db.query('update public.website_form_ingress_windows set count=300 where form_id=$1',[form])
+    assert.equal((await db.query('select public.charge_form_ingress($1) result',[form])).rows[0].result,'rate_limited')
+    await db.query("update public.website_form_ingress_windows set started_at=now()-interval '11 minutes' where form_id=$1",[form])
+    assert.equal((await db.query('select public.charge_form_ingress($1) result',[form])).rows[0].result,'ok')
     const accept=()=>db.query("select public.accept_website_form($1,$2,'example.com','{}') result",[form,newId])
     assert.equal((await accept()).rows[0].result.ok,true)
     assert.equal((await accept()).rows[0].result.duplicate,true)

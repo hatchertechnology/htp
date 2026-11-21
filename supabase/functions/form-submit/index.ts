@@ -69,8 +69,15 @@ export async function handle(request: Request, rpc: Rpc): Promise<Response> {
   const id = new URL(request.url).searchParams.get("form") ?? "";
   if (!uuid.test(id)) return respond({ error: "form_unavailable" }, 404);
   const source = browserOrigin(request);
-  if (!source) return respond({ error: "origin_required" }, 403);
   try {
+    const admission = await rpc("charge_form_ingress", { p_form_id: id });
+    if (admission === "unavailable") {
+      return respond({ error: "form_unavailable" }, 404);
+    }
+    if (admission !== "ok" && admission !== "rate_limited") {
+      return respond({ error: "temporarily_unavailable" }, 503);
+    }
+    if (!source) return respond({ error: "origin_required" }, 403);
     if (
       !await rpc("website_form_origin_allowed", {
         p_form_id: id,
@@ -78,6 +85,11 @@ export async function handle(request: Request, rpc: Rpc): Promise<Response> {
       })
     ) return respond({ error: "form_unavailable" }, 404);
     headers.set("Access-Control-Allow-Origin", source.origin);
+    if (admission === "rate_limited") {
+      headers.set("Retry-After", "600");
+      headers.set("Access-Control-Expose-Headers", "Retry-After");
+      return respond({ error: "rate_limited" }, 429);
+    }
     if (request.method === "OPTIONS") {
       headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
       headers.set("Access-Control-Allow-Headers", "Content-Type, Accept");

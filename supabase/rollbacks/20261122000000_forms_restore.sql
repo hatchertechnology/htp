@@ -1,6 +1,7 @@
 -- Re-enable database privileges after the cause of a forms disable is resolved.
 -- Restore Edge Functions and the scheduler only after database checks pass.
 begin;
+grant execute on function public.charge_form_ingress(uuid) to service_role;
 grant execute on function public.accept_website_form(uuid,uuid,text,jsonb) to service_role;
 grant execute on function public.website_form_origin_allowed(uuid,text) to service_role;
 grant execute on function public.begin_form_host_verification(uuid,text) to authenticated;

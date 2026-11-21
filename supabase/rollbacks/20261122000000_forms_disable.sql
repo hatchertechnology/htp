@@ -2,6 +2,7 @@
 -- htp-form-notifications, disable new management and ingestion. Preserve all
 -- tables, responses, proof records, and delivery history for recovery.
 begin;
+revoke execute on function public.charge_form_ingress(uuid) from service_role;
 revoke execute on function public.accept_website_form(uuid,uuid,text,jsonb) from service_role;
 revoke execute on function public.website_form_origin_allowed(uuid,text) from service_role;
 revoke execute on function public.begin_form_host_verification(uuid,text) from authenticated;
