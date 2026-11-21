@@ -1,0 +1,162 @@
+name: Forms PR checks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scope:
+    name: Detect forms coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run_forms: ${{ steps.detect.outputs.run_forms }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: detect
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only "$(git merge-base "$BASE_SHA" "$HEAD_SHA")" "$HEAD_SHA")
+          complete=true
+          for required in supabase/functions/form-submit/index.ts apps/api/src/form_ingress.rs apps/web/app/components/WebsiteForms.vue apps/web/tests/fixtures/check-forms-cors.mjs supabase/tests/website-forms.test.mjs supabase/tests/forms-client-admission.test.mjs; do
+            if [[ ! -f "$required" ]]; then complete=false; fi
+          done
+          if [[ "$complete" == true ]]; then
+            echo "run_forms=true" >> "$GITHUB_OUTPUT"
+          elif grep -Eq '^(docs/forms/|supabase/rollbacks/20261122|supabase/functions/form-(submit|verify|notifications|confirm-recipient)/|supabase/migrations/20261122|supabase/tests/(website-forms|forms-client-admission)\.test\.mjs$|apps/api/src/form_ingress\.rs$|apps/web/app/(components/WebsiteForms\.vue|utils/forms-csv\.ts)$|apps/web/tests/(forms-csv\.test\.ts|fixtures/(forms|check-forms)))' <<< "$changed"; then
+            echo 'Forms-specific files changed but the forms implementation is incomplete' >&2
+            exit 1
+          else
+            echo 'Forms implementation incomplete and no forms-specific files changed; skipping forms checks.'
+            echo "run_forms=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  edge:
+    needs: scope
+    if: needs.scope.outputs.run_forms == 'true'
+    name: Forms Edge Functions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.7
+      - name: Test forms handlers
+        run: >-
+          deno test --allow-env --allow-net
+          supabase/functions/form-submit/index_test.ts
+          supabase/functions/form-verify/index_test.ts
+          supabase/functions/form-confirm-recipient/index_test.ts
+          supabase/functions/form-notifications/index_test.ts
+
+  database:
+    needs: scope
+    if: needs.scope.outputs.run_forms == 'true'
+    name: Forms database fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: supabase
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+          cache-dependency-path: supabase/package-lock.json
+      - run: npm ci --ignore-scripts
+      - name: Test forms migrations and admission
+        run: node --test tests/website-forms.test.mjs tests/forms-client-admission.test.mjs
+
+  api:
+    needs: scope
+    if: needs.scope.outputs.run_forms == 'true'
+    name: API library tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.100.0
+      - name: Test API library
+        run: cargo test --locked -p htp-api --lib
+
+  web:
+    needs: scope
+    if: needs.scope.outputs.run_forms == 'true'
+    name: Web and forms browser fixtures
+    # Playwright 1.56.1 does not support the moving ubuntu-latest 26.04 image.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.7
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Test inbox component in Chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run fixture:forms:serve > "$RUNNER_TEMP/forms-vite.log" 2>&1 &
+          fixture_pid=$!
+          trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl -fsS http://127.0.0.1:4177/tests/fixtures/forms.html > /dev/null; then break; fi
+            if ! kill -0 "$fixture_pid" 2>/dev/null; then cat "$RUNNER_TEMP/forms-vite.log"; exit 1; fi
+            sleep 1
+          done
+          npm run fixture:forms:check
+      - name: Test cross-origin browser behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          cert_dir=$(mktemp -d "$RUNNER_TEMP/forms-cors.XXXXXXXX")
+          export FORMS_TEST_CERT="$cert_dir/cert.pem" FORMS_TEST_KEY="$cert_dir/key.pem"
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout "$FORMS_TEST_KEY" -out "$FORMS_TEST_CERT" -days 1 -subj /CN=fixture.test > /dev/null 2>&1
+          deno run --allow-net=127.0.0.1:56575 --allow-read --allow-env=FORMS_TEST_CERT,FORMS_TEST_KEY tests/fixtures/forms-cors-server.ts > "$RUNNER_TEMP/forms-cors.log" 2>&1 &
+          fixture_pid=$!
+          trap 'kill "$fixture_pid" 2>/dev/null || true; rm -r "$cert_dir"' EXIT
+          for attempt in {1..30}; do
+            if curl -ksS https://127.0.0.1:56575/ > /dev/null; then break; fi
+            if ! kill -0 "$fixture_pid" 2>/dev/null; then cat "$RUNNER_TEMP/forms-cors.log"; exit 1; fi
+            sleep 1
+          done
+          npm run fixture:forms:cors
