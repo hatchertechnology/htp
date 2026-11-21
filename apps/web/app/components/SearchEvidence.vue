@@ -3,7 +3,7 @@ import type { SearchRow } from '../../shared/types/search'
 const props = defineProps<{ websiteId: string; property: string; start: string; end: string }>()
 type Candidate = { kind: string; page?: string; query?: string; interpretation?: string; evidence?: unknown; evidence_presentation?: { truncated: boolean } }
 type Landing = { landing_page: string; metrics: Record<string, number> }
-type Page = { available: boolean; reason: string | null; rows: (SearchRow | Candidate | Landing)[]; has_more: boolean; retained_rows: number | null; currency_code?: string | null; collection?: { truncated?: boolean | null; anonymized_queries?: string }; comparison?: { available: boolean; reason?: string; clicks?: { before: number; after: number } }; measurement?: { observed_at?: string } }
+type Page = { available: boolean; reason: string | null; rows: (SearchRow | Candidate | Landing)[]; has_more: boolean; retained_rows: number | null; currency_code?: string | null; collection?: { truncated?: boolean | null; anonymized_queries?: string }; comparison?: { available: boolean; reason?: string; clicks?: { before: number; after: number } }; sync?: { fetched_at?: string; state?: string; snapshot_id?: number } }
 const ws = useWorkspace()
 const dataset = ref('queries')
 const offset = ref(0)
@@ -44,7 +44,7 @@ onBeforeUnmount(() => { generation++ })
     <template v-else-if="data">
       <p v-if="!data.available">No saved {{ dataset.replaceAll('_', ' ') }} evidence is available for this exact period. Daily totals may still be available above.</p>
       <template v-else>
-        <p v-if="data.measurement?.observed_at" class="tool-guidance">Last saved {{ new Date(data.measurement.observed_at).toLocaleString() }} · {{ data.retained_rows }} retained rows<span v-if="data.collection?.truncated === true"> · collection reached its limit</span><span v-else-if="data.collection?.truncated == null && dataset !== 'analysis' && dataset !== 'landing_outcomes'"> · collection completeness unknown</span></p>
+        <p v-if="data.sync?.fetched_at" class="tool-guidance">Exact snapshot saved {{ new Date(data.sync.fetched_at).toLocaleString() }} · {{ data.sync.state || 'unknown freshness' }} · {{ data.retained_rows }} retained rows<span v-if="data.collection?.truncated === true"> · collection reached its limit</span><span v-else-if="data.collection?.truncated == null && dataset !== 'analysis' && dataset !== 'landing_outcomes'"> · collection completeness unknown</span></p>
         <p v-if="dataset === 'landing_outcomes'">GA4 landing outcomes cover all collected channels; they are not attributed to individual search queries.</p>
         <p v-if="dataset === 'analysis' && data.comparison?.available && data.comparison.clicks">Comparable prior-period clicks: {{ data.comparison.clicks.before }} → {{ data.comparison.clicks.after }}</p>
         <p v-else-if="dataset === 'analysis' && !data.comparison?.available">Period comparison unavailable{{ data.comparison?.reason ? `: ${data.comparison.reason.replaceAll('_', ' ')}` : '' }}.</p>

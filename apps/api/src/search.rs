@@ -286,36 +286,42 @@ async fn dataset(
             "Choose a Search Console property for this website.",
         ));
     }
-    if input.dataset == "landing_outcomes" {
+    let (kind, property) = if input.dataset == "landing_outcomes" {
         let Some(property) = website.ga4_property_id else {
             return Ok(Json(
                 json!({"semantics_version":1,"dataset":"landing_outcomes","available":false,"reason":"ga4_property_unavailable","rows":[],"offset":offset,"limit":limit,"has_more":false}),
             ));
         };
-        let saved = store
-            .saved_report(
-                &headers,
-                id,
-                "conversions",
-                &property,
-                &input.start_date,
-                &input.end_date,
-            )
-            .await
-            .map_err(SearchError::Website)?;
-        return Ok(Json(landing_projection(&saved, offset, limit)));
-    }
-    let saved = store
-        .saved_report(
+        ("conversions", property)
+    } else {
+        ("search", input.site_url.clone())
+    };
+    let mut saved = store
+        .rpc(
             &headers,
-            id,
-            "search",
-            &input.site_url,
-            &input.start_date,
-            &input.end_date,
+            "read_search_exact_snapshot",
+            json!({
+                "p_website_id":id,"p_kind":kind,"p_property_id":property,
+                "p_start_date":input.start_date,"p_end_date":input.end_date
+            }),
         )
         .await
         .map_err(SearchError::Website)?;
+    let daily = store
+        .saved_report(
+            &headers,
+            id,
+            kind,
+            &property,
+            &input.start_date,
+            &input.end_date,
+        )
+        .await;
+    saved["daily_sync"] = daily.map_or(Value::Null, |value| value["sync"].clone());
+    if input.dataset == "landing_outcomes" {
+        return Ok(Json(landing_projection(&saved, offset, limit)));
+    }
+
     if input.dataset == "query_page_segments" {
         return Ok(Json(segment_projection(
             &saved,
@@ -389,7 +395,7 @@ fn landing_projection(saved: &Value, offset: usize, limit: usize) -> Value {
         "has_more":total.is_some_and(|n| offset.saturating_add(limit)<n),
         "collection":outcome.get("collection"),"attribution":outcome.get("attribution"),
         "currency_code":saved["data"]["pages"]["metadata"].get("currencyCode"),
-        "measurement":saved["data"].get("measurement"),"sync":saved["sync"]})
+        "measurement":saved["data"].get("measurement"),"sync":saved["sync"],"daily_sync":saved["daily_sync"]})
 }
 
 fn dataset_projection(saved: &Value, name: &str, offset: usize, limit: usize) -> Value {
@@ -423,7 +429,7 @@ fn dataset_projection(saved: &Value, name: &str, offset: usize, limit: usize) ->
     }).collect();
     let total = if available { rows.map(Vec::len) } else { None };
     json!({"semantics_version":1, "dataset":name, "available":available,
-        "reason":if available { None } else if !exact { Some("exact_period_snapshot_unavailable") } else { Some("dataset_unavailable") },
+        "reason":if available { None } else if !exact { Some("exact_period_snapshot_unavailable") } else { dataset["reason"].as_str().or(Some("dataset_unavailable")) },
         "rows":page, "offset":offset, "limit":limit, "retained_rows":total,
         "has_more":total.is_some_and(|n| offset.saturating_add(limit)<n),
         "collection":if available { dataset.get("collection").cloned() } else { None },
@@ -431,7 +437,7 @@ fn dataset_projection(saved: &Value, name: &str, offset: usize, limit: usize) ->
         "coverage":if available && name == "analysis" { dataset.get("coverage").cloned() } else { None },
         "policy":if available && name == "analysis" { dataset.get("policy").cloned() } else { None },
         "measurement":if available { saved["data"].get("measurement").cloned() } else { None },
-        "sync":saved["sync"]})
+        "sync":saved["sync"],"daily_sync":saved["daily_sync"]})
 }
 async fn properties(
     State((store, _google)): State<(WebsiteStore, SearchClient)>,
@@ -754,6 +760,18 @@ mod tests {
         );
     }
     #[test]
+    fn exact_freshness_and_daily_status_remain_separate() {
+        let saved = json!({"sync":{"exact_range_available":true,"snapshot_id":7,"fetched_at":"2026-01-01T00:00:00Z","state":"stale"},"daily_sync":{"fetched_at":"2026-11-01T00:00:00Z","state":"error","last_error":"google_quota_exceeded"},"data":{"queries":{"rows":[]},"query_page_segments":{"unavailable":true,"reason":"segment_collection_unavailable"}}});
+        let result = dataset_projection(&saved, "queries", 0, 25);
+        assert_eq!(result["sync"]["snapshot_id"], 7);
+        assert_eq!(result["sync"]["state"], "stale");
+        assert_eq!(result["daily_sync"]["state"], "error");
+        assert_eq!(
+            dataset_projection(&saved, "query_page_segments", 0, 25)["reason"],
+            "segment_collection_unavailable"
+        );
+    }
+    #[test]
     fn segments_filter_only_retained_matching_dimensions() {
         let saved = json!({"sync":{"exact_range_available":true},"data":{"query_page_segments":{
             "collection":{"truncated":true,"anonymized_queries":"excluded"},"rows":[
@@ -823,6 +841,10 @@ mod tests {
                     assert_eq!(headers["authorization"], "Bearer owner-token");
                     if headers.get("x-test-no-website").is_some() { return Json(json!([])); }
                     return Json(json!([{"id":"a19a3adb-148d-4714-9278-c2d709fe0ad1","fqdn":"example.com"}]));
+                }
+                if uri.path() == "/rest/v1/rpc/read_search_exact_snapshot" {
+                    assert_eq!(headers["authorization"], "Bearer owner-token");
+                    return Json(json!({"data":{"queries":{"rows":[]}},"sync":{"exact_range_available":true,"snapshot_id":5,"fetched_at":"2026-10-01T00:00:00Z","state":"stale"}}));
                 }
                 if uri.path() == "/rest/v1/rpc/request_google_report" {
                     assert_eq!(headers["authorization"], "Bearer owner-token");

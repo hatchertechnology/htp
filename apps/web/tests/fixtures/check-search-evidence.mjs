@@ -4,7 +4,7 @@ const browser = await chromium.launch({headless:true})
 const page = await browser.newPage({viewport:{width:390,height:844}})
 const errors=[]; page.on('pageerror', error=>errors.push(error.message))
 try {
-  await page.goto('http://127.0.0.1:4177/tests/fixtures/search-evidence.html')
+  await page.goto('http://127.0.0.1:4184/tests/fixtures/search-evidence.html')
   await page.getByText('cleaning', {exact:true}).waitFor()
   await page.getByLabel('Dataset').selectOption('query_page_segments')
   await page.locator('label').filter({hasText:'Device'}).last().locator('select').selectOption('MOBILE')

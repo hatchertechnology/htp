@@ -2276,7 +2276,7 @@ async fn search_evidence_requires_auth_and_reads_only_owner_scoped_saved_data() 
     });
     let calls = Arc::new(AtomicUsize::new(0));
     let hits = calls.clone();
-    let saved = Router::new().route("/rest/v1/rpc/request_google_report", axum::routing::post(move |headers: axum::http::HeaderMap, Json(input): Json<Value>| {
+    let saved = Router::new().route("/rest/v1/rpc/read_search_exact_snapshot", axum::routing::post(move |headers: axum::http::HeaderMap, Json(input): Json<Value>| {
         let hits = hits.clone(); async move {
             hits.fetch_add(1, Ordering::SeqCst);
             assert!(headers["authorization"].to_str().unwrap().starts_with("Bearer "));
