@@ -470,3 +470,23 @@ test('v2 interval accepts bounded explicit RFC3339 offsets and orders instants',
     await assert.rejects(()=>validate(mismatch),/invalid_evidence_interval/)
   } finally { await db.close() }
 })
+
+test('cross-path exact retries preserve the first receipt provenance', async () => {
+  for (const first of ['worker', 'import']) {
+    const db = await setup()
+    try {
+      await upgrade(db)
+      for (const f of ['20261117120000_seosmith_ingest_budget.sql','20261121120000_seosmith_input_cap.sql','20261121130000_seosmith_rfc3339_intervals.sql']) await db.exec(await readFile(new URL('../migrations/'+f,import.meta.url),'utf8'))
+      const raw=JSON.stringify(legacy), id=legacy.request.request_id
+      const worker=async()=>{await db.exec('reset role;set role anon');return (await db.query('select public.ingest_seosmith_audit($1,$2,$3,$4) as receipt',['x'.repeat(64),id,hash(raw),raw])).rows[0].receipt}
+      const ownerImport=async()=>{await identity(db);return (await db.query('select public.import_seosmith_audit($1,$2) as receipt',[site,raw])).rows[0].receipt}
+      const initial=await (first==='worker' ? worker() : ownerImport())
+      const retry=await (first==='worker' ? ownerImport() : worker())
+      assert.deepEqual(retry,initial)
+      await db.exec('reset role')
+      const stored=(await db.query('select ingestion_source,raw_report_json from public.seosmith_audits where delivery_id=$1',[id])).rows[0]
+      assert.equal(stored.ingestion_source,first)
+      assert.equal(stored.raw_report_json,raw)
+    } finally { await db.close() }
+  }
+})

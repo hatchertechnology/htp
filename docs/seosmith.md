@@ -273,3 +273,29 @@ reports store their derived summary on insertion.
 
 Once v2 rows exist, v2 receiver and historical read support is a permanent
 compatibility requirement; disabling producer generation does not remove it.
+
+### Remediation work (existing schema 1/2 audits)
+
+The optional remediation panel is disabled by default. Set Nuxt runtime
+`NUXT_PUBLIC_SEOSMITH_REMEDIATION=true` only after migration
+`20261126120000_seosmith_remediation.sql` and the matching API are installed and
+an authorized saved-audit read/write has been verified. The panel and its API
+use the signed-in website owner; the database independently checks the current
+hostname, audit, and original finding index. The work record is mutable and
+separate from the immutable report. Status `done` and exceptions are planning
+states, not evidence of a verified fix. Verification attempts are append-only
+observations and do not automatically resolve a finding. A related audit ID,
+when provided, must be a saved audit for the same owner and current hostname.
+
+The panel preserves the original evidence and severity and labels confidence,
+intended policy, and affected reach as unknown where the report cannot establish
+them. Business exposure, effort, segment, assignee, exception, and rationale
+are explicit user-entered planning fields; no revenue uplift is calculated.
+Schema 4 is not accepted or advertised by this change. H03 lifecycle and H15
+notification integration must not infer resolution from these mutable states.
+
+Deploy database and API before enabling the web flag; verify access denial for
+other accounts, saved work and attempt reads, and audit immutability. Roll back
+by setting the flag false first. Retain the migration and work records while
+clients or saved work depend on them; reverting the UI does not erase them.
+Fixture tests are not a production rollout verification.
