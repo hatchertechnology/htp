@@ -433,7 +433,7 @@ test('v2 interval accepts bounded explicit RFC3339 offsets and orders instants',
   const db=await setup()
   try {
     await upgrade(db)
-    await db.exec(await readFile(new URL('../migrations/20261121095609_seosmith_rfc3339_intervals.sql',import.meta.url),'utf8'))
+    await db.exec(await readFile(new URL('../migrations/20261121130000_seosmith_rfc3339_intervals.sql',import.meta.url),'utf8'))
     const base=JSON.parse(await readFile(new URL('fixtures/contracts/v2-complete.json',import.meta.url),'utf8'))
     const interval=(start,end) => {
       const report=structuredClone(base)
