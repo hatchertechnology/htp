@@ -22,6 +22,17 @@ type Dependencies = {
   sender: string;
   verifyUrl: string;
 };
+function validReplyTo(value: string): boolean {
+  if (value.length > 254 || /[\s\x00-\x1f\x7f]/.test(value)) return false;
+  const parts = value.split("@");
+  if (parts.length !== 2) return false;
+  const [local, domain] = parts;
+  return local.length > 0 && local.length <= 64 && !local.startsWith(".") &&
+    !local.endsWith(".") && !local.includes("..") &&
+    /^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+$/.test(local) &&
+    /^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/
+      .test(domain);
+}
 export async function run(deps: Dependencies) {
   const job = await deps.claim();
   if (!job) return { processed: false };
@@ -42,7 +53,7 @@ export async function run(deps: Dependencies) {
       message.TextBody =
         `A new inquiry was received for ${job.form_name}. Sign in to Hatch Tech Platform to review it.`;
       if (
-        job.reply_to && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(job.reply_to)
+        job.reply_to && validReplyTo(job.reply_to)
       ) message.ReplyTo = job.reply_to;
     }
     state = await deps.send(message);

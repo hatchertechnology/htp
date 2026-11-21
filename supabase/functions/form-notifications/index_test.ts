@@ -66,3 +66,19 @@ Deno.test("scheduler secret is required", async () => {
   equal(response.status, 401);
   equal(claimed, false);
 });
+
+Deno.test("invalid visitor reply-to is omitted", async () => {
+  let message: Record<string, string> = {};
+  await run({
+    claim: () =>
+      Promise.resolve({ ...job, reply_to: "bad..address@example.com" }),
+    finish: () => Promise.resolve(true),
+    send: (value) => {
+      message = value;
+      return Promise.resolve("sent");
+    },
+    sender: "sender@example.com",
+    verifyUrl: "https://htp.test/forms/confirm",
+  });
+  equal(message.ReplyTo, undefined);
+});
