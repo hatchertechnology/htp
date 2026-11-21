@@ -200,6 +200,17 @@ struct AuditHistoryInput {
 }
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct AuditEventInput {
+    #[schemars(with = "String")]
+    website_id: uuid::Uuid,
+    /// Page size 1–100; use both values from next_cursor.
+    limit: Option<u32>,
+    before: Option<String>,
+    #[schemars(with = "Option<String>")]
+    before_id: Option<uuid::Uuid>,
+}
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct AuditDetailInput {
     #[schemars(with = "String")]
     website_id: uuid::Uuid,
@@ -218,6 +229,35 @@ struct AuditImportInput {
 impl WebsiteMcp {
     // Bound the inline token tree before serde_json allocates it. Larger complete
     // details are retrieved through the versioned export workflow.
+    async fn audit_events_call(
+        &self,
+        headers: &axum::http::HeaderMap,
+        input: AuditEventInput,
+        endpoint: &str,
+    ) -> CallToolResult {
+        let mut url = reqwest::Url::parse(&format!(
+            "http://localhost/websites/{}/seo/{endpoint}",
+            input.website_id
+        ))
+        .expect("fixed URL");
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("limit", &input.limit.unwrap_or(50).to_string());
+            if let Some(before) = input.before {
+                query.append_pair("before", &before);
+            }
+            if let Some(id) = input.before_id {
+                query.append_pair("before_id", &id.to_string());
+            }
+        }
+        self.management_call(
+            headers,
+            axum::http::Method::GET,
+            format!("{}?{}", url.path(), url.query().unwrap_or_default()),
+            serde_json::Value::Null,
+        )
+        .await
+    }
     async fn audit_detail_inline(
         &self,
         headers: &axum::http::HeaderMap,
@@ -914,6 +954,42 @@ impl WebsiteMcp {
             serde_json::Value::Null,
         )
         .await
+    }
+    #[tool(
+        description = "Read recent saved audit events for an owned website. Producer availability and additional results are explicit; this read never starts collection or event processing.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true
+        )
+    )]
+    async fn website_audit_events(
+        &self,
+        rmcp::handler::server::wrapper::Parameters(input): rmcp::handler::server::wrapper::Parameters<AuditEventInput>,
+        rmcp::handler::server::tool::Extension(parts): rmcp::handler::server::tool::Extension<
+            axum::http::request::Parts,
+        >,
+    ) -> CallToolResult {
+        self.audit_events_call(&parts.headers, input, "audit-events")
+            .await
+    }
+    #[tool(
+        description = "Read recent stored provider operational failure episodes for an owned website. Producer availability and additional results are explicit; this read never starts collection.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true
+        )
+    )]
+    async fn website_operational_episodes(
+        &self,
+        rmcp::handler::server::wrapper::Parameters(input): rmcp::handler::server::wrapper::Parameters<AuditEventInput>,
+        rmcp::handler::server::tool::Extension(parts): rmcp::handler::server::tool::Extension<
+            axum::http::request::Parts,
+        >,
+    ) -> CallToolResult {
+        self.audit_events_call(&parts.headers, input, "operational-episodes")
+            .await
     }
     #[tool(
         description = "Read a complete saved Seosmith audit by delivery UUID for an owned website.",
