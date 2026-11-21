@@ -25,6 +25,12 @@ const inspection = ref<Inspection | null>(null)
 const history = ref<{ observations: { id: number; observed_at: string; data: Inspection; provenance: string }[]; has_more: boolean; next_before_id: number | null } | null>(null)
 const historyError = ref('')
 const historyBusy = ref(false)
+const deliveryId = ref('')
+type CrawlEvidence = { available: boolean; reason?: string; coverage: string; ingestion_source?: string; scan_at?: string; findings: { source_locator: string; finding: { rule?: string; severity?: string } | null; evidence_omitted: boolean }[]; findings_has_more: boolean; next_finding_after: number | null; evaluations: unknown[]; evaluations_has_more: boolean; next_evaluation_after: number | null }
+const crawlEvidence = ref<CrawlEvidence | null>(null)
+const crawlBusy = ref(false)
+const crawlError = ref('')
+
 let discoveryGeneration = 0
 let reportGeneration = 0
 let toolGeneration = 0
@@ -49,8 +55,9 @@ const indexStatus = computed(() => inspection.value?.inspectionResult?.indexStat
 const inspectionLink = computed(() => {
   try { const url = new URL(inspection.value?.inspectionResult?.inspectionResultLink ?? ''); return url.protocol === 'https:' && url.hostname === 'search.google.com' ? url.href : undefined } catch { return undefined }
 })
-function resetTools() { toolGeneration++; toolAbort?.abort(); toolBusy.value = false; toolError.value = ''; inspection.value = null; history.value = null; historyError.value = ''; historyBusy.value = false }
+function resetTools() { toolGeneration++; toolAbort?.abort(); toolBusy.value = false; toolError.value = ''; inspection.value = null; history.value = null; historyError.value = ''; historyBusy.value = false; crawlEvidence.value = null; crawlError.value = ''; crawlBusy.value = false }
 watch(pageUrl, resetTools)
+watch(deliveryId, resetTools)
 watch(property, () => { pageUrl.value = ''; resetTools() })
 async function discover() {
   clearTimeout(discoveryTimer); clearTimeout(reportTimer)
@@ -115,6 +122,17 @@ async function loadHistory(more = false) {
   finally { if (current === toolGeneration) historyBusy.value = false }
 }
 
+async function loadCrawlEvidence(more = false) {
+  const current = toolGeneration
+  crawlBusy.value = true; crawlError.value = ''
+  try {
+    const prior = crawlEvidence.value
+    const result = await ws.request<CrawlEvidence>(`/api/websites/${ws.selectedId.value}/search/crawl-evidence`, { method:'POST', body: { site_url:property.value, url:pageUrl.value, delivery_id:deliveryId.value, finding_after:more ? (prior?.next_finding_after ?? 2147483647) : -1, evaluation_after:more ? (prior?.next_evaluation_after ?? 2147483647) : -1 } })
+    if (current === toolGeneration) crawlEvidence.value = more && prior && result.available ? { ...result, findings:[...prior.findings,...result.findings], evaluations:[...prior.evaluations,...result.evaluations] } : result
+  } catch (cause) { if (current === toolGeneration) crawlError.value = failureMessage(cause) }
+  finally { if (current === toolGeneration) crawlBusy.value = false }
+}
+
 useConnectionReload(() => [ws.user.value?.id, ws.selectedId.value, canSearch.value, ws.google.value.connected, ws.google.value.reauthorizationRequired], () => { void discover() })
 watch(() => [property.value, start.value, end.value, ws.user.value?.id, ws.selectedId.value, canSearch.value], () => { void load() }, { immediate: true })
 watch([report, busy, discovering, error, discoveryError], () => {
@@ -148,6 +166,11 @@ onBeforeUnmount(() => { clearTimeout(discoveryTimer); clearTimeout(reportTimer);
       <p v-if="toolError" class="form-error" role="alert">{{ toolError }}</p>
       <div v-if="inspection" class="inspection-result" aria-live="polite"><h4>{{ indexStatus?.coverageState || 'Inspection returned no index status' }}</h4><dl><div><dt>Verdict</dt><dd>{{ indexStatus?.verdict || 'Not reported' }}</dd></div><div><dt>Last crawl</dt><dd>{{ indexStatus?.lastCrawlTime ? time(indexStatus.lastCrawlTime) : 'Not reported' }}</dd></div><div><dt>Robots.txt</dt><dd>{{ indexStatus?.robotsTxtState || 'Not reported' }}</dd></div><div><dt>Indexing allowed</dt><dd>{{ indexStatus?.indexingState || 'Not reported' }}</dd></div><div><dt>Page fetch</dt><dd>{{ indexStatus?.pageFetchState || 'Not reported' }}</dd></div><div><dt>Google canonical</dt><dd>{{ indexStatus?.googleCanonical || 'Not reported' }}</dd></div></dl><a v-if="inspectionLink" :href="inspectionLink" target="_blank" rel="noopener noreferrer" class="settings-link">Open inspection in Search Console <UIcon name="i-lucide-external-link" /></a></div>
       <p class="tool-guidance">URL Inspection is read-only. It describes Google’s indexed version and does not run a live test or request indexing.</p>
+      <div><label for="crawl-delivery">Saved crawl delivery ID <input id="crawl-delivery" v-model.trim="deliveryId" placeholder="Delivery UUID"></label> <button :disabled="!property || !pageUrl || !deliveryId || crawlBusy" @click="loadCrawlEvidence()">{{ crawlBusy ? 'Reading crawl…' : 'Compare saved crawl' }}</button>
+        <p class="tool-guidance">Matches the exact URL in one saved crawl. Missing evidence is unknown, not a pass. Imported reports retain their source.</p>
+        <p v-if="crawlError" role="alert" class="form-error">{{ crawlError }}</p>
+        <div v-if="crawlEvidence"><p v-if="!crawlEvidence.available">Saved crawl unavailable for this website.</p><template v-else><p>Observed {{ time(crawlEvidence.scan_at) }} · {{ crawlEvidence.ingestion_source }} · coverage unknown</p><ul><li v-for="item in crawlEvidence.findings" :key="item.source_locator">{{ item.finding?.rule || 'Evidence omitted' }} · {{ item.finding?.severity || 'Unknown severity' }} · {{ item.source_locator }}</li></ul><p v-if="!crawlEvidence.findings.length">No matching findings returned; this does not establish a pass.</p><button v-if="crawlEvidence.findings_has_more || crawlEvidence.evaluations_has_more" :disabled="crawlBusy" @click="loadCrawlEvidence(true)">Load more crawl evidence</button></template></div>
+      </div>
       <button :disabled="!property || !pageUrl || historyBusy" @click="loadHistory()">{{ historyBusy ? 'Reading history…' : 'View saved inspections' }}</button>
       <p v-if="historyError" role="alert" class="form-error">{{ historyError }}</p>
       <div v-if="history"><p v-if="!history.observations.length">No saved inspections for this URL and property.</p><ul v-else><li v-for="observation in history.observations" :key="observation.id">{{ time(observation.observed_at) }} · {{ observation.data.inspectionResult?.indexStatusResult?.coverageState || 'Index status not reported' }} · {{ observation.provenance.replaceAll('_', ' ') }}</li></ul><button v-if="history.has_more" :disabled="historyBusy" @click="loadHistory(true)">Load earlier inspections</button></div>

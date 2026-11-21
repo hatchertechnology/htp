@@ -7,6 +7,8 @@ type Page = { available: boolean; reason: string | null; rows: (SearchRow | Cand
 const ws = useWorkspace()
 const dataset = ref('queries')
 const offset = ref(0)
+const device = ref('')
+const country = ref('')
 const data = ref<Page | null>(null)
 const error = ref('')
 const loading = ref(false)
@@ -14,15 +16,15 @@ let generation = 0
 async function load() {
   const current = ++generation
   data.value = null; error.value = ''; loading.value = false
-  if (!props.websiteId || !props.property) return
+  if (!props.websiteId || !props.property || (dataset.value === 'query_page_segments' && country.value !== '' && !/^[a-z]{3}$/.test(country.value))) return
   loading.value = true
   try {
-    const result = await ws.request<Page>(`/api/websites/${props.websiteId}/search/dataset`, { method: 'POST', body: { site_url: props.property, start_date: props.start, end_date: props.end, dataset: dataset.value, offset: offset.value, limit: 25 } })
+    const result = await ws.request<Page>(`/api/websites/${props.websiteId}/search/dataset`, { method: 'POST', body: { site_url: props.property, start_date: props.start, end_date: props.end, dataset: dataset.value, offset: offset.value, limit: 25, ...(dataset.value === 'query_page_segments' ? { device: device.value || null, country: country.value || null } : {}) } })
     if (current === generation) data.value = result
   } catch (cause) { if (current === generation) error.value = failureMessage(cause) }
   finally { if (current === generation) loading.value = false }
 }
-watch(() => [props.websiteId, props.property, props.start, props.end, dataset.value], () => { offset.value = 0; void load() }, { immediate: true })
+watch(() => [props.websiteId, props.property, props.start, props.end, dataset.value, device.value, country.value], () => { offset.value = 0; void load() }, { immediate: true })
 function move(delta: number) { offset.value += delta; void load() }
 function rowLabel(row: SearchRow | Candidate | Landing) { return 'landing_page' in row ? row.landing_page : 'kind' in row ? [row.kind.replaceAll('_', ' '), row.query, row.page].filter(Boolean).join(' · ') : row.keys?.join(' · ') }
 function isMetric(row: SearchRow | Candidate | Landing): row is SearchRow { return 'clicks' in row }
@@ -30,7 +32,13 @@ onBeforeUnmount(() => { generation++ })
 </script>
 <template>
   <section class="report-panel search-table" aria-labelledby="search-evidence-heading">
-    <header><h3 id="search-evidence-heading">Saved search evidence</h3><label>Dataset <select v-model="dataset"><option value="queries">Queries</option><option value="pages">Pages</option><option value="query_pages">Query and page</option><option value="devices">Devices</option><option value="countries">Countries</option><option value="analysis">Review candidates</option><option value="landing_outcomes">Landing outcomes</option></select></label></header>
+    <header><h3 id="search-evidence-heading">Saved search evidence</h3><label>Dataset <select v-model="dataset"><option value="queries">Queries</option><option value="pages">Pages</option><option value="query_pages">Query and page</option><option value="query_page_segments">Query and page by device and country</option><option value="devices">Devices</option><option value="countries">Countries</option><option value="analysis">Review candidates</option><option value="landing_outcomes">Landing outcomes</option></select></label></header>
+    <div v-if="dataset === 'query_page_segments'">
+      <label>Device <select v-model="device"><option value="">All retained devices</option><option value="DESKTOP">Desktop</option><option value="MOBILE">Mobile</option><option value="TABLET">Tablet</option></select></label>
+      <label>Country code <input v-model.trim="country" maxlength="3" pattern="[a-z]{3}" placeholder="e.g. usa" aria-describedby="segment-help"></label>
+      <p v-if="country && !/^[a-z]{3}$/.test(country)" role="alert">Enter a lowercase three-letter country code.</p>
+      <p id="segment-help">Use Google's lowercase three-letter country code. Filters apply only to the retained top rows, not a complete segment.</p>
+    </div>
     <p class="tool-guidance">Exact-period snapshots only. Google returns bounded top rows and may omit anonymized queries; these are review leads, not a complete inventory or causal diagnosis.</p>
     <p v-if="loading" role="status">Reading saved evidence…</p><p v-else-if="error" role="alert" class="form-error">{{ error }} <button @click="load">Retry</button></p>
     <template v-else-if="data">

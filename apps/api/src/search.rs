@@ -113,6 +113,8 @@ struct DatasetInput {
     dataset: String,
     offset: Option<usize>,
     limit: Option<usize>,
+    device: Option<String>,
+    country: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -185,6 +187,7 @@ pub(crate) fn router(store: WebsiteStore, client: SearchClient) -> Router {
         .route("/websites/{id}/search/properties", post(properties))
         .route("/websites/{id}/search/dashboard", post(dashboard))
         .route("/websites/{id}/search/dataset", post(dataset))
+        .route("/websites/{id}/search/crawl-evidence", post(crawl_evidence))
         .route("/websites/{id}/search/inspect", post(inspect))
         .route(
             "/websites/{id}/search/inspection-history",
@@ -192,6 +195,43 @@ pub(crate) fn router(store: WebsiteStore, client: SearchClient) -> Router {
         )
         .with_state((store, client))
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CrawlEvidenceInput {
+    delivery_id: Uuid,
+    site_url: String,
+    url: String,
+    finding_after: Option<i32>,
+    evaluation_after: Option<i32>,
+    limit: Option<i32>,
+}
+async fn crawl_evidence(
+    State((store, _)): State<(WebsiteStore, SearchClient)>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(input): Json<CrawlEvidenceInput>,
+) -> Result<Json<Value>, SearchError> {
+    let website = store
+        .find(id, &headers)
+        .await
+        .map_err(SearchError::Website)?;
+    if !normalized_inspection(&input.url, &input.site_url, &website.fqdn)
+        .is_some_and(|(url, _)| url == input.url)
+        || input.finding_after.is_some_and(|n| n < -1)
+        || input.evaluation_after.is_some_and(|n| n < -1)
+        || input.limit.is_some_and(|n| !(1..=50).contains(&n))
+    {
+        return Err(SearchError::Invalid(
+            "Choose an exact website URL, delivery and valid evidence cursor.",
+        ));
+    }
+    let data = store.rpc(&headers, "search_crawl_evidence", json!({
+        "p_website_id":id,"p_delivery_id":input.delivery_id,"p_url":input.url,
+        "p_finding_after":input.finding_after.unwrap_or(-1),"p_evaluation_after":input.evaluation_after.unwrap_or(-1),"p_limit":input.limit.unwrap_or(25)
+    })).await.map_err(SearchError::Website)?;
+    Ok(Json(data))
+}
+
 async fn dataset(
     State((store, _)): State<(WebsiteStore, SearchClient)>,
     Path(id): Path<Uuid>,
@@ -212,6 +252,7 @@ async fn dataset(
             "queries"
                 | "pages"
                 | "query_pages"
+                | "query_page_segments"
                 | "devices"
                 | "countries"
                 | "analysis"
@@ -220,6 +261,20 @@ async fn dataset(
     {
         return Err(SearchError::Invalid(
             "Choose a supported dataset and page (maximum 100 rows).",
+        ));
+    }
+    if (input.device.is_some() || input.country.is_some()) && input.dataset != "query_page_segments"
+        || input
+            .device
+            .as_deref()
+            .is_some_and(|v| !matches!(v, "DESKTOP" | "MOBILE" | "TABLET"))
+        || input
+            .country
+            .as_deref()
+            .is_some_and(|v| v.len() != 3 || !v.bytes().all(|b| b.is_ascii_lowercase()))
+    {
+        return Err(SearchError::Invalid(
+            "Choose a valid device and three-letter country code for segments.",
         ));
     }
     let website = store
@@ -261,12 +316,55 @@ async fn dataset(
         )
         .await
         .map_err(SearchError::Website)?;
+    if input.dataset == "query_page_segments" {
+        return Ok(Json(segment_projection(
+            &saved,
+            input.device.as_deref(),
+            input.country.as_deref(),
+            offset,
+            limit,
+        )));
+    }
     Ok(Json(dataset_projection(
         &saved,
         &input.dataset,
         offset,
         limit,
     )))
+}
+
+fn segment_projection(
+    saved: &Value,
+    device: Option<&str>,
+    country: Option<&str>,
+    offset: usize,
+    limit: usize,
+) -> Value {
+    let mut filtered = saved.clone();
+    let mut invalid_rows = 0;
+    if let Some(rows) = filtered["data"]["query_page_segments"]["rows"].as_array_mut() {
+        rows.retain(|row| {
+            if !row["keys"]
+                .as_array()
+                .is_some_and(|keys| keys.len() == 4 && keys.iter().all(Value::is_string))
+            {
+                invalid_rows += 1;
+                return false;
+            }
+            let keys = row["keys"].as_array();
+            keys.is_some_and(|keys| {
+                keys.len() == 4
+                    && keys.iter().all(Value::is_string)
+                    && device.is_none_or(|v| keys[2].as_str() == Some(v))
+                    && country.is_none_or(|v| keys[3].as_str() == Some(v))
+            })
+        });
+    }
+    let mut result = dataset_projection(&filtered, "query_page_segments", offset, limit);
+    result["filters"] = json!({"device":device,"country":country});
+    result["filter_scope"] = json!("retained_bounded_rows_only");
+    result["invalid_rows_omitted"] = json!(invalid_rows);
+    result
 }
 
 fn landing_projection(saved: &Value, offset: usize, limit: usize) -> Value {
@@ -656,6 +754,34 @@ mod tests {
         );
     }
     #[test]
+    fn segments_filter_only_retained_matching_dimensions() {
+        let saved = json!({"sync":{"exact_range_available":true},"data":{"query_page_segments":{
+            "collection":{"truncated":true,"anonymized_queries":"excluded"},"rows":[
+              {"keys":["q","https://example.com/","MOBILE","usa"],"clicks":1},
+              {"keys":["q","https://example.com/","DESKTOP","usa"],"clicks":2},
+              {"keys":["q","https://example.com/","MOBILE","can"],"clicks":3},
+              {"keys":["malformed"]}]}}});
+        let page = segment_projection(&saved, Some("MOBILE"), Some("usa"), 0, 10);
+        assert_eq!(page["retained_rows"], 1);
+        assert_eq!(page["rows"][0]["clicks"], 1);
+        assert_eq!(page["collection"]["truncated"], true);
+        assert_eq!(page["filter_scope"], "retained_bounded_rows_only");
+        assert_eq!(
+            segment_projection(&saved, Some("TABLET"), None, 0, 10)["retained_rows"],
+            0
+        );
+        assert_eq!(
+            segment_projection(
+                &json!({"sync":{"exact_range_available":false}}),
+                None,
+                None,
+                0,
+                10
+            )["available"],
+            false
+        );
+    }
+    #[test]
     fn landing_projection_requires_exact_valid_observation() {
         let mut saved = json!({"sync":{"exact_range_available":true},"data":{"analysis":{"landing_outcomes":{"available":true,"rows":[{"landing_page":"/","metrics":{"sessions":0}}],"collection":{"truncated":false}}}}});
         let result = landing_projection(&saved, 0, 25);
@@ -707,6 +833,10 @@ mod tests {
                     assert_eq!(headers["authorization"], "Bearer owner-token");
                     assert!(headers.get("x-google-access-token").is_none());
                     return Json(json!({"id":1,"observed_at":"2026-11-01T00:00:00Z"}));
+                }
+                if uri.path() == "/rest/v1/rpc/search_crawl_evidence" {
+                    assert_eq!(headers["authorization"], "Bearer owner-token");
+                    return Json(json!({"available":true,"coverage":"unknown","findings":[],"evaluations":[]}));
                 }
                 if uri.path() == "/rest/v1/rpc/search_inspection_history" {
                     assert_eq!(headers["authorization"], "Bearer owner-token");
@@ -767,6 +897,21 @@ mod tests {
         invalid_dataset["limit"] = json!(101);
         assert_eq!(
             call(app.clone(), "dataset", invalid_dataset).await.status(),
+            StatusCode::BAD_REQUEST
+        );
+        let crawl = json!({"site_url":"sc-domain:example.com","url":"https://example.com/jobs/1","delivery_id":"00000000-0000-0000-0000-000000000004"});
+        assert_eq!(
+            call(app.clone(), "crawl-evidence", crawl.clone())
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        let mut bad_crawl = crawl;
+        bad_crawl["url"] = json!("https://other.example/jobs/1");
+        assert_eq!(
+            call(app.clone(), "crawl-evidence", bad_crawl)
+                .await
+                .status(),
             StatusCode::BAD_REQUEST
         );
         let base = json!({"site_url":"sc-domain:example.com","url":"https://example.com/jobs/1"});
