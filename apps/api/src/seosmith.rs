@@ -29,6 +29,11 @@ pub(crate) fn ingest_router(store: WebsiteStore) -> Router {
 pub(crate) fn read_router(store: WebsiteStore) -> Router {
     Router::new()
         .route("/websites/{id}/seo/audits", get(read))
+        .route("/websites/{id}/seo/audit-events", get(event_history))
+        .route(
+            "/websites/{id}/seo/operational-episodes",
+            get(operational_history),
+        )
         .route("/websites/{id}/seo/audits/import", post(import))
         .route("/websites/{id}/seo/audits/{run}", get(detail))
         .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
@@ -94,6 +99,50 @@ async fn read(
 ) -> Response {
     match store.rpc(&headers,"seosmith_audit_history",json!({"p_website_id":id,"p_limit":q.limit.unwrap_or(50),"p_before":q.before,"p_before_id":q.before_id})).await {
         Ok(value)=>([(header::CACHE_CONTROL,"no-store")],Json(value)).into_response(),Err(e)=>e.into_response()
+    }
+}
+
+#[derive(Deserialize)]
+struct EventQuery {
+    limit: Option<u32>,
+    before: Option<String>,
+    before_id: Option<Uuid>,
+}
+async fn event_history(
+    State(store): State<WebsiteStore>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Query(q): Query<EventQuery>,
+) -> Response {
+    match store
+        .rpc(
+            &headers,
+            "audit_event_history",
+            json!({"p_website_id": id, "p_limit": q.limit.unwrap_or(50), "p_before": q.before, "p_before_id": q.before_id}),
+        )
+        .await
+    {
+        Ok(value) => ([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response(),
+        Err(error) => error.into_response(),
+    }
+}
+
+async fn operational_history(
+    State(store): State<WebsiteStore>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Query(q): Query<EventQuery>,
+) -> Response {
+    match store
+        .rpc(
+            &headers,
+            "audit_operational_history",
+            json!({"p_website_id": id, "p_limit": q.limit.unwrap_or(50), "p_before": q.before, "p_before_id": q.before_id}),
+        )
+        .await
+    {
+        Ok(value) => ([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response(),
+        Err(error) => error.into_response(),
     }
 }
 
@@ -232,6 +281,47 @@ mod tests {
             receipt["delivery_id"],
             "00000000-0000-0000-0000-000000000002"
         );
+        server.abort();
+    }
+    #[tokio::test]
+    async fn event_history_is_read_only_and_preserves_unavailable_state() {
+        let rpc = Router::new().route(
+            "/rest/v1/rpc/audit_event_history",
+            post(
+                |headers: HeaderMap, Json(body): Json<serde_json::Value>| async move {
+                    assert_eq!(headers["authorization"], "Bearer synthetic");
+                    assert_eq!(body["p_website_id"], "00000000-0000-0000-0000-000000000001");
+                    assert_eq!(body["p_limit"], 5);
+                    assert_eq!(body["p_before"], "2026-11-21T00:00:00Z");
+                    assert_eq!(body["p_before_id"], "00000000-0000-0000-0000-000000000002");
+                    Json(
+                        json!({"availability":"producer_unavailable","events":[],"has_more":false}),
+                    )
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let store = WebsiteStore::new(
+            &format!("http://{}", listener.local_addr().unwrap()),
+            "publishable",
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, rpc).await.unwrap() });
+        let app = read_router(store);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/websites/00000000-0000-0000-0000-000000000001/seo/audit-events?limit=5&before=2026-11-21T00%3A00%3A00Z&before_id=00000000-0000-0000-0000-000000000002")
+                    .header("authorization", "Bearer synthetic")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(body["availability"], "producer_unavailable");
         server.abort();
     }
     #[tokio::test]
