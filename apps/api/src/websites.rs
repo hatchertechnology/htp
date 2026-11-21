@@ -88,7 +88,8 @@ impl WebsiteStore {
             .ok_or(WebsiteError::Unauthorized)?;
         let started = Instant::now();
         let timeout = rpc_deadline(name);
-        let response = self
+        let diagnostic_id = (name == "import_seosmith_audit").then(Uuid::new_v4);
+        let request = self
             .client
             .post(format!(
                 "{}/rpc/{name}",
@@ -97,23 +98,38 @@ impl WebsiteStore {
             .header("apikey", &self.publishable_key)
             .header(header::AUTHORIZATION, authorization)
             .timeout(timeout)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|error| {
-                if name == "import_seosmith_audit" {
-                    log_ingest_failure("owner", started, &error);
-                }
-                WebsiteError::Unavailable
-            })?;
+            .json(&body);
+        let request = if let Some(id) = diagnostic_id {
+            eprintln!(
+                "seosmith owner diagnostic_id={id} phase=request_built elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
+            request.header("traceparent", ingest_traceparent(id))
+        } else {
+            request
+        };
+        let response = request.send().await.map_err(|error| {
+            if name == "import_seosmith_audit" {
+                log_ingest_failure("owner", diagnostic_id.unwrap(), started, &error);
+            }
+            WebsiteError::Unavailable
+        })?;
+        if let Some(id) = diagnostic_id {
+            eprintln!(
+                "seosmith owner diagnostic_id={id} phase=response_headers status={} elapsed_ms={}",
+                response.status().as_u16(),
+                started.elapsed().as_millis()
+            );
+        }
         if name == "import_seosmith_audit" && response.status() == StatusCode::INTERNAL_SERVER_ERROR
         {
-            log_ingest_server_error("owner", started, response).await;
+            log_ingest_server_error("owner", diagnostic_id.unwrap(), started, response).await;
             return Err(WebsiteError::Unavailable);
         }
         if name == "import_seosmith_audit" && !response.status().is_success() {
             eprintln!(
-                "seosmith owner upstream status={} elapsed_ms={}",
+                "seosmith owner diagnostic_id={} upstream status={} elapsed_ms={}",
+                diagnostic_id.unwrap(),
                 response.status().as_u16(),
                 started.elapsed().as_millis()
             );
@@ -139,12 +155,21 @@ impl WebsiteStore {
             status if !status.is_success() => return Err(WebsiteError::Unavailable),
             _ => {}
         }
-        response.json().await.map_err(|error| {
+        let result = response.json().await.map_err(|error| {
             if name == "import_seosmith_audit" {
-                log_ingest_failure("owner", started, &error);
+                log_ingest_failure("owner", diagnostic_id.unwrap(), started, &error);
             }
             WebsiteError::Unavailable
-        })
+        });
+        if let Some(id) = diagnostic_id
+            && result.is_ok()
+        {
+            eprintln!(
+                "seosmith owner diagnostic_id={id} phase=response_decoded elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
+        }
+        result
     }
 
     /// Forward detail JSON without building a heap object for every report token.
@@ -248,26 +273,35 @@ impl WebsiteStore {
             .build()
             .map_err(|_| WebsiteError::Unavailable)?;
         let started = Instant::now();
-        let response = client
+        let diagnostic_id = Uuid::new_v4();
+        let request = client
             .post(format!(
                 "{}/rpc/ingest_seosmith_audit",
                 self.url.trim_end_matches("/websites")
             ))
             .header("apikey", &self.publishable_key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|error| {
-                log_ingest_failure("worker", started, &error);
-                WebsiteError::Unavailable
-            })?;
+            .header("traceparent", ingest_traceparent(diagnostic_id))
+            .json(&body);
+        eprintln!(
+            "seosmith worker diagnostic_id={diagnostic_id} phase=request_built elapsed_ms={}",
+            started.elapsed().as_millis()
+        );
+        let response = request.send().await.map_err(|error| {
+            log_ingest_failure("worker", diagnostic_id, started, &error);
+            WebsiteError::Unavailable
+        })?;
+        eprintln!(
+            "seosmith worker diagnostic_id={diagnostic_id} phase=response_headers status={} elapsed_ms={}",
+            response.status().as_u16(),
+            started.elapsed().as_millis()
+        );
         if response.status() == StatusCode::INTERNAL_SERVER_ERROR {
-            log_ingest_server_error("worker", started, response).await;
+            log_ingest_server_error("worker", diagnostic_id, started, response).await;
             return Err(WebsiteError::Unavailable);
         }
         if !response.status().is_success() {
             eprintln!(
-                "seosmith worker upstream status={} elapsed_ms={}",
+                "seosmith worker diagnostic_id={diagnostic_id} upstream status={} elapsed_ms={}",
                 response.status().as_u16(),
                 started.elapsed().as_millis()
             );
@@ -284,10 +318,17 @@ impl WebsiteStore {
             s if !s.is_success() => return Err(WebsiteError::Unavailable),
             _ => {}
         }
-        response.json().await.map_err(|error| {
-            log_ingest_failure("worker", started, &error);
+        let result = response.json().await.map_err(|error| {
+            log_ingest_failure("worker", diagnostic_id, started, &error);
             WebsiteError::Unavailable
-        })
+        });
+        if result.is_ok() {
+            eprintln!(
+                "seosmith worker diagnostic_id={diagnostic_id} phase=response_decoded elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
+        }
+        result
     }
 
     pub(crate) async fn find(
@@ -514,7 +555,14 @@ impl IntoResponse for WebsiteError {
     }
 }
 
-fn log_ingest_failure(path: &str, started: Instant, error: &reqwest::Error) {
+// The trace ID is server-generated and also appears in API diagnostics. Supabase
+// documents traceparent in gateway logs, but downstream propagation is not guaranteed.
+fn ingest_traceparent(id: Uuid) -> String {
+    let span = Uuid::new_v4().simple().to_string();
+    format!("00-{}-{}-01", id.simple(), &span[..16])
+}
+
+fn log_ingest_failure(path: &str, diagnostic_id: Uuid, started: Instant, error: &reqwest::Error) {
     let class = if error.is_timeout() {
         "timeout"
     } else if error.is_connect() {
@@ -527,14 +575,19 @@ fn log_ingest_failure(path: &str, started: Instant, error: &reqwest::Error) {
         "transport"
     };
     eprintln!(
-        "seosmith {path} upstream error={class} elapsed_ms={}",
+        "seosmith {path} diagnostic_id={diagnostic_id} upstream error={class} elapsed_ms={}",
         started.elapsed().as_millis()
     );
 }
 
 // PostgREST error bodies may contain database detail or client data. Only emit a
 // fixed label for the known SQLSTATE; never log the body, message, URL, or token.
-async fn log_ingest_server_error(path: &str, started: Instant, mut response: reqwest::Response) {
+async fn log_ingest_server_error(
+    path: &str,
+    diagnostic_id: Uuid,
+    started: Instant,
+    mut response: reqwest::Response,
+) {
     const MAX_ERROR_BYTES: usize = 4096;
     let received = tokio::time::timeout(Duration::from_millis(250), async {
         let mut body = Vec::new();
@@ -554,7 +607,7 @@ async fn log_ingest_server_error(path: &str, started: Instant, mut response: req
         .and_then(postgrest_error_class)
         .unwrap_or("other_or_unavailable");
     eprintln!(
-        "seosmith {path} upstream status=500 database_code={class} elapsed_ms={}",
+        "seosmith {path} diagnostic_id={diagnostic_id} upstream status=500 database_code={class} elapsed_ms={}",
         started.elapsed().as_millis()
     );
 }
@@ -599,7 +652,7 @@ mod ingest_error_tests {
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let response = reqwest::get(url).await.unwrap();
         let started = Instant::now();
-        super::log_ingest_server_error("worker", started, response).await;
+        super::log_ingest_server_error("worker", uuid::Uuid::new_v4(), started, response).await;
         assert!(started.elapsed() < Duration::from_secs(1));
         server.abort();
     }
