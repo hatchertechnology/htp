@@ -286,3 +286,5 @@ available through owner-scoped saved-data API/MCP reads. A default range ending
 yesterday may lack finalized observations and correctly remains inconclusive;
 request an older finalized range for comparison rather than silently shortening
 one period or treating absent days as zero traffic.
+
+Independent audit evidence must be exported and explicitly removed by the owner before website or account deletion can cascade; see [independent audits](independent-audits.md).

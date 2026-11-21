@@ -6,7 +6,7 @@ create table public.independent_audit_imports (
   created_at timestamptz not null default now(),
   format text not null check (format = 'controlled-csv-v1'),
   source_text text not null check (octet_length(source_text) between 1 and 4194304),
-  source_sha256 text not null,
+  source_sha256 text not null check (source_sha256 ~ '^[0-9a-f]{64}$'),
   metadata jsonb not null check (jsonb_typeof(metadata) = 'object')
 );
 alter table public.independent_audit_imports enable row level security;
@@ -19,7 +19,7 @@ create function public.validate_independent_csv(p_source text) returns void
 language plpgsql immutable set search_path='' as $$
 declare b bytea := convert_to(p_source,'UTF8'); n integer; i integer := 0; start_at integer := 0; c integer;
   quoted boolean := false; closed boolean := false; fields text[] := array[]::text[]; value text;
-  rows_seen integer := 0; seen jsonb := '{}'::jsonb; k text;
+  rows_seen integer := 0; key_bytes integer := 0; seen text[] := array[]::text[]; k text;
 begin
   if substring(b from 1 for 3)=decode('efbbbf','hex') then b:=substring(b from 4); end if;
   n:=length(b);
@@ -45,9 +45,11 @@ begin
           if fields is distinct from array['url','rule','state'] then raise exception 'invalid_csv' using errcode='22023'; end if;
         else
           if cardinality(fields)<>3 or fields[1]='' or fields[2]='' or fields[3] not in ('present','absent','unknown') then raise exception 'invalid_csv' using errcode='22023'; end if;
+          key_bytes:=key_bytes+octet_length(fields[1])+octet_length(fields[2]);
+          if key_bytes>262144 then raise exception 'csv_key_limit' using errcode='22023'; end if;
           k:=jsonb_build_array(fields[1],fields[2])::text;
-          if seen ? k then raise exception 'duplicate_observation' using errcode='22023'; end if;
-          seen:=seen || jsonb_build_object(k,true);
+          if k = any(seen) then raise exception 'duplicate_observation' using errcode='22023'; end if;
+          seen:=array_append(seen,k);
         end if;
         fields:=array[]::text[];
         if c=13 and i+1<n and get_byte(b,i+1)=10 then i:=i+1; end if;
@@ -88,13 +90,13 @@ begin
   if (p_before is null)<>(p_before_id is null) or (p_id is not null and p_before is not null) then raise exception 'invalid_cursor' using errcode='22023'; end if;
   if p_id is null then
     select coalesce(jsonb_agg(to_jsonb(a) order by a.created_at desc,a.id desc),'[]'::jsonb) into result from
-      (select id,created_at,format,source_sha256,metadata from public.independent_audit_imports where website_id=w.id and fqdn=w.fqdn and (p_before is null or (created_at,id)<(p_before,p_before_id)) order by created_at desc,id desc limit 101) a;
+      (select id,fqdn,created_at,format,source_sha256,metadata from public.independent_audit_imports where website_id=w.id and (p_before is null or (created_at,id)<(p_before,p_before_id)) order by created_at desc,id desc limit 101) a;
     more:=jsonb_array_length(result)>100;
     if more then result:=result-100; end if;
     last_row:=result->(jsonb_array_length(result)-1);
     result:=jsonb_build_object('items',result,'next_cursor',case when more then jsonb_build_object('before',last_row->>'created_at','before_id',last_row->>'id') else null end);
   else
-    select to_jsonb(a) into result from (select id,created_at,format,source_text,source_sha256,metadata from public.independent_audit_imports where website_id=w.id and fqdn=w.fqdn and id=p_id) a;
+    select to_jsonb(a) into result from (select id,fqdn,created_at,format,source_text,source_sha256,metadata from public.independent_audit_imports where website_id=w.id and id=p_id) a;
   end if;
   return result;
 end $$;
@@ -114,6 +116,11 @@ create table public.independent_audit_comparisons (
 );
 alter table public.independent_audit_comparisons enable row level security;
 revoke all on public.independent_audit_comparisons from public, anon, authenticated;
+create function public.reject_independent_evidence_update() returns trigger
+language plpgsql set search_path='' as $$ begin raise exception 'independent_evidence_is_immutable' using errcode='22023'; end $$;
+revoke all on function public.reject_independent_evidence_update() from public,anon,authenticated;
+create trigger independent_import_immutable before update on public.independent_audit_imports for each row execute function public.reject_independent_evidence_update();
+create trigger independent_comparison_immutable before update on public.independent_audit_comparisons for each row execute function public.reject_independent_evidence_update();
 create index independent_comparisons_history on public.independent_audit_comparisons(website_id,created_at desc,id desc);
 
 create function public.save_independent_comparison(p_website_id uuid,p_import_id uuid,p_delivery_id uuid,p_asserted boolean)
@@ -122,11 +129,11 @@ declare w public.websites; item public.independent_audit_comparisons;
 begin
   select * into w from public.websites where id=p_website_id and owner_id=auth.uid() for share;
   if not found or coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
-  if p_asserted is null or not exists(select 1 from public.independent_audit_imports where id=p_import_id and website_id=w.id and fqdn=w.fqdn) or not exists(select 1 from public.seosmith_audits where delivery_id=p_delivery_id and website_id=w.id and fqdn=w.fqdn) then
+  if p_asserted is null or not exists(select 1 from public.independent_audit_imports i join public.seosmith_audits a on a.website_id=i.website_id and a.fqdn=i.fqdn where i.id=p_import_id and i.website_id=w.id and a.delivery_id=p_delivery_id) then
     raise exception 'invalid_comparison' using errcode='22023';
   end if;
   insert into public.independent_audit_comparisons(website_id,fqdn,import_id,delivery_id,semantics,unmodified_v1_asserted)
-  values(w.id,w.fqdn,p_import_id,p_delivery_id,'s15-metadata-1',p_asserted) returning * into item;
+  select w.id,i.fqdn,p_import_id,p_delivery_id,'s15-metadata-1',p_asserted from public.independent_audit_imports i where i.id=p_import_id returning * into item;
   return to_jsonb(item);
 end $$;
 revoke all on function public.save_independent_comparison(uuid,uuid,uuid,boolean) from public,anon,authenticated;
@@ -140,7 +147,7 @@ begin
   if not found or coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
   if (p_before is null)<>(p_before_id is null) then raise exception 'invalid_cursor' using errcode='22023'; end if;
   select coalesce(jsonb_agg(to_jsonb(a) order by a.created_at desc,a.id desc),'[]'::jsonb) into result from
-    (select id,import_id,delivery_id,semantics,unmodified_v1_asserted,created_at from public.independent_audit_comparisons where website_id=w.id and fqdn=w.fqdn and (p_before is null or (created_at,id)<(p_before,p_before_id)) order by created_at desc,id desc limit 101) a;
+    (select id,fqdn,import_id,delivery_id,semantics,unmodified_v1_asserted,created_at from public.independent_audit_comparisons where website_id=w.id and (p_before is null or (created_at,id)<(p_before,p_before_id)) order by created_at desc,id desc limit 101) a;
   more:=jsonb_array_length(result)>100;
   if more then result:=result-100; end if;
   last_row:=result->(jsonb_array_length(result)-1);
@@ -148,3 +155,56 @@ begin
 end $$;
 revoke all on function public.independent_comparison_history(uuid,timestamptz,uuid) from public,anon,authenticated;
 grant execute on function public.independent_comparison_history(uuid,timestamptz,uuid) to authenticated;
+
+-- Exports include pinned source, report and comparison metadata even after a rename.
+create function public.independent_comparison_detail(p_website_id uuid,p_comparison_id uuid)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare w public.websites; result jsonb;
+begin
+  select * into w from public.websites where id=p_website_id and owner_id=auth.uid();
+  if not found or coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
+  select jsonb_build_object('comparison',to_jsonb(c),'source',to_jsonb(i)-'website_id',
+    'seosmith',jsonb_build_object('delivery_id',a.delivery_id,'fqdn',a.fqdn,'sha256',a.sha256,
+      'report',a.report,'report_json',to_jsonb(a)->>'raw_report_json')) into result
+  from public.independent_audit_comparisons c
+  join public.independent_audit_imports i on i.id=c.import_id and i.website_id=c.website_id
+  join public.seosmith_audits a on a.delivery_id=c.delivery_id and a.website_id=c.website_id
+  where c.id=p_comparison_id and c.website_id=w.id;
+  return result;
+end $$;
+revoke all on function public.independent_comparison_detail(uuid,uuid) from public,anon,authenticated;
+grant execute on function public.independent_comparison_detail(uuid,uuid) to authenticated;
+
+-- Identifies the immutable evidence set; deletion must match a completed export.
+create function public.independent_evidence_fingerprint(p_website_id uuid)
+returns text language plpgsql security definer set search_path='' as $$
+declare w public.websites; result text;
+begin
+  select * into w from public.websites where id=p_website_id and owner_id=auth.uid();
+  if not found or coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
+  select encode(sha256(convert_to(coalesce(string_agg(v,',' order by v),''),'UTF8')),'hex') into result from (
+    select 'i:'||id::text v from public.independent_audit_imports where website_id=w.id
+    union all select 'c:'||id::text v from public.independent_audit_comparisons where website_id=w.id
+  ) q;
+  return result;
+end $$;
+revoke all on function public.independent_evidence_fingerprint(uuid) from public,anon,authenticated;
+grant execute on function public.independent_evidence_fingerprint(uuid) to authenticated;
+
+-- Explicit owner action; the website lock serializes this with imports and saves.
+create function public.delete_independent_audit_evidence(p_website_id uuid,p_confirmation text,p_export_fingerprint text)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare w public.websites; comparisons_deleted integer; imports_deleted integer;
+begin
+  select * into w from public.websites where id=p_website_id and owner_id=auth.uid() for update;
+  if not found or coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
+  if p_confirmation is distinct from 'DELETE INDEPENDENT EVIDENCE' then raise exception 'confirmation_required' using errcode='22023'; end if;
+  if p_export_fingerprint is null or p_export_fingerprint is distinct from public.independent_evidence_fingerprint(w.id) then raise exception 'evidence_changed_export_again' using errcode='22023'; end if;
+  delete from public.independent_audit_comparisons where website_id=w.id;
+  get diagnostics comparisons_deleted = row_count;
+  delete from public.independent_audit_imports where website_id=w.id;
+  get diagnostics imports_deleted = row_count;
+  return jsonb_build_object('comparisons_deleted',comparisons_deleted,'imports_deleted',imports_deleted);
+end $$;
+revoke all on function public.delete_independent_audit_evidence(uuid,text,text) from public,anon,authenticated;
+grant execute on function public.delete_independent_audit_evidence(uuid,text,text) to authenticated;
