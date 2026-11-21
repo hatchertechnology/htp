@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { csvCell } from "../utils/forms-csv"
 type Field = { key: string; label: string; kind: 'text'|'email'|'telephone'|'multiline'; required: boolean; max_length: number }
 type Host = { id: string; hostname: string; verified_at: string | null }
 type Form = { id: string; form_key: string; name: string; fields: Field[]; active: boolean }
@@ -110,7 +111,6 @@ async function status(row:Submission, next:string) {
   busy.value=true; error.value=''
   try { const {error:err}=await $supabase.rpc('set_website_form_response_status',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_response_id:row.id,p_status:next}); if(err) throw err; await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
 }
-function csvCell(value: unknown) { const text=String(value ?? ''); return `"${(/^[\s\x00-\x1f]*[=+@-]/.test(text) ? "'" : '') + text.replaceAll('"','""')}"` }
 async function exportCsv() {
   const form=selected.value, owner=auth.user.value?.id
   if (!form || !owner) return

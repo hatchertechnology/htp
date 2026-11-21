@@ -1,10 +1,5 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-
-const source = readFileSync(new URL('../app/components/WebsiteForms.vue', import.meta.url), 'utf8')
-const declaration = source.match(/function csvCell\(value: unknown\) \{[^\n]+/)?.[0]
-if (!declaration) throw new Error('Inbox CSV encoder not found')
-const csvCell = Function(`${declaration.replace(': unknown', '')}; return csvCell`)() as (value: unknown) => string
+import { csvCell } from '../app/utils/forms-csv'
 
 describe('inbox CSV export', () => {
   it('neutralizes formulas after whitespace or control characters and escapes quotes', () => {
