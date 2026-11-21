@@ -153,7 +153,7 @@ Deno.test("storage outage never returns an accepted response", async () => {
     (name) =>
       name === "website_form_origin_allowed"
         ? Promise.resolve(true)
-        : Promise.reject(new Error("offline")),
+        : Promise.reject(new TypeError("network failure")),
   );
   assertEquals(response.status, 503);
   assertEquals(await response.json(), { error: "temporarily_unavailable" });

@@ -52,7 +52,11 @@ export async function limitedBody(
     bytes.set(chunk, offset);
     offset += chunk.length;
   }
-  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new SyntaxError("invalid_utf8");
+  }
 }
 
 export async function handle(request: Request, rpc: Rpc): Promise<Response> {
@@ -135,7 +139,7 @@ export async function handle(request: Request, rpc: Rpc): Promise<Response> {
     if (error instanceof Error && error.message === "too_large") {
       return respond({ error: "request_too_large" }, 413);
     }
-    if (error instanceof SyntaxError || error instanceof TypeError) {
+    if (error instanceof SyntaxError) {
       return respond({ error: "invalid_request" }, 400);
     }
     return respond({ error: "temporarily_unavailable" }, 503);
