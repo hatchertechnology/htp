@@ -161,13 +161,13 @@ impl WebsiteStore {
             }
             WebsiteError::Unavailable
         });
-        if let Some(id) = diagnostic_id {
-            if result.is_ok() {
-                eprintln!(
-                    "seosmith owner diagnostic_id={id} phase=response_decoded elapsed_ms={}",
-                    started.elapsed().as_millis()
-                );
-            }
+        if let Some(id) = diagnostic_id
+            && result.is_ok()
+        {
+            eprintln!(
+                "seosmith owner diagnostic_id={id} phase=response_decoded elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
         }
         result
     }
