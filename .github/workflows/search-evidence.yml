@@ -1,0 +1,56 @@
+name: Search evidence
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            apps/web/package-lock.json
+            supabase/package-lock.json
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install test dependencies
+        run: |
+          npm ci --prefix supabase
+          npm ci --prefix apps/web
+      - name: Search and combined migration tests
+        run: node --test supabase/tests/search-{crawl-evidence,exact-snapshot,inspection}.test.mjs supabase/tests/seosmith-lifecycle-index.test.mjs supabase/tests/independent-audit.test.mjs
+      - name: Search collector tests
+        run: deno test --allow-env supabase/functions/google-sync/google_test.ts supabase/functions/google-sync/search-analysis_test.ts
+      - name: API search and authorization tests
+        run: |
+          cargo test --locked -p htp-api search::tests
+          cargo test --locked -p htp-api --test auth
+      - name: Web tests and typecheck
+        working-directory: apps/web
+        run: |
+          npm test
+          npm run typecheck
+      - name: Rendered search fixtures
+        working-directory: apps/web
+        run: |
+          npx playwright install --with-deps chromium
+          npx vite --config tests/fixtures/search-vite.config.mjs > /tmp/search-vite.log 2>&1 &
+          server=$!
+          trap 'kill "$server"' EXIT
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:4184/tests/fixtures/search-evidence.html > /dev/null; then break; fi
+            sleep 1
+          done
+          node tests/fixtures/check-search-evidence.mjs
+          node tests/fixtures/check-search-evaluation.mjs
