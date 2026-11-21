@@ -1,0 +1,4 @@
+# These pinned boundary fixtures deliberately contain trailing UTF-8 whitespace.
+supabase/tests/prototypes/s14-wire-1/fixtures/edge-candidate-8d98/v4-candidate-exact-cap.json -whitespace
+supabase/tests/prototypes/s14-wire-1/fixtures/edge-candidate-8d98/invalid-cap-plus-one.json -whitespace
+supabase/tests/prototypes/s14-wire-1/fixtures/edge-candidate-8d98/v4-candidate-whitespace.json -whitespace
