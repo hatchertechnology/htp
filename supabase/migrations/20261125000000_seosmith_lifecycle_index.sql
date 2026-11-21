@@ -3,6 +3,8 @@
 create table public.seosmith_lifecycle_indexed (
   delivery_id uuid primary key references public.seosmith_audits(delivery_id) on delete cascade,
   state text not null check (state in ('indexed_v1','legacy','unsupported')),
+  schema_version text, engine_version text, ruleset_version text, comparison_key text, policy_digest text,
+  evidence_truncated boolean, omitted_observations integer, coverage jsonb,
   index_version integer not null default 1 check (index_version = 1)
 );
 create table public.seosmith_lifecycle_evaluations (
@@ -26,7 +28,15 @@ begin
   index_state := case when a.report->>'schema_version'='1' then 'legacy'
     when a.report->>'schema_version'='2' and a.report#>>'{evidence_contract,version}'='1' then 'indexed_v1'
     else 'unsupported' end;
-  insert into public.seosmith_lifecycle_indexed(delivery_id,state) values(a.delivery_id,index_state)
+  insert into public.seosmith_lifecycle_indexed(delivery_id,state,schema_version,engine_version,ruleset_version,comparison_key,policy_digest,evidence_truncated,omitted_observations,coverage)
+    values(a.delivery_id,index_state,a.report->>'schema_version',
+      case when index_state='indexed_v1' then a.report->>'engine_version' end,
+      case when index_state='indexed_v1' then a.report->>'ruleset_version' end,
+      case when index_state='indexed_v1' then a.summary->>'comparison_key' end,
+      case when index_state='indexed_v1' then a.report#>>'{evidence_contract,policy,signature}' end,
+      case when index_state='indexed_v1' then (a.report#>>'{evidence_contract,truncated}')::boolean end,
+      case when index_state='indexed_v1' then (a.report#>>'{evidence_contract,omitted_observations}')::integer end,
+      case when index_state='indexed_v1' then a.report#>'{evidence_contract,coverage}' end)
     on conflict (delivery_id) do nothing;
   if not found then return; end if;
   if index_state='indexed_v1' then
@@ -71,12 +81,9 @@ begin
      or p_limit is null or p_limit<1 or p_limit>100 or (p_before is null)<>(p_before_id is null)
     then raise exception 'invalid_lifecycle_query' using errcode='22023'; end if;
   select coalesce(jsonb_agg(to_jsonb(q) order by q.scan_at desc,q.delivery_id desc),'[]'::jsonb) into rows from (
-    select a.delivery_id,a.scan_at,a.ingestion_source,a.summary->>'comparison_key' comparison_key,
-      a.report->>'schema_version' schema_version,a.report->>'engine_version' engine_version,a.report->>'ruleset_version' ruleset_version,
-      a.report#>>'{evidence_contract,policy,signature}' policy_digest,
-      case when i.state='indexed_v1' then a.report#>'{evidence_contract,truncated}' else null end evidence_truncated,
-      case when i.state='indexed_v1' then a.report#>'{evidence_contract,omitted_observations}' else null end omitted_observations,
-      case when i.state='indexed_v1' then (select c from jsonb_array_elements(a.report#>'{evidence_contract,coverage}') c where c->>'rule'=p_rule) else null end rule_coverage,
+    select a.delivery_id,a.scan_at,a.ingestion_source,i.comparison_key,i.schema_version,i.engine_version,i.ruleset_version,
+      i.policy_digest,i.evidence_truncated,i.omitted_observations,
+      case when i.state='indexed_v1' then (select c from jsonb_array_elements(i.coverage) c where c->>'rule'=p_rule) else null end rule_coverage,
       case when i.delivery_id is null then 'index_pending' when i.state='legacy' then 'legacy_unknown'
         when i.state='unsupported' then 'unsupported' when e.delivery_id is null then 'not_observed'
         when e.evaluation->>'outcome'='unknown' then 'unknown' else 'evaluated' end evidence_state,
