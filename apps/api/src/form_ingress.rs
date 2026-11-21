@@ -145,16 +145,6 @@ async fn forward(State(c): State<Config>, Path(id): Path<String>, request: Reque
         let mut r = error(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
         r.headers_mut()
             .insert(header::RETRY_AFTER, HeaderValue::from_static("600"));
-        if let Some(origin) = request.headers().get(header::ORIGIN) {
-            r.headers_mut()
-                .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin.clone());
-            r.headers_mut().insert(
-                header::ACCESS_CONTROL_EXPOSE_HEADERS,
-                HeaderValue::from_static("Retry-After"),
-            );
-            r.headers_mut()
-                .insert(header::VARY, HeaderValue::from_static("Origin"));
-        }
         return r;
     }
     if result != "ok" {
@@ -322,6 +312,91 @@ mod tests {
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
             serde_json::json!({"ok":true,"duplicate":true})
+        );
+        server.abort();
+    }
+    #[tokio::test]
+    async fn unverified_origin_is_not_reflected_on_client_limit() {
+        use tower::ServiceExt;
+        let fake = Router::new().route(
+            "/rest/v1/rpc/charge_form_client",
+            axum::routing::post(|| async { axum::Json("rate_limited") }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
+        let mut c = Config::from_env();
+        c.trusted_fly = true;
+        c.allow_test_loopback = true;
+        c.db = base.clone();
+        c.receiver = base;
+        c.secret = "s".repeat(48);
+        c.hash_key = "h".repeat(48);
+        c.service_key = "test".into();
+        let app = Router::new()
+            .route("/public/forms/{form_id}", any(forward))
+            .with_state(c);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/public/forms/00000000-0000-0000-0000-000000000001")
+                    .header("fly-client-ip", "192.0.2.1")
+                    .header(header::ORIGIN, "https://attacker.example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers().get(header::RETRY_AFTER).unwrap(), "600");
+        assert!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none()
+        );
+        server.abort();
+    }
+    #[tokio::test]
+    async fn oversized_post_is_rejected_before_receiver_without_reflecting_origin() {
+        use tower::ServiceExt;
+        let fake = Router::new().route(
+            "/rest/v1/rpc/charge_form_client",
+            axum::routing::post(|| async { axum::Json("ok") }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
+        let mut c = Config::from_env();
+        c.trusted_fly = true;
+        c.allow_test_loopback = true;
+        c.db = base.clone();
+        c.receiver = base;
+        c.secret = "s".repeat(48);
+        c.hash_key = "h".repeat(48);
+        c.service_key = "test".into();
+        let app = Router::new()
+            .route("/public/forms/{form_id}", any(forward))
+            .with_state(c);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/public/forms/00000000-0000-0000-0000-000000000001")
+                    .header("fly-client-ip", "192.0.2.1")
+                    .header(header::ORIGIN, "https://attacker.example")
+                    .body(Body::from("x".repeat(20_001)))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none()
         );
         server.abort();
     }

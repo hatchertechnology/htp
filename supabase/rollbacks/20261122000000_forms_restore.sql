@@ -16,6 +16,5 @@ grant execute on function public.confirm_form_recipient(uuid,text) to service_ro
 grant execute on function public.claim_form_delivery() to service_role;
 grant execute on function public.finish_form_delivery(uuid,uuid,text) to service_role;
 grant execute on function public.retry_form_delivery(uuid,uuid,uuid) to authenticated;
-commit;
-
 grant execute on function public.charge_form_client(text) to service_role;
+commit;

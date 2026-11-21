@@ -85,15 +85,18 @@ export async function handle(request: Request, rpc: Rpc): Promise<Response> {
       })
     ) return respond({ error: "form_unavailable" }, 404);
     headers.set("Access-Control-Allow-Origin", source.origin);
-    if (admission === "rate_limited") {
-      headers.set("Retry-After", "600");
-      headers.set("Access-Control-Expose-Headers", "Retry-After");
-      return respond({ error: "rate_limited" }, 429);
-    }
+    // A verified-origin preflight may complete even when the form window is
+    // full, so the following POST can expose its 429 to browser JavaScript.
+    // The independent API client/global limiter still charges and caps OPTIONS.
     if (request.method === "OPTIONS") {
       headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
       headers.set("Access-Control-Allow-Headers", "Content-Type, Accept");
       return new Response(null, { status: 204, headers });
+    }
+    if (admission === "rate_limited") {
+      headers.set("Retry-After", "600");
+      headers.set("Access-Control-Expose-Headers", "Retry-After");
+      return respond({ error: "rate_limited" }, 429);
     }
     if (request.method !== "POST") {
       return respond({ error: "method_not_allowed" }, 405);
@@ -143,6 +146,10 @@ export async function handle(request: Request, rpc: Rpc): Promise<Response> {
       idempotency_conflict: 409,
       rate_limited: 429,
     };
+    if (result.error === "rate_limited") {
+      headers.set("Retry-After", "600");
+      headers.set("Access-Control-Expose-Headers", "Retry-After");
+    }
     return respond(
       result,
       result.ok === true ? 200 : (codes[String(result.error)] ?? 503),

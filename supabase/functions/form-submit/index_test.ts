@@ -183,12 +183,11 @@ Deno.test("form-wide ingress limits include preflights and retain CORS for the a
       );
     },
   );
-  assertEquals(response.status, 429);
+  assertEquals(response.status, 204);
   assertEquals(
     response.headers.get("access-control-allow-origin"),
     "https://www.example.com",
   );
-  assertEquals(response.headers.get("retry-after"), "600");
   assertEquals(calls, ["charge_form_ingress", "website_form_origin_allowed"]);
 });
 
@@ -258,4 +257,37 @@ Deno.test("authenticated receiver preserves accepted duplicate response", async 
   );
   assertEquals(response.status, 200);
   assertEquals(await response.json(), { ok: true, duplicate: true });
+});
+
+Deno.test("both form and validation limits expose retry after to verified POST origins", async () => {
+  for (const formLimited of [true, false]) {
+    const response = await handle(
+      new Request(endpoint, {
+        method: "POST",
+        headers: {
+          origin: "https://www.example.com",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ submission_id: submission, name: "Ada" }),
+      }),
+      (name) =>
+        Promise.resolve(
+          name === "charge_form_ingress"
+            ? (formLimited ? "rate_limited" : "ok")
+            : name === "website_form_origin_allowed"
+            ? true
+            : { error: "rate_limited" },
+        ),
+    );
+    assertEquals(response.status, 429);
+    assertEquals(response.headers.get("retry-after"), "600");
+    assertEquals(
+      response.headers.get("access-control-expose-headers"),
+      "Retry-After",
+    );
+    assertEquals(
+      response.headers.get("access-control-allow-origin"),
+      "https://www.example.com",
+    );
+  }
 });
