@@ -4,6 +4,7 @@ pub mod analytics;
 mod audit_export;
 pub mod auth;
 mod bing;
+pub mod forms;
 mod insights;
 mod mcp;
 mod oauth;

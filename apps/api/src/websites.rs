@@ -509,7 +509,11 @@ async fn delete(
             &[("id", format!("eq.{id}"))],
             None,
         )
-        .await?;
+        .await
+        .map_err(|error| match error {
+            WebsiteError::Conflict => WebsiteError::FormsPreventDeletion,
+            other => other,
+        })?;
     one(rows)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -524,6 +528,7 @@ pub(crate) enum WebsiteError {
     Unauthorized,
     Forbidden,
     Conflict,
+    FormsPreventDeletion,
     NotFound,
     Unavailable,
 }
@@ -544,6 +549,10 @@ impl IntoResponse for WebsiteError {
             Self::Conflict => (
                 StatusCode::CONFLICT,
                 "This domain is already in your websites.",
+            ),
+            Self::FormsPreventDeletion => (
+                StatusCode::CONFLICT,
+                "This website has retained form responses or independent audit evidence, or a form notification is sending. Export and remove retained records, or retry after delivery.",
             ),
             Self::NotFound => (StatusCode::NOT_FOUND, "Website not found."),
             Self::Unavailable => (
@@ -654,6 +663,48 @@ mod ingest_error_tests {
         let started = Instant::now();
         super::log_ingest_server_error("worker", uuid::Uuid::new_v4(), started, response).await;
         assert!(started.elapsed() < Duration::from_secs(1));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn deletion_conflict_explains_saved_form_responses() {
+        use axum::{
+            Router,
+            extract::{Path, State},
+            http::{HeaderMap, StatusCode},
+            response::IntoResponse,
+            routing::delete,
+        };
+        let app = Router::new().route(
+            "/rest/v1/websites",
+            delete(|| async { StatusCode::CONFLICT }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer test".parse().unwrap(),
+        );
+        let result = super::delete(
+            State(super::WebsiteStore::new(&url, "test")),
+            Path(uuid::Uuid::new_v4()),
+            headers,
+        )
+        .await;
+        let response = match result {
+            Ok(_) => panic!("delete unexpectedly succeeded"),
+            Err(error) => error.into_response(),
+        };
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&body)
+                .contains("retained form responses or independent audit evidence")
+        );
         server.abort();
     }
 
