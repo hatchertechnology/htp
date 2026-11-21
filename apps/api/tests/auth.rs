@@ -565,6 +565,10 @@ async fn every_website_operation_requires_authentication() {
         ),
         (
             "GET",
+            "/websites/00000000-0000-0000-0000-000000000001/seo/audits/url-lifecycle?entity_id=x",
+        ),
+        (
+            "GET",
             "/websites/00000000-0000-0000-0000-000000000001/repository/issues",
         ),
         ("POST", "/websites"),
@@ -2291,6 +2295,34 @@ async fn lifecycle_history_forwards_the_user_and_bounded_identity_query() {
     let auth = TestAuth::with_routes(rpc).await;
     let path = format!(
         "/websites/00000000-0000-0000-0000-000000000001/seo/audits/lifecycle?entity_id=sha256:{}&rule=missing_title&limit=2",
+        "a".repeat(64)
+    );
+    let response = website_request(&auth, "GET", &path, Value::Null).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert_eq!(response_json(response).await["items"], json!([]));
+}
+
+#[tokio::test]
+async fn url_lifecycle_history_forwards_only_authenticated_owner_context() {
+    let rpc = Router::new().route(
+        "/rest/v1/rpc/seosmith_url_lifecycle_history",
+        axum::routing::post(
+            |headers: axum::http::HeaderMap, Json(body): Json<Value>| async move {
+                assert!(
+                    headers["authorization"]
+                        .to_str()
+                        .unwrap()
+                        .starts_with("Bearer ")
+                );
+                assert_eq!(body["p_limit"], 3);
+                (StatusCode::OK, Json(json!({"items":[],"has_more":false})))
+            },
+        ),
+    );
+    let auth = TestAuth::with_routes(rpc).await;
+    let path = format!(
+        "/websites/00000000-0000-0000-0000-000000000001/seo/audits/url-lifecycle?entity_id=sha256:{}&limit=3",
         "a".repeat(64)
     );
     let response = website_request(&auth, "GET", &path, Value::Null).await;

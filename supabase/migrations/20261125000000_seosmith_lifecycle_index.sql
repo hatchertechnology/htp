@@ -15,10 +15,33 @@ create table public.seosmith_lifecycle_evaluations (
   finding_digest text,
   primary key (delivery_id, entity_id, rule)
 );
+create table public.seosmith_lifecycle_observations (
+  delivery_id uuid not null references public.seosmith_audits(delivery_id) on delete cascade,
+  entity_id text not null,
+  source_locator text not null,
+  state text not null,
+  unknown_reason text,
+  property_digests jsonb not null,
+  primary key (delivery_id,entity_id)
+);
+create function public.seosmith_url_property_digests(p jsonb, observation_state text) returns jsonb
+language sql immutable set search_path='' as $$
+  select case when observation_state<>'available' or coalesce(p->>'status','') !~ '^[1-5][0-9]{2}$' or p->>'error' is not null
+      or p->>'blocked_by_robots'='true' then '{}'::jsonb else
+    coalesce((select jsonb_object_agg(k,encode(sha256(convert_to(v::text,'UTF8')),'hex')) from jsonb_each(p) q(k,v)
+      where (k in ('status','content_type','redirect') or
+        (k in ('title','description','canonical','header_canonical','robots','language','body_hash','words','dom_nodes','headings','links','images','relationships','alternates','structured_data','open_graph','twitter')
+         and p->>'status' ~ '^2[0-9]{2}$' and coalesce(p->>'is_resource','false')='false'
+         and lower(btrim(split_part(coalesce(p->>'content_type',''),';',1))) in ('text/html','application/xhtml+xml','application/vnd.wap.xhtml+xml')
+         and p ? 'flags' and p ? 'extraction_truncated' and p->>'extraction_truncated'='false'
+         and not exists(select 1 from jsonb_array_elements_text(p->'flags') f where f in ('extraction_limit','discovery_limit','legacy_checkpoint_metadata'))))), '{}'::jsonb) end
+$$;
+revoke all on function public.seosmith_url_property_digests(jsonb,text) from public,anon,authenticated;
+alter table public.seosmith_lifecycle_observations enable row level security;
 alter table public.seosmith_lifecycle_indexed enable row level security;
 alter table public.seosmith_lifecycle_evaluations enable row level security;
-revoke all on public.seosmith_lifecycle_indexed, public.seosmith_lifecycle_evaluations from public,anon,authenticated;
-grant select,insert,delete on public.seosmith_lifecycle_indexed, public.seosmith_lifecycle_evaluations to service_role;
+revoke all on public.seosmith_lifecycle_indexed, public.seosmith_lifecycle_evaluations, public.seosmith_lifecycle_observations from public,anon,authenticated;
+grant select,insert,delete on public.seosmith_lifecycle_indexed, public.seosmith_lifecycle_evaluations, public.seosmith_lifecycle_observations to service_role;
 
 create function public.seosmith_index_lifecycle(p_delivery_id uuid) returns void
 language plpgsql security definer set search_path='' as $$
@@ -41,6 +64,10 @@ begin
     on conflict (delivery_id) do nothing;
   if not found then return; end if;
   if index_state='indexed_v1' then
+    insert into public.seosmith_lifecycle_observations(delivery_id,entity_id,source_locator,state,unknown_reason,property_digests)
+      select a.delivery_id,o->>'entity_id',o->>'source_locator',o->>'state',o->>'unknown_reason',
+        public.seosmith_url_property_digests(a.report->'pages'->((substring(o->>'source_locator' from '^/pages/([0-9]+)$'))::integer),o->>'state')
+      from jsonb_array_elements(a.report#>'{evidence_contract,observations}') o;
     insert into public.seosmith_lifecycle_evaluations(delivery_id,entity_id,rule,evaluation,finding_digest)
       select a.delivery_id,e->>'entity_id',e->>'rule',e,
         case when e->>'outcome'='fail' then encode(sha256(convert_to((a.report->'findings'->((substring(e->>'source_locator' from '^/findings/([0-9]+)$'))::integer))::text,'UTF8')),'hex') end
@@ -109,3 +136,36 @@ begin
 end $$;
 revoke all on function public.seosmith_lifecycle_history(uuid,text,text,integer,timestamptz,uuid) from public,anon,authenticated;
 grant execute on function public.seosmith_lifecycle_history(uuid,text,text,integer,timestamptz,uuid) to authenticated;
+
+-- Owner-scoped, bounded URL history. Field hashes represent observed source
+-- values; absent keys are unknown, not empty or equal. Values stay in reports.
+create function public.seosmith_url_lifecycle_history(p_website_id uuid,p_entity_id text,
+  p_limit integer default 50,p_before timestamptz default null,p_before_id uuid default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare w public.websites; rows jsonb; more boolean; last_row jsonb;
+begin
+  select * into w from public.websites where id=p_website_id and owner_id=auth.uid();
+  if not found or coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
+  if coalesce(p_entity_id,'') !~ '^sha256:[0-9a-f]{64}$' or p_limit is null or p_limit<1 or p_limit>100 or (p_before is null)<>(p_before_id is null)
+    then raise exception 'invalid_lifecycle_query' using errcode='22023'; end if;
+  select coalesce(jsonb_agg(to_jsonb(q) order by q.scan_at desc,q.delivery_id desc),'[]'::jsonb) into rows from (
+    select a.delivery_id,a.scan_at,a.ingestion_source,i.comparison_key,i.schema_version,i.engine_version,i.ruleset_version,i.policy_digest,
+      i.evidence_truncated,i.omitted_observations,
+      case when i.delivery_id is null then 'index_pending' when i.state='legacy' then 'legacy_unknown'
+        when i.state='unsupported' then 'unsupported' when o.delivery_id is null then 'not_observed'
+        when o.state='unavailable' then 'unavailable' else 'available' end evidence_state,
+      o.source_locator,o.unknown_reason,o.property_digests
+    from public.seosmith_audits a
+    left join public.seosmith_lifecycle_indexed i on i.delivery_id=a.delivery_id
+    left join public.seosmith_lifecycle_observations o on o.delivery_id=a.delivery_id and o.entity_id=p_entity_id
+    where a.website_id=w.id and a.fqdn=w.fqdn and (p_before is null or (a.scan_at,a.delivery_id)<(p_before,p_before_id))
+    order by a.scan_at desc,a.delivery_id desc limit p_limit+1
+  ) q;
+  more:=jsonb_array_length(rows)>p_limit;
+  if more then rows:=rows-p_limit; end if;
+  last_row:=rows->(jsonb_array_length(rows)-1);
+  return jsonb_build_object('version',1,'entity_id',p_entity_id,'items',rows,'has_more',more,
+    'next_cursor',case when more then jsonb_build_object('before',last_row->>'scan_at','before_id',last_row->>'delivery_id') else null end);
+end $$;
+revoke all on function public.seosmith_url_lifecycle_history(uuid,text,integer,timestamptz,uuid) from public,anon,authenticated;
+grant execute on function public.seosmith_url_lifecycle_history(uuid,text,integer,timestamptz,uuid) to authenticated;

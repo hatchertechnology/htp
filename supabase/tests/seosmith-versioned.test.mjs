@@ -505,3 +505,26 @@ test('lifecycle index preserves validated v1 and v2 receiver evidence and exact 
     assert.equal((await db.query('select count(*)::int n from public.seosmith_lifecycle_indexed')).rows[0].n,2)
   } finally {await db.close()}
 })
+
+test('import-first retry remains an import in indexed history after worker acknowledgement', async () => {
+  const db=await setup()
+  try {
+    await upgrade(db)
+    await db.exec(await readFile(new URL('../migrations/20261125000000_seosmith_lifecycle_index.sql',import.meta.url),'utf8'))
+    const raw=await readFile(new URL('fixtures/contracts/v2-partial.json',import.meta.url),'utf8'), report=JSON.parse(raw), delivery=report.request.request_id
+    await db.query('delete from public.websites where id=$1',[site])
+    await db.query("insert into public.websites(id,owner_id,fqdn) values($1,$2,'example.com')",[report.request.website_id,owner])
+    await db.query('insert into public.seosmith_bindings(website_id,token_sha256) values($1,$2)',[report.request.website_id,hash('x'.repeat(64))])
+    await identity(db)
+    const receipt=(await db.query('select public.import_seosmith_audit($1,$2) r',[report.request.website_id,raw])).rows[0].r
+    await db.exec('reset role;set role anon')
+    assert.deepEqual((await db.query('select public.ingest_seosmith_audit($1,$2,$3,$4) r',['x'.repeat(64),delivery,hash(raw),raw])).rows[0].r,receipt)
+    await identity(db)
+    const ev=report.evidence_contract.evaluations[0]
+    const result=(await db.query('select public.seosmith_lifecycle_history($1,$2,$3) h',[report.request.website_id,ev.entity_id,ev.rule])).rows[0].h
+    assert.equal(result.items[0].ingestion_source,'import')
+    const obs=report.evidence_contract.observations[0]
+    const urls=(await db.query('select public.seosmith_url_lifecycle_history($1,$2) h',[report.request.website_id,obs.entity_id])).rows[0].h
+    assert.equal(urls.items[0].ingestion_source,'import')
+  } finally {await db.close()}
+})

@@ -53,3 +53,9 @@ it('forwards owner-scoped lifecycle history with only explicit cursor and identi
   await proxySeosmith(event, 'lifecycle')
   expect(mocks.raw).toHaveBeenCalledWith(`https://api.example.test/websites/${id}/seo/audits/lifecycle`, expect.objectContaining({ headers: { Authorization: 'Bearer current.user.token' }, query: { entity_id, rule: 'missing_title', limit: 20, before: '2026-10-31T00:00:00Z', before_id: id }, retry: 0 }))
 })
+it('forwards URL observation history using only the fixed owner-scoped route', async () => {
+  const entity_id = `sha256:${'b'.repeat(64)}`
+  vi.stubGlobal('getQuery', () => ({ entity_id, limit: 10, url: 'https://evil.invalid/' }))
+  await proxySeosmith(event, 'url-lifecycle')
+  expect(mocks.raw).toHaveBeenCalledWith(`https://api.example.test/websites/${id}/seo/audits/url-lifecycle`, expect.objectContaining({ headers: { Authorization: 'Bearer current.user.token' }, query: { entity_id, limit: 10, before: undefined, before_id: undefined }, retry: 0 }))
+})
