@@ -520,12 +520,27 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
+    fn assert_traceparent(headers: &HeaderMap) {
+        let value = headers["traceparent"].to_str().unwrap();
+        let parts: Vec<_> = value.split('-').collect();
+        assert_eq!(parts.len(), 4);
+        assert_eq!(parts[0], "00");
+        assert_eq!(parts[1].len(), 32);
+        assert_ne!(parts[1], "11111111111111111111111111111111");
+        assert!(uuid::Uuid::parse_str(parts[1]).is_ok());
+        assert_eq!(parts[2].len(), 16);
+        assert!(parts[2].bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_ne!(parts[2], "0000000000000000");
+        assert_eq!(parts[3], "01");
+        assert!(!headers.contains_key("x-htp-diagnostic-id"));
+    }
+
     #[tokio::test]
     async fn valid_envelope_is_forwarded_to_only_the_credential_checked_rpc() {
         let id = "00000000-0000-0000-0000-000000000001";
         let rpc=Router::new().route("/rest/v1/rpc/ingest_seosmith_audit",post(|headers:HeaderMap,Json(body):Json<serde_json::Value>|async move {
             assert_eq!(headers["apikey"],"publishable");assert!(!headers.contains_key("authorization"));
-            assert!(uuid::Uuid::parse_str(headers["x-htp-diagnostic-id"].to_str().unwrap()).is_ok());
+            assert_traceparent(&headers);
             assert_eq!(body["p_token"],"x".repeat(32));
             assert_eq!(body["p_report_json"], include_str!("../../../supabase/tests/fixtures/seosmith-expanded.json"));
             Json(json!({"delivery_id":body["p_delivery_id"],"sha256":body["p_sha256"],"accepted":true}))
@@ -541,6 +556,7 @@ mod tests {
                     .uri("/integrations/seosmith/audits")
                     .header("content-type", "application/json")
                     .header("idempotency-key", id)
+                    .header("traceparent", "00-11111111111111111111111111111111-1111111111111111-01")
                     .header("authorization", format!("Bearer {}", "x".repeat(32)))
                     .body(Body::from(
                         json!({"delivery_id":id,"sha256":"a".repeat(64),"report_json":include_str!("../../../supabase/tests/fixtures/seosmith-expanded.json")})
@@ -563,10 +579,7 @@ mod tests {
             .route(
                 "/rest/v1/rpc/ingest_seosmith_audit",
                 post(|headers: HeaderMap| async move {
-                    assert!(
-                        uuid::Uuid::parse_str(headers["x-htp-diagnostic-id"].to_str().unwrap())
-                            .is_ok()
-                    );
+                    assert_traceparent(&headers);
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(json!({"code":"57014","message":"synthetic private detail"})),
@@ -576,10 +589,7 @@ mod tests {
             .route(
                 "/rest/v1/rpc/import_seosmith_audit",
                 post(|headers: HeaderMap| async move {
-                    assert!(
-                        uuid::Uuid::parse_str(headers["x-htp-diagnostic-id"].to_str().unwrap())
-                            .is_ok()
-                    );
+                    assert_traceparent(&headers);
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(json!({"code":"57014","message":"synthetic private detail"})),

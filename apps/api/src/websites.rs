@@ -104,7 +104,7 @@ impl WebsiteStore {
                 "seosmith owner diagnostic_id={id} phase=request_built elapsed_ms={}",
                 started.elapsed().as_millis()
             );
-            request.header("x-htp-diagnostic-id", id.to_string())
+            request.header("traceparent", ingest_traceparent(id))
         } else {
             request
         };
@@ -280,7 +280,7 @@ impl WebsiteStore {
                 self.url.trim_end_matches("/websites")
             ))
             .header("apikey", &self.publishable_key)
-            .header("x-htp-diagnostic-id", diagnostic_id.to_string())
+            .header("traceparent", ingest_traceparent(diagnostic_id))
             .json(&body);
         eprintln!(
             "seosmith worker diagnostic_id={diagnostic_id} phase=request_built elapsed_ms={}",
@@ -553,6 +553,13 @@ impl IntoResponse for WebsiteError {
         };
         (status, Json(json!({"error": message}))).into_response()
     }
+}
+
+// The trace ID is server-generated and also appears in API diagnostics. Supabase
+// documents traceparent in gateway logs, but downstream propagation is not guaranteed.
+fn ingest_traceparent(id: Uuid) -> String {
+    let span = Uuid::new_v4().simple().to_string();
+    format!("00-{}-{}-01", id.simple(), &span[..16])
 }
 
 fn log_ingest_failure(path: &str, diagnostic_id: Uuid, started: Instant, error: &reqwest::Error) {
