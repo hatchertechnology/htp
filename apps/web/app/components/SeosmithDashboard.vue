@@ -2,11 +2,16 @@
 import type { AuditMetric } from '#shared/utils/seosmith'
 import { auditMetricLabels, safeAuditUrl, comparable, findingChanges } from '#shared/utils/seosmith'
 import type { AuditDetail } from '../../shared/types/seosmith'
+import { lifecycleHistory } from '#shared/utils/seosmith-lifecycle'
+import type { LifecycleComparison } from '#shared/utils/seosmith-lifecycle'
 const ws = useWorkspace()
 const { runs, selected, busy, detailBusy, importing, error, notice, cursor, load, select, importFile } = useSeosmith()
 const urlPage = ref(1), urlSearch = ref(''), urlStatus = ref('all')
 const metric = ref<AuditMetric>('findings'), severity = ref('all'), rule = ref('all'), search = ref(''), page = ref(1)
 const fileInput = ref<HTMLInputElement | null>(null), comparisonBusy = ref(false), comparisonError = ref('')
+const lifecycle = ref<LifecycleComparison | null>(null)
+const lifecycleDepth = ref(0)
+const baselineId = ref('')
 const changes = ref<{ added: number; resolved: number; persistent: number; unverified: number } | null>(null)
 let comparisonGeneration = 0
 const summary = computed(() => selected.value?.summary)
@@ -15,14 +20,19 @@ const ruleOptions = computed(() => [...new Set(findings.value.map(f => f.rule))]
 const filtered = computed(() => findings.value.filter(f => (severity.value === 'all' || f.severity === severity.value) && (rule.value === 'all' || f.rule === rule.value) && `${f.url} ${f.rule} ${f.evidence}`.toLowerCase().includes(search.value.toLowerCase())).sort((a, b) => ['critical', 'alert', 'warning'].indexOf(a.severity) - ['critical', 'alert', 'warning'].indexOf(b.severity) || a.url.localeCompare(b.url)))
 const displayed = computed(() => filtered.value.slice((page.value - 1) * 50, page.value * 50))
 const pages = computed(() => (selected.value?.report.pages ?? []).filter(p => p.url.toLowerCase().includes(urlSearch.value.toLowerCase()) && (urlStatus.value === 'all' || (urlStatus.value === 'errors' ? (p.status !== null && p.status >= 400) || !!p.error : p.content_type.startsWith(urlStatus.value)))))
-const previous = computed(() => { const index = runs.value.findIndex(r => r.delivery_id === selected.value?.delivery_id); return index >= 0 ? runs.value[index + 1] : undefined })
-const canCompare = computed(() => selected.value && previous.value && comparable(selected.value, previous.value))
+const baselineOptions = computed(() => { const index = runs.value.findIndex(r => r.delivery_id === selected.value?.delivery_id); return index >= 0 ? runs.value.slice(index + 1, index + 10) : [] })
+const previous = computed(() => baselineOptions.value.find(r => r.delivery_id === baselineId.value) || baselineOptions.value[0])
+const canCompare = computed(() => {
+  const a = selected.value, b = previous.value
+  return !!(a && b && (comparable(a, b) || (a.summary.schema_version === 2 && b.summary.schema_version === 2 && !!a.summary.comparison_key && a.summary.comparison_key === b.summary.comparison_key && !!a.summary.engine_version && a.summary.engine_version === b.summary.engine_version && !!a.summary.ruleset_version && a.summary.ruleset_version === b.summary.ruleset_version)))
+})
 watch(() => [selected.value?.delivery_id, urlSearch.value, urlStatus.value], () => { urlPage.value = 1 })
 watch(() => [selected.value?.delivery_id, severity.value, rule.value, search.value], () => { page.value = 1 })
-watch(() => selected.value?.delivery_id, () => { rule.value = 'all'; changes.value = null; comparisonError.value = ''; comparisonGeneration++; comparisonBusy.value = false })
+watch(() => selected.value?.delivery_id, () => { rule.value = 'all'; baselineId.value = ''; changes.value = null; lifecycle.value = null; comparisonError.value = ''; comparisonGeneration++; comparisonBusy.value = false })
 onBeforeUnmount(() => { comparisonGeneration++ })
 function stamp(value: string) { return new Date(value).toISOString().replace('T', ' ').slice(0, 19) + ' UTC' }
 function label(value: string) { return value.replaceAll('_', ' ') }
+function displayEvidence(value: unknown) { const text = JSON.stringify(value) ?? 'Unavailable'; return text.length > 500 ? text.slice(0, 500) + '… (truncated; see source report)' : text }
 async function upload(event: Event) { const input = event.target as HTMLInputElement, file = input.files?.[0]; if (file) await importFile(file); input.value = '' }
 async function compareRuns() {
   if (!selected.value || !previous.value || !canCompare.value) return
@@ -30,7 +40,20 @@ async function compareRuns() {
   comparisonBusy.value = true; comparisonError.value = ''
   try {
     const detail = await ws.request<AuditDetail>(`/api/websites/${ws.selectedId.value}/seo/audits/${older.delivery_id}`)
-    if (gen === comparisonGeneration) changes.value = findingChanges(current, older, current.report.findings, detail.report.findings, current.report.pages)
+    const selectedIndex = runs.value.findIndex(r => r.delivery_id === current.delivery_id)
+    const earlier = current.summary.schema_version === 2 ? runs.value.slice(selectedIndex + 1, selectedIndex + 10) : []
+    const history: AuditDetail[] = []
+    // Stop at the first incompatible report; do not bridge gaps in comparable history.
+    for (const run of earlier) {
+      if (run.summary.schema_version !== 2 || run.summary.comparison_key !== current.summary.comparison_key || run.summary.engine_version !== current.summary.engine_version || run.summary.ruleset_version !== current.summary.ruleset_version) break
+      history.unshift(run.delivery_id === older.delivery_id ? detail : await ws.request<AuditDetail>(`/api/websites/${ws.selectedId.value}/seo/audits/${run.delivery_id}`))
+    }
+    if (gen === comparisonGeneration) {
+      lifecycle.value = lifecycleHistory([...history, current], older.delivery_id)
+      lifecycleDepth.value = history.length + 1
+      changes.value = lifecycle.value ? null : findingChanges(current, older, current.report.findings, detail.report.findings, current.report.pages)
+      if (!lifecycle.value && !changes.value) comparisonError.value = 'These reports do not have compatible comparison evidence.'
+    }
   } catch (cause) { if (gen === comparisonGeneration) comparisonError.value = failureMessage(cause) }
   finally { if (gen === comparisonGeneration) comparisonBusy.value = false }
 }
@@ -54,9 +77,11 @@ function download() {
         <div class="insight-totals seo-summary"><div><span>URLs checked</span><strong>{{ summary.pages.checked.toLocaleString() }}</strong></div><div><span>Critical</span><strong>{{ summary.severities.critical.toLocaleString() }}</strong></div><div><span>Alerts</span><strong>{{ summary.severities.alert.toLocaleString() }}</strong></div><div><span>Warnings</span><strong>{{ summary.severities.warning.toLocaleString() }}</strong></div><div><span>HTTP errors</span><strong>{{ summary.pages.http_errors.toLocaleString() }}</strong></div></div>
         <p v-if="!summary.coverage_complete" class="form-notice" role="status">This run has incomplete coverage: {{ label(summary.stop_reason || summary.outcome) }}. Missing findings do not mean issues were fixed.</p>
         <p class="report-caption">{{ stamp(selected.scan_at) }} · {{ summary.outcome }} · {{ summary.pages.html }} successful HTML pages · {{ summary.pages.images }} images · {{ summary.pages.fetch_errors }} fetch errors.<span>Engine {{ summary.engine_version || 'unknown' }} · Ruleset {{ summary.ruleset_version || 'unknown' }} · {{ selected.report.request.max_pages }}-URL cap · {{ selected.ingestion_source === 'import' ? 'Imported report' : 'Worker delivery' }} · Received {{ stamp(selected.received_at) }}.</span></p>
-        <div class="seo-actions"><button class="refresh-control" @click="download">Download run JSON</button><button v-if="canCompare" class="refresh-control" :disabled="comparisonBusy" @click="compareRuns">{{ comparisonBusy ? 'Comparing…' : 'Compare findings with previous run' }}</button></div>
-        <p v-if="previous && !canCompare" class="report-caption">Finding changes are unavailable against the previous run because coverage or crawl settings, engine, or ruleset differ. Both observations remain in the chart.</p>
-        <p v-if="changes" class="form-notice" role="status">Compared with the previous complete run: {{ changes.added }} new · {{ changes.resolved }} resolved · {{ changes.persistent }} persistent findings.<span v-if="changes.unverified">{{ ' ' }}{{ changes.unverified }} could not be verified from the current observations.</span></p><p v-if="comparisonError" class="form-error" role="alert">{{ comparisonError }}</p>
+        <div class="seo-actions"><button class="refresh-control" @click="download">Download run JSON</button><label v-if="baselineOptions.length">Baseline <select v-model="baselineId" aria-label="Comparison baseline" @change="changes = null; lifecycle = null; comparisonError = ''; comparisonGeneration++; comparisonBusy = false"><option value="">Previous run</option><option v-for="run in baselineOptions" :key="run.delivery_id" :value="run.delivery_id">{{ stamp(run.scan_at) }} · {{ run.delivery_id }}</option></select></label><button v-if="canCompare" class="refresh-control" :disabled="comparisonBusy" @click="compareRuns">{{ comparisonBusy ? 'Comparing…' : 'Compare findings with baseline' }}</button></div>
+        <p v-if="previous && !canCompare" class="report-caption">Finding changes are unavailable against the selected baseline because coverage or crawl settings, engine, or ruleset differ. Both observations remain in the chart.</p>
+        <p v-if="lifecycle" class="form-notice" role="status">Compared with baseline {{ lifecycle.baseline_id }}: {{ lifecycle.entries.filter(e => e.state === 'new').length }} new · {{ lifecycle.entries.filter(e => e.state === 'resolved').length }} resolved · {{ lifecycle.entries.filter(e => e.state === 'persisting').length }} persisting · {{ lifecycle.entries.filter(e => e.state === 'changed').length }} changed · {{ lifecycle.entries.filter(e => e.state === 'reopened').length }} reopened · {{ lifecycle.entries.filter(e => e.state === 'not_observed').length }} not observed. Only explicit comparable evaluations establish transitions; missing or unknown checks remain unverified.</p>
+        <details v-if="lifecycle" class="seo-history-table"><summary>Finding lifecycle and rule coverage</summary><p class="report-caption">First and last observed times and reopenings are limited to {{ lifecycleDepth }} loaded compatible runs, including this run. A new finding is new since the baseline. Coverage denominators count stored observations, not the entire site.</p><div class="table-scroll"><table><thead><tr><th>Rule</th><th>State</th><th>URL</th><th>First observed</th><th>Last observed</th><th>Evidence run</th></tr></thead><tbody><tr v-for="entry in lifecycle.entries" :key="entry.entity_id + entry.rule"><td>{{ label(entry.rule) }}</td><td>{{ label(entry.state) }}</td><td>{{ entry.finding?.url || entry.entity_id }}</td><td>{{ stamp(entry.first_observed) }}</td><td>{{ stamp(entry.last_observed) }}</td><td>{{ entry.source_delivery_id }} · {{ entry.source_locator }}</td></tr></tbody></table></div><details><summary>URL changes and unavailable observations ({{ lifecycle.urls.length }})</summary><p class="report-caption">Only observed properties present in both reports are compared. A missing URL or unavailable observation is not evidence of removal. Showing at most 100 entries.</p><div class="table-scroll"><table><thead><tr><th>URL</th><th>State</th><th>Changed properties</th><th>Source pointers (baseline / current)</th></tr></thead><tbody><tr v-for="item in lifecycle.urls.slice(0, 100)" :key="item.entity_id"><td>{{ item.url }}</td><td>{{ label(item.state) }}</td><td><span v-if="!item.properties.length">Unavailable</span><ul v-else><li v-for="property in item.properties" :key="property.property">{{ property.property }}: {{ displayEvidence(property.before) }} → {{ displayEvidence(property.current) }}</li></ul></td><td>{{ item.baseline_locator || 'Unavailable' }} / {{ item.current_locator || 'Unavailable' }}</td></tr></tbody></table></div></details><details><summary>Per-rule coverage</summary><div class="table-scroll"><table><thead><tr><th>Rule</th><th>Stored entities</th><th>Attempted</th><th>Unknown outcomes</th><th>Ineligible or eligibility unknown</th></tr></thead><tbody><tr v-for="coverage in lifecycle.coverage" :key="coverage.rule"><td>{{ label(coverage.rule) }}</td><td>{{ coverage.entities }}</td><td>{{ coverage.attempted }}</td><td>{{ coverage.unknown }}</td><td>{{ coverage.excluded }}</td></tr></tbody></table></div></details></details>
+        <p v-if="changes" class="form-notice" role="status">Compared with the selected complete baseline: {{ changes.added }} new · {{ changes.resolved }} resolved · {{ changes.persistent }} persistent findings.<span v-if="changes.unverified">{{ ' ' }}{{ changes.unverified }} could not be verified from the current observations.</span></p><p v-if="comparisonError" class="form-error" role="alert">{{ comparisonError }}</p>
         <div class="report-panel seo-findings"><header><h3>Findings</h3><span>{{ filtered.length.toLocaleString() }} matching</span></header><div class="seo-filters"><label>Severity<select v-model="severity" aria-label="Severity"><option value="all">All severities</option><option value="critical">Critical</option><option value="alert">Alerts</option><option value="warning">Warnings</option></select></label><label>Rule<select v-model="rule" aria-label="Rule"><option value="all">All rules</option><option v-for="id in ruleOptions" :key="id" :value="id">{{ label(id) }}</option></select></label><label>Find a URL or issue<input v-model="search" type="search" placeholder="Search findings" /></label></div>
           <div class="table-scroll"><table><caption class="sr-only">Seosmith findings for the selected run</caption><thead><tr><th scope="col">Severity</th><th scope="col">Finding</th><th scope="col">Affected URL</th><th scope="col">Evidence</th></tr></thead><tbody><tr v-for="(finding, index) in displayed" :key="`${finding.key}-${index}`"><td><span class="seo-severity" :class="`seo-${finding.severity}`">{{ finding.severity }}</span></td><td>{{ label(finding.rule) }}</td><td><a v-if="safeAuditUrl(finding.url)" :href="safeAuditUrl(finding.url)" target="_blank" rel="noopener noreferrer">{{ finding.url }}</a><span v-else>{{ finding.url }}</span></td><td>{{ finding.evidence }}</td></tr></tbody></table></div><p v-if="!filtered.length" class="compact-empty">No findings match these filters.</p><div v-if="filtered.length > 50" class="seo-pagination"><button class="refresh-control" :disabled="page === 1" @click="page--">Previous findings</button><span>Page {{ page }} of {{ Math.ceil(filtered.length / 50) }}</span><button class="refresh-control" :disabled="page * 50 >= filtered.length" @click="page++">Next findings</button></div>
         </div>

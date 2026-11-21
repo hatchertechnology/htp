@@ -206,3 +206,8 @@ it('keeps versioned partial/unknown evidence and legacy-v2 pairs from resolving 
   current.summary.coverage_complete = false
   expect(findingChanges(current, previous, [], before, [page])).toBeNull()
 })
+it('does not treat future report schemas as comparable legacy reports', () => {
+  const a = run('a', '2026-10-31T01:00:00Z'), b = run('b', '2026-10-31T02:00:00Z')
+  a.summary.schema_version = 4; b.summary.schema_version = 4
+  expect(comparable(a, b)).toBe(false)
+})
