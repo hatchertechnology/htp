@@ -286,6 +286,8 @@ separate from the immutable report. Status `done` and exceptions are planning
 states, not evidence of a verified fix. Verification attempts are append-only
 observations and do not automatically resolve a finding. A related audit ID,
 when provided, must be a saved audit for the same owner and current hostname.
+Work reads select one finding at a time and page attempts using a stable
+timestamp-and-ID cursor.
 
 The panel preserves original evidence, severity and collection interval. It shows
 confidence and rule/validator attribution only when exactly one explicit failed

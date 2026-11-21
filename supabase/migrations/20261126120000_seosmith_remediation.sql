@@ -20,20 +20,21 @@ create table public.seosmith_verification_attempts (
   note text not null check (octet_length(note) between 1 and 4096),
   created_at timestamptz not null default now()
 );
-create index seosmith_verification_attempts_work on public.seosmith_verification_attempts(remediation_id,created_at,id);
+create index seosmith_verification_attempts_work on public.seosmith_verification_attempts(remediation_id,created_at desc,id desc);
 alter table public.seosmith_remediation enable row level security;
 alter table public.seosmith_verification_attempts enable row level security;
 revoke all on public.seosmith_remediation,public.seosmith_verification_attempts from public,anon,authenticated;
 grant all on public.seosmith_remediation,public.seosmith_verification_attempts to service_role;
 
-create function public.seosmith_remediation_list(p_website_id uuid,p_delivery_id uuid) returns jsonb
+create function public.seosmith_remediation_list(p_website_id uuid,p_delivery_id uuid,p_finding_index integer,p_before timestamptz default null,p_before_id uuid default null) returns jsonb
 language plpgsql security definer set search_path='' as $$
 declare w public.websites;
 begin
  select * into w from public.websites where id=p_website_id and owner_id=auth.uid();
  if not found or coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
  if not exists(select 1 from public.seosmith_audits where website_id=w.id and fqdn=w.fqdn and delivery_id=p_delivery_id) then raise exception 'audit_not_found' using errcode='22023'; end if;
- return coalesce((select jsonb_agg(to_jsonb(m) || jsonb_build_object('attempts',coalesce((select jsonb_agg(to_jsonb(v) order by v.created_at desc,v.id) from public.seosmith_verification_attempts v where v.remediation_id=m.id),'[]'::jsonb)) order by m.finding_index) from public.seosmith_remediation m where m.website_id=w.id and m.delivery_id=p_delivery_id),'[]'::jsonb);
+ if p_finding_index is null or p_finding_index<0 or (p_before is null)<>(p_before_id is null) then raise exception 'invalid_page' using errcode='22023'; end if;
+ return coalesce((select jsonb_agg(to_jsonb(m) || jsonb_build_object('attempts',coalesce((select jsonb_agg(to_jsonb(v) order by v.created_at desc,v.id desc) from (select * from public.seosmith_verification_attempts where remediation_id=m.id and (p_before is null or (created_at,id)<(p_before,p_before_id)) order by created_at desc,id desc limit 50) v),'[]'::jsonb), 'attempts_more',exists(select 1 from public.seosmith_verification_attempts where remediation_id=m.id and (p_before is null or (created_at,id)<(p_before,p_before_id)) order by created_at desc,id desc offset 50 limit 1))) from public.seosmith_remediation m where m.website_id=w.id and m.delivery_id=p_delivery_id and m.finding_index=p_finding_index),'[]'::jsonb);
 end $$;
 
 create function public.seosmith_remediation_save(p_website_id uuid,p_delivery_id uuid,p_finding_index integer,p_work jsonb) returns jsonb
@@ -75,5 +76,5 @@ begin
  insert into public.seosmith_verification_attempts(remediation_id,delivery_id,result,note) values(m.id,p_delivery_id,p_result,p_note) returning * into v;
  return to_jsonb(v);
 end $$;
-revoke all on function public.seosmith_remediation_list(uuid,uuid),public.seosmith_remediation_save(uuid,uuid,integer,jsonb),public.seosmith_remediation_attempt(uuid,uuid,uuid,text,text) from public,anon;
-grant execute on function public.seosmith_remediation_list(uuid,uuid),public.seosmith_remediation_save(uuid,uuid,integer,jsonb),public.seosmith_remediation_attempt(uuid,uuid,uuid,text,text) to authenticated;
+revoke all on function public.seosmith_remediation_list(uuid,uuid,integer,timestamptz,uuid),public.seosmith_remediation_save(uuid,uuid,integer,jsonb),public.seosmith_remediation_attempt(uuid,uuid,uuid,text,text) from public,anon;
+grant execute on function public.seosmith_remediation_list(uuid,uuid,integer,timestamptz,uuid),public.seosmith_remediation_save(uuid,uuid,integer,jsonb),public.seosmith_remediation_attempt(uuid,uuid,uuid,text,text) to authenticated;

@@ -3,9 +3,9 @@ import type { AuditDetail } from '../../shared/types/seosmith'
 import { findingEvaluation } from '../../shared/utils/seosmith-remediation'
 const props = defineProps<{ audit: AuditDetail }>()
 type Attempt = { id: string; result: string; note: string; created_at: string; delivery_id: string | null }
-type Work = { id: string; finding_index: number; status: string; assignee: string | null; segments: Record<string, string>; exception_note: string | null; notes: string | null; business_exposure: string | null; estimated_effort: string | null; rationale: string | null; attempts: Attempt[] }
+type Work = { id: string; finding_index: number; status: string; assignee: string | null; segments: Record<string, string>; exception_note: string | null; notes: string | null; business_exposure: string | null; estimated_effort: string | null; rationale: string | null; attempts: Attempt[]; attempts_more: boolean }
 const ws = useWorkspace()
-const index = ref(0), items = ref<Work[]>([]), busy = ref(false), message = ref(''), error = ref('')
+const index = ref(0), cursors = ref<Array<{ before: string; before_id: string } | null>>([null]), cursorPage = ref(0), items = ref<Work[]>([]), busy = ref(false), message = ref(''), error = ref('')
 const form = reactive({ status: 'open', assignee: '', page: '', template: '', locale: '', device: '', business: '', exception_note: '', notes: '', business_exposure: '', estimated_effort: '', rationale: '' })
 const attemptNote = ref(''), attemptResult = ref('unverified'), attemptAudit = ref('')
 const finding = computed(() => props.audit.report.findings[index.value])
@@ -21,12 +21,12 @@ function populate() {
 }
 async function load() {
   const gen = ++generation; busy.value = true; error.value = ''; message.value = ''
-  try { const result = await ws.request<Work[]>(endpoint.value); if (gen === generation) { items.value = result; populate() } }
+  try { const result = await ws.request<Work[]>(endpoint.value, { query: { finding_index: index.value, ...(cursors.value[cursorPage.value] ?? {}) } }); if (gen === generation) { items.value = result; populate() } }
   catch { if (gen === generation) { items.value = []; error.value = 'Work items could not load. Try again.' } }
   finally { if (gen === generation) busy.value = false }
 }
-watch(() => [props.audit.delivery_id, ws.selectedId.value], () => { index.value = 0; void load() }, { immediate: true })
-watch(index, populate)
+watch(() => [props.audit.delivery_id, ws.selectedId.value], () => { index.value = 0; cursors.value = [null]; cursorPage.value = 0; void load() }, { immediate: true })
+watch(index, () => { cursors.value = [null]; cursorPage.value = 0; void load() })
 onBeforeUnmount(() => { generation++ })
 async function save() {
   busy.value = true; error.value = ''; message.value = ''
@@ -38,12 +38,19 @@ async function save() {
   } catch { error.value = 'Work could not be saved. Check the fields and try again.' }
   finally { busy.value = false }
 }
+function newerAttempts() { if (cursorPage.value > 0) { cursorPage.value--; void load() } }
+function olderAttempts() {
+  const last = current.value?.attempts.at(-1)
+  if (!last || !current.value?.attempts_more) return
+  cursors.value = [...cursors.value.slice(0, cursorPage.value + 1), { before: last.created_at, before_id: last.id }]
+  cursorPage.value++; void load()
+}
 async function addAttempt() {
   if (!current.value || !attemptNote.value.trim()) return
   busy.value = true; error.value = ''; message.value = ''
   try {
     await ws.request(`/api/websites/${ws.selectedId.value}/seo/work/${current.value.id}/attempts`, { method: 'POST', body: { delivery_id: attemptAudit.value.trim() || null, result: attemptResult.value, note: attemptNote.value.trim() } })
-    await load(); message.value = 'Verification attempt recorded; no finding was automatically resolved.'
+    cursors.value = [null]; cursorPage.value = 0; await load(); message.value = 'Verification attempt recorded; no finding was automatically resolved.'
   } catch { error.value = 'The attempt could not be saved. Check the audit ID and try again.' }
   finally { busy.value = false }
 }
@@ -67,7 +74,7 @@ async function addAttempt() {
         <button class="refresh-control" :disabled="busy">Save work</button>
       </form>
       <template v-if="current"><h4>Verification attempts</h4><p class="report-caption">An attempt records what was checked; it does not automatically resolve the finding.</p>
-        <ul v-if="current.attempts.length"><li v-for="a in current.attempts" :key="a.id">{{ a.created_at }} · {{ a.result }} · {{ a.note }}<span v-if="a.delivery_id"> · audit {{ a.delivery_id }}</span></li></ul><p v-else class="compact-empty">No attempts recorded.</p>
+        <ul v-if="current.attempts.length"><li v-for="a in current.attempts" :key="a.id">{{ a.created_at }} · {{ a.result }} · {{ a.note }}<span v-if="a.delivery_id"> · audit {{ a.delivery_id }}</span></li></ul><p v-else class="compact-empty">No attempts recorded.</p><div v-if="cursorPage || current.attempts_more" class="seo-pagination"><button class="refresh-control" type="button" :disabled="busy || !cursorPage" @click="newerAttempts">Newer attempts</button><span>Page {{ cursorPage + 1 }}</span><button class="refresh-control" type="button" :disabled="busy || !current.attempts_more" @click="olderAttempts">Older attempts</button></div>
         <form class="seo-filters" @submit.prevent="addAttempt"><label>Result<select v-model="attemptResult"><option value="unverified">Unverified</option><option value="observed">Observation recorded</option></select></label><label>Related saved audit ID (optional)<input v-model="attemptAudit" /></label><label>What was checked<input v-model="attemptNote" required maxlength="4096" /></label><button class="refresh-control" :disabled="busy || !attemptNote.trim()">Record attempt</button></form>
       </template>
     </template>

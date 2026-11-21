@@ -20,9 +20,15 @@ test('work is owner-scoped, tied to an immutable finding, and verification does 
   assert.equal(first.finding_key,'finding-a');assert.equal(first.business_exposure,null)
   const attempt=(await db.query('select public.seosmith_remediation_attempt($1,$2,$3,$4,$5) as attempt',[site,first.id,run,'unverified','Awaiting another crawl'])).rows[0].attempt
   assert.equal(attempt.result,'unverified');await identity(other);await assert.rejects(()=>db.query('select public.seosmith_remediation_attempt($1,$2,$3,$4,$5)',[site,first.id,run,'observed','forged']),/forbidden/);await identity(owner)
-  const listed=(await db.query('select public.seosmith_remediation_list($1,$2) as work',[site,run])).rows[0].work
+  const listed=(await db.query('select public.seosmith_remediation_list($1,$2,0,null,null) as work',[site,run])).rows[0].work
   assert.equal(listed[0].attempts.length,1); assert.equal(listed[0].status,'done')
+  await db.exec('reset role'); await db.query("insert into public.seosmith_verification_attempts(remediation_id,result,note) select $1,'unverified','another check' from generate_series(1,50)",[first.id]); await identity(owner)
+  const page1=(await db.query('select public.seosmith_remediation_list($1,$2,0,null,null) as work',[site,run])).rows[0].work[0]
+  await db.query('select public.seosmith_remediation_attempt($1,$2,$3,$4,$5)',[site,first.id,run,'unverified','inserted during paging'])
+  const last=page1.attempts.at(-1); const page2=(await db.query('select public.seosmith_remediation_list($1,$2,0,$3,$4) as work',[site,run,last.created_at,last.id])).rows[0].work[0]
+  assert.equal(page1.attempts.length,50); assert.equal(page1.attempts_more,true); assert.equal(page2.attempts.length,1); assert.equal(page2.attempts_more,false)
+  assert.equal(new Set([...page1.attempts,...page2.attempts].map(x=>x.id)).size,51)
   await db.exec('reset role');assert.deepEqual((await db.query('select report from public.seosmith_audits where delivery_id=$1',[run])).rows[0].report,report)
-  await db.query("update public.websites set fqdn='changed.example.com' where id=$1",[site]);await identity(owner);await assert.rejects(()=>save(0,{}),/invalid_audit_or_finding/);await assert.rejects(()=>db.query('select public.seosmith_remediation_list($1,$2)',[site,run]),/audit_not_found/)
+  await db.query("update public.websites set fqdn='changed.example.com' where id=$1",[site]);await identity(owner);await assert.rejects(()=>save(0,{}),/invalid_audit_or_finding/);await assert.rejects(()=>db.query('select public.seosmith_remediation_list($1,$2,0,null,null)',[site,run]),/audit_not_found/)
  } finally {await db.close()}
 })

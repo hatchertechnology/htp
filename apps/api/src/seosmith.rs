@@ -101,16 +101,23 @@ struct AttemptInput {
     result: String,
     note: String,
 }
+#[derive(Deserialize)]
+struct WorkQuery {
+    finding_index: i32,
+    before: Option<String>,
+    before_id: Option<Uuid>,
+}
 async fn work_list(
     State(store): State<WebsiteStore>,
     headers: HeaderMap,
     Path((id, run)): Path<(Uuid, Uuid)>,
+    Query(query): Query<WorkQuery>,
 ) -> Response {
     match store
         .rpc(
             &headers,
             "seosmith_remediation_list",
-            json!({"p_website_id":id,"p_delivery_id":run}),
+            json!({"p_website_id":id,"p_delivery_id":run,"p_finding_index":query.finding_index,"p_before":query.before,"p_before_id":query.before_id}),
         )
         .await
     {
@@ -512,17 +519,30 @@ mod tests {
     }
     #[tokio::test]
     async fn remediation_routes_forward_user_and_never_claim_verification() {
-        let rpc = Router::new().route(
-            "/rest/v1/rpc/seosmith_remediation_save",
-            post(
-                |headers: HeaderMap, Json(body): Json<serde_json::Value>| async move {
-                    assert_eq!(headers["authorization"], "Bearer user-token");
-                    assert_eq!(body["p_finding_index"], 0);
-                    assert_eq!(body["p_work"]["status"], "done");
-                    Json(json!({"status":"done"}))
-                },
-            ),
-        );
+        let rpc = Router::new()
+            .route(
+                "/rest/v1/rpc/seosmith_remediation_save",
+                post(
+                    |headers: HeaderMap, Json(body): Json<serde_json::Value>| async move {
+                        assert_eq!(headers["authorization"], "Bearer user-token");
+                        assert_eq!(body["p_finding_index"], 0);
+                        assert_eq!(body["p_work"]["status"], "done");
+                        Json(json!({"status":"done"}))
+                    },
+                ),
+            )
+            .route(
+                "/rest/v1/rpc/seosmith_remediation_list",
+                post(
+                    |headers: HeaderMap, Json(body): Json<serde_json::Value>| async move {
+                        assert_eq!(headers["authorization"], "Bearer user-token");
+                        assert_eq!(body["p_finding_index"], 4);
+                        assert_eq!(body["p_before"], "2026-01-01T00:00:00Z");
+                        assert_eq!(body["p_before_id"], "00000000-0000-0000-0000-000000000003");
+                        Json(json!([]))
+                    },
+                ),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let store = WebsiteStore::new(
             &format!("http://{}", listener.local_addr().unwrap()),
@@ -551,6 +571,20 @@ mod tests {
         let body: serde_json::Value =
             serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
         assert_eq!(body, json!({"status":"done"}));
+        let list_uri = format!(
+            "{uri}?finding_index=4&before=2026-01-01T00%3A00%3A00Z&before_id=00000000-0000-0000-0000-000000000003"
+        );
+        let listed = read_router(store.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(list_uri)
+                    .header("authorization", "Bearer user-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
         let denied = read_router(store)
             .oneshot(
                 Request::builder()
