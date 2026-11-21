@@ -37,6 +37,7 @@ pub fn validate_fields(fields: &[Field]) -> Result<(), &'static str> {
                 .bytes()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_')
             || !field.key.as_bytes()[0].is_ascii_lowercase()
+            || matches!(field.key.as_str(), "website" | "submission_id")
             || !keys.insert(&field.key)
         {
             return Err("Field keys must be unique lowercase identifiers.");

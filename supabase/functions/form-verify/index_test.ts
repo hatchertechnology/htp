@@ -1,0 +1,69 @@
+import { handle } from "./index.ts";
+function equal(a: unknown, b: unknown) {
+  if (JSON.stringify(a) !== JSON.stringify(b)) {
+    throw new Error(`${JSON.stringify(a)} != ${JSON.stringify(b)}`);
+  }
+}
+const id = "00000000-0000-0000-0000-000000000001", token = "a".repeat(64);
+const digest = Array.from(
+  new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)),
+  ),
+  (b) => b.toString(16).padStart(2, "0"),
+).join("");
+const request = () =>
+  new Request("https://htp.test/verify", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer valid",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ host_id: id, token }),
+  });
+Deno.test("requires matching TXT and current challenge before marking verified", async () => {
+  let completed = 0;
+  const deps = {
+    challenge: () =>
+      Promise.resolve({ hostname: "www.example.com", challenge_hash: digest }),
+    dns: (name: string) => {
+      equal(name, "_htp-verification.www.example.com");
+      return Promise.resolve({
+        Status: 0,
+        Answer: [{
+          type: 16,
+          data: JSON.stringify(`htp-verification=${token}`),
+        }],
+      });
+    },
+    complete: () => {
+      completed++;
+      return Promise.resolve(true);
+    },
+  };
+  equal((await handle(request(), deps)).status, 200);
+  equal(completed, 1);
+  deps.dns = () =>
+    Promise.resolve({ Status: 0, Answer: [{ type: 16, data: '"wrong"' }] });
+  equal((await handle(request(), deps)).status, 422);
+  equal(completed, 1);
+  deps.challenge = () =>
+    Promise.resolve({
+      hostname: "www.example.com",
+      challenge_hash: "0".repeat(64),
+    });
+  equal((await handle(request(), deps)).status, 422);
+  equal(completed, 1);
+});
+Deno.test("denies a host unavailable to the authenticated user", async () => {
+  let completed = 0;
+  const response = await handle(request(), {
+    challenge: () => Promise.resolve(null),
+    dns: () => Promise.resolve({}),
+    complete: () => {
+      completed++;
+      return Promise.resolve(true);
+    },
+  });
+  equal(response.status, 404);
+  equal(completed, 0);
+});

@@ -14,3 +14,7 @@ verify_jwt = false
 
 [functions.bing-sync]
 verify_jwt = false
+
+[functions.form-submit]
+# Visitors have no HTP account; the handler enforces verified origins.
+verify_jwt = false
