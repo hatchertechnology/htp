@@ -325,4 +325,133 @@ mod tests {
         );
         server.abort();
     }
+    #[tokio::test]
+    #[ignore = "requires disposable PostgREST, database, and Edge fixture"]
+    async fn coupled_disposable_postgrest_receiver() {
+        let db = std::env::var("FORMS_TEST_DB").expect("disposable PostgREST gateway required");
+        let receiver =
+            std::env::var("FORMS_TEST_RECEIVER").expect("disposable Edge receiver required");
+        let key = std::env::var("FORMS_TEST_SERVICE_JWT").expect("disposable service JWT required");
+        let mut c = Config::from_env();
+        c.trusted_fly = true;
+        c.allow_test_loopback = true;
+        c.db = db;
+        c.receiver = receiver.clone();
+        c.service_key = key;
+        c.secret = "s".repeat(48);
+        c.hash_key = "h".repeat(48);
+        let mut urls = Vec::new();
+        let mut servers = Vec::new();
+        for _ in 0..2 {
+            let mut instance = c.clone();
+            instance.slots = Arc::new(tokio::sync::Semaphore::new(32));
+            let app = Router::new()
+                .route("/public/forms/{form_id}", any(forward))
+                .with_state(instance);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            urls.push(format!(
+                "http://{}/public/forms/00000000-0000-0000-0000-000000000003",
+                listener.local_addr().unwrap()
+            ));
+            servers.push(tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap()
+            }));
+        }
+        let client = reqwest::Client::new();
+        assert_eq!(
+            client
+                .post(format!(
+                    "{receiver}?form=00000000-0000-0000-0000-000000000003"
+                ))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        let send = |url: String, method: Method| {
+            client
+                .request(method, url)
+                .header("fly-client-ip", "192.0.2.1")
+                .header(header::ORIGIN, "https://www.example.com")
+        };
+        let preflight = send(urls[0].clone(), Method::OPTIONS).send().await.unwrap();
+        assert_eq!(preflight.status(), StatusCode::NO_CONTENT);
+        let payload = serde_json::json!({"submission_id":"00000000-0000-0000-0000-000000000005", "name":"Ada", "email":"ada@example.com"});
+        let first = send(urls[0].clone(), Method::POST)
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(
+            first.json::<serde_json::Value>().await.unwrap()["duplicate"],
+            false
+        );
+        let retry = send(urls[1].clone(), Method::POST)
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(retry.status(), StatusCode::OK);
+        assert_eq!(
+            retry.json::<serde_json::Value>().await.unwrap()["duplicate"],
+            true
+        );
+        for _ in 0..97 {
+            assert_eq!(
+                send(urls[0].clone(), Method::OPTIONS)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::NO_CONTENT
+            );
+        }
+        assert_eq!(
+            send(urls[1].clone(), Method::OPTIONS)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        let mut receiver_down = c.clone();
+        receiver_down.receiver = "http://127.0.0.1:1".into();
+        let down_app = Router::new()
+            .route("/public/forms/{form_id}", any(forward))
+            .with_state(receiver_down);
+        use tower::ServiceExt;
+        let response = down_app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/public/forms/00000000-0000-0000-0000-000000000003")
+                    .header("fly-client-ip", "192.0.2.2")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let mut bad = c;
+        bad.db = "http://127.0.0.1:1".into();
+        let app = Router::new()
+            .route("/public/forms/{form_id}", any(forward))
+            .with_state(bad);
+        let r = app
+            .oneshot(
+                Request::builder()
+                    .uri("/public/forms/00000000-0000-0000-0000-000000000003")
+                    .header("fly-client-ip", "192.0.2.1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
+        for server in servers {
+            server.abort();
+        }
+    }
 }
