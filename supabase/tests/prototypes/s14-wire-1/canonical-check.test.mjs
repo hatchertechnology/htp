@@ -21,5 +21,8 @@ test('candidate canonical encoding checks exact policy bytes', {skip: !directory
   await assert.rejects(()=>check('{"𐀀":2,"":1}'),/noncanonical_policy/)
   await assert.rejects(()=>check('{"x":-0}'),/noncanonical_policy|invalid_canonical_number/)
   await assert.rejects(()=>check('{"x":1e0}'),/noncanonical_policy|invalid_canonical_number/)
+  await check('{"x":'+'['.repeat(63)+'0'+']'.repeat(63)+'}')
+  await assert.rejects(()=>check('{"x":'+'['.repeat(64)+'0'+']'.repeat(64)+'}'),/policy_depth_limit/)
+  await check(String.raw`{"x":"[{\"}]"}`)
  }finally{await db.close()}
 })

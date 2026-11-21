@@ -35,3 +35,8 @@ negative; it deliberately rescans pages and is not budget-safe, does not
 reconstruct omitted edges, and must never be installed as a receiver. The
 edge gate test confirms both actual RPC paths still reject even the candidate
 positives. This is safety evidence, not paired acceptance.
+
+`fixtures/policy-raw-203b/` contains the pinned embedded-policy raw scanner
+subset from a later candidate bundle. The experimental scanner bounds raw policy
+bytes and container depth before JSONB parsing, then checks decoded key
+uniqueness. Passing it does not validate the closed policy or accept a report.
