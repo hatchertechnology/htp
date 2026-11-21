@@ -151,7 +151,7 @@ test('verified recipients receive a single queued delivery and failed sends can 
       create function auth.jwt() returns jsonb language sql stable as $$ select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb $$;
       create function auth.uid() returns uuid language sql stable as $$ select (auth.jwt()->>'sub')::uuid $$;
       grant usage on schema auth,public to authenticated,anon,service_role;`)
-    for(const file of ['20261028142440_create_websites.sql','20261122000000_website_forms.sql','20261122000100_forms_acceptance.sql','20261122000200_forms_host_verification.sql','20261122000300_forms_management.sql','20261122000400_forms_notifications.sql','20261122000500_forms_response_deletion.sql','20261122000600_forms_rename_safety.sql','20261122000700_forms_ingress_gate.sql']) await db.exec(await readFile(new URL(`../migrations/${file}`,import.meta.url),'utf8'))
+    for(const file of ['20261028142440_create_websites.sql','20261122000000_website_forms.sql','20261122000100_forms_acceptance.sql','20261122000200_forms_host_verification.sql','20261122000300_forms_management.sql','20261122000400_forms_notifications.sql','20261122000500_forms_response_deletion.sql','20261122000600_forms_rename_safety.sql','20261122000700_forms_ingress_gate.sql','20261122000800_forms_uncertain_retry.sql']) await db.exec(await readFile(new URL(`../migrations/${file}`,import.meta.url),'utf8'))
     const owner='00000000-0000-0000-0000-000000000001', other='00000000-0000-0000-0000-000000000002', site='00000000-0000-0000-0000-000000000003', form='00000000-0000-0000-0000-000000000004', response='00000000-0000-0000-0000-000000000005'
     await db.query('insert into auth.users values($1),($2)',[owner,other])
     await db.query("insert into public.websites(id,owner_id,fqdn) values($1,$2,'example.com')",[site,owner])
@@ -188,7 +188,15 @@ test('verified recipients receive a single queued delivery and failed sends can 
     await identity(owner)
     await assert.rejects(()=>db.query('select public.delete_website_form_response($1,$2,$3)',[site,form,response]),/currently sending/)
     await db.exec('reset role; set role service_role')
-    assert.equal((await db.query("select public.finish_form_delivery($1,$2,'sent') ok",[retry.id,retry.lease])).rows[0].ok,true)
+    assert.equal((await db.query("select public.finish_form_delivery($1,$2,'uncertain') ok",[retry.id,retry.lease])).rows[0].ok,true)
+    await identity(other)
+    await assert.rejects(()=>db.query('select public.retry_form_delivery($1,$2,$3)',[site,form,delivery.id]),/Delivery not found/)
+    await identity(owner)
+    assert.equal((await db.query('select public.retry_form_delivery($1,$2,$3) ok',[site,form,delivery.id])).rows[0].ok,true)
+    await db.exec('reset role; set role service_role')
+    const resend=(await db.query('select public.claim_form_delivery() job')).rows[0].job
+    assert.equal(resend.id,delivery.id)
+    assert.equal((await db.query("select public.finish_form_delivery($1,$2,'sent') ok",[resend.id,resend.lease])).rows[0].ok,true)
     await identity(other)
     await assert.rejects(()=>db.query('select public.delete_website_form_response($1,$2,$3)',[site,form,response]),/Response not found/)
     await identity(owner)

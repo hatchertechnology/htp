@@ -15,7 +15,9 @@
     "typecheck": "nuxt typecheck",
     "test": "vitest run",
     "fixture:bing:serve": "vite --config tests/fixtures/vite.config.mjs",
-    "fixture:bing:check": "node tests/fixtures/check-bing-dashboard.mjs"
+    "fixture:bing:check": "node tests/fixtures/check-bing-dashboard.mjs",
+    "fixture:forms:serve": "vite --config tests/fixtures/vite.config.mjs",
+    "fixture:forms:check": "node tests/fixtures/check-forms.mjs"
   },
   "dependencies": {
     "@fontsource-variable/encode-sans": "^5.3.0",
