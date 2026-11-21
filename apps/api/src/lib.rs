@@ -4,6 +4,7 @@ pub mod analytics;
 mod audit_export;
 pub mod auth;
 mod bing;
+mod form_ingress;
 mod insights;
 mod mcp;
 mod oauth;
@@ -70,6 +71,7 @@ pub fn app_with_analytics(
         .nest_service("/mcp", mcp::service())
         .merge(oauth_routes)
         .merge(seosmith_ingest)
+        .merge(form_ingress::router())
         .merge(protected)
 }
 
