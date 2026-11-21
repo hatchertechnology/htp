@@ -159,6 +159,7 @@ export async function fetchReport(
       startDate: string,
       endDate: string,
       selectedShapes = shapes,
+      signal?: AbortSignal,
     ) =>
       Object.fromEntries(
         await Promise.all(
@@ -176,6 +177,7 @@ export async function fetchReport(
                 {
                   method: "POST",
                   headers,
+                  signal,
                   body: JSON.stringify({
                     startDate,
                     endDate,
@@ -247,7 +249,7 @@ export async function fetchReport(
     const previousStart = new Date(start - (end - start + day)).toISOString()
       .slice(0, 10);
     const previousEnd = new Date(start - day).toISOString().slice(0, 10);
-    const [datasets, previousDatasets] = await Promise.all([
+    const [datasets, previousDatasets, segmented] = await Promise.all([
       collect(job.start_date, job.end_date),
       collect(
         previousStart,
@@ -260,6 +262,20 @@ export async function fetchReport(
         unavailable: true,
         reason: "previous_period_unavailable",
       })),
+      // Optional bounded intersection. A quota or timeout here must not erase
+      // the primary report. Filtering these top rows is not an exhaustive query.
+      collect(job.start_date, job.end_date, [["query_page_segments", [
+        "query",
+        "page",
+        "device",
+        "country",
+      ], 1000]], AbortSignal.timeout(8_000))
+        .catch(() => ({
+          query_page_segments: {
+            unavailable: true,
+            reason: "segment_collection_unavailable",
+          },
+        })),
     ]);
     const latestDate = (data: Json) =>
       data.daily.rows.flatMap((row: Json) =>
@@ -273,6 +289,7 @@ export async function fetchReport(
       start_date: job.start_date,
       end_date: job.end_date,
       ...datasets,
+      ...segmented,
       previous_period: {
         site_url: job.property_id,
         start_date: previousStart,
