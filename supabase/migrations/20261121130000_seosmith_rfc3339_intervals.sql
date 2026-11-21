@@ -5,7 +5,7 @@ declare
   c jsonb := r->'evidence_contract'; o jsonb; e jsonb; v jsonb; p jsonb; src jsonb;
   coverage jsonb; policy jsonb; rule_ids jsonb; n integer; observed integer; omitted integer;
   field text; reason text; expected_count integer; actual_count integer; complete boolean; canonical text;
-  start_second timestamptz; end_second timestamptz; start_ns integer; end_ns integer;
+  start_second timestamp; end_second timestamp; start_ns integer; end_ns integer; start_zone text; end_zone text;
 begin
   if r->'schema_version' is distinct from '2'::jsonb or jsonb_typeof(c) is distinct from 'object'
      or c->'version' is distinct from '1'::jsonb then
@@ -63,20 +63,29 @@ begin
   end if;
   if c#>>'{observed_at,started_at}' is distinct from r->>'started_at' or
      c#>>'{observed_at,finished_at}' is distinct from r->>'finished_at' or
-     coalesce(r->>'started_at','') !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-](0[0-9]|1[0-4]):[0-5][0-9])$' or
-     coalesce(r->>'finished_at','') !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-](0[0-9]|1[0-4]):[0-5][0-9])$' then
+     coalesce(r->>'started_at','') !~ '^\d{4}-\d{2}-\d{2}[Tt]([01]\d|2[0-3]):[0-5]\d:[0-5]\d(\.\d{1,9})?([Zz]|[+-]([01]\d|2[0-3]):[0-5]\d)$' or
+     coalesce(r->>'finished_at','') !~ '^\d{4}-\d{2}-\d{2}[Tt]([01]\d|2[0-3]):[0-5]\d:[0-5]\d(\.\d{1,9})?([Zz]|[+-]([01]\d|2[0-3]):[0-5]\d)$' then
     raise exception 'invalid_evidence_interval' using errcode='22023';
   end if;
-  -- Require valid explicit-zone timestamps and compare instants, not strings.
-  -- Zone offsets are deliberately bounded to +/-14:59.
-  if not pg_catalog.pg_input_is_valid(r->>'started_at','timestamp with time zone') or
-     not pg_catalog.pg_input_is_valid(r->>'finished_at','timestamp with time zone') then
+  -- Explicit application subset: four-digit valid Gregorian dates, 00-23h,
+  -- 00-59 minutes/seconds (leap seconds excluded), and <=9 fractional digits.
+  if not pg_catalog.pg_input_is_valid(left(r->>'started_at',10),'date') or
+     not pg_catalog.pg_input_is_valid(left(r->>'finished_at',10),'date') then
     raise exception 'invalid_evidence_interval' using errcode='22023';
   end if;
-  -- PostgreSQL rounds timestamps to microseconds; split seconds and fractional
-  -- nanoseconds so a reversed sub-microsecond interval is not accepted.
-  start_second := regexp_replace(r->>'started_at', '\.\d{1,9}(Z|[+-]\d{2}:\d{2})$', '\1')::timestamptz;
-  end_second := regexp_replace(r->>'finished_at', '\.\d{1,9}(Z|[+-]\d{2}:\d{2})$', '\1')::timestamptz;
+  -- Convert whole seconds and explicit offsets manually, because PostgreSQL
+  -- rounds nanoseconds and its timezone parser rejects RFC3339 offsets >=16h.
+  start_second := replace(replace(left(r->>'started_at',19),'T',' '),'t',' ')::timestamp;
+  end_second := replace(replace(left(r->>'finished_at',19),'T',' '),'t',' ')::timestamp;
+  start_zone := right(r->>'started_at',6); end_zone := right(r->>'finished_at',6);
+  if right(r->>'started_at',1) not in ('Z','z') then
+    start_second := start_second - make_interval(mins => (case left(start_zone,1) when '-' then -1 else 1 end) *
+      (substring(start_zone,2,2)::integer * 60 + right(start_zone,2)::integer));
+  end if;
+  if right(r->>'finished_at',1) not in ('Z','z') then
+    end_second := end_second - make_interval(mins => (case left(end_zone,1) when '-' then -1 else 1 end) *
+      (substring(end_zone,2,2)::integer * 60 + right(end_zone,2)::integer));
+  end if;
   start_ns := rpad(coalesce(substring(r->>'started_at' from '\.(\d{1,9})'),''),9,'0')::integer;
   end_ns := rpad(coalesce(substring(r->>'finished_at' from '\.(\d{1,9})'),''),9,'0')::integer;
   if (start_second,start_ns) > (end_second,end_ns) then
