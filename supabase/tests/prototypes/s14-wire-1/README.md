@@ -17,7 +17,8 @@ embedded policy uniqueness/digest. A pure scope helper tests candidate digest
 and trusted worker binding separately from RPC authorization. A fixed-registry
 helper compares the candidate catalog and ordered rule declarations; it does
 not yet reconstruct candidate populations. An identity helper checks emitted
-record hashes, duplicate entities and policy references, not rule outcomes. The actual worker and owner functions remain
+record hashes, duplicate entities and policy references. A tuple-shape helper
+checks emitted state combinations but does not recompute rule outcomes or facts. The actual worker and owner functions remain
 closed to schema 4 in the gate test. A green result does **not** validate a
 report for acceptance. Missing work includes canonical byte reconstruction,
 complete numeric lexical validation, all source/scope/registry/identity and
