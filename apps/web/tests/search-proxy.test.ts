@@ -43,3 +43,8 @@ it('reads retained inspection history using only the owner session', async () =>
   expect(mocks.token).not.toHaveBeenCalled()
   expect(mocks.raw).toHaveBeenCalledWith(`https://api.example/websites/${id}/search/inspection-history`, expect.objectContaining({ headers: { Authorization: 'Bearer app-token' } }))
 })
+it('reads paged evidence without requesting a Google token', async () => {
+  await proxySearch(event, 'dataset')
+  expect(mocks.token).not.toHaveBeenCalled()
+  expect(mocks.raw).toHaveBeenCalledWith(`https://api.example/websites/${id}/search/dataset`, expect.objectContaining({ headers: { Authorization: 'Bearer app-token' } }))
+})

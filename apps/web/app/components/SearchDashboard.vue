@@ -22,6 +22,9 @@ const pageUrl = ref('')
 const toolBusy = ref(false)
 const toolError = ref('')
 const inspection = ref<Inspection | null>(null)
+const history = ref<{ observations: { id: number; observed_at: string; data: Inspection; provenance: string }[]; has_more: boolean; next_before_id: number | null } | null>(null)
+const historyError = ref('')
+const historyBusy = ref(false)
 let discoveryGeneration = 0
 let reportGeneration = 0
 let toolGeneration = 0
@@ -46,7 +49,7 @@ const indexStatus = computed(() => inspection.value?.inspectionResult?.indexStat
 const inspectionLink = computed(() => {
   try { const url = new URL(inspection.value?.inspectionResult?.inspectionResultLink ?? ''); return url.protocol === 'https:' && url.hostname === 'search.google.com' ? url.href : undefined } catch { return undefined }
 })
-function resetTools() { toolGeneration++; toolAbort?.abort(); toolBusy.value = false; toolError.value = ''; inspection.value = null; }
+function resetTools() { toolGeneration++; toolAbort?.abort(); toolBusy.value = false; toolError.value = ''; inspection.value = null; history.value = null; historyError.value = ''; historyBusy.value = false }
 watch(pageUrl, resetTools)
 watch(property, () => { pageUrl.value = ''; resetTools() })
 async function discover() {
@@ -102,6 +105,16 @@ async function inspectUrl() {
   finally { if (current === toolGeneration) toolBusy.value = false }
 }
 
+async function loadHistory(more = false) {
+  const current = toolGeneration
+  historyBusy.value = true; historyError.value = ''
+  try {
+    const result = await ws.request<NonNullable<typeof history.value>>(`/api/websites/${ws.selectedId.value}/search/inspection-history`, { method: 'POST', body: { site_url: property.value, url: pageUrl.value, before_id: more ? history.value?.next_before_id : null } })
+    if (current === toolGeneration) history.value = { ...result, observations: more ? [...(history.value?.observations ?? []), ...result.observations] : result.observations }
+  } catch (cause) { if (current === toolGeneration) historyError.value = failureMessage(cause) }
+  finally { if (current === toolGeneration) historyBusy.value = false }
+}
+
 useConnectionReload(() => [ws.user.value?.id, ws.selectedId.value, canSearch.value, ws.google.value.connected, ws.google.value.reauthorizationRequired], () => { void discover() })
 watch(() => [property.value, start.value, end.value, ws.user.value?.id, ws.selectedId.value, canSearch.value], () => { void load() }, { immediate: true })
 watch([report, busy, discovering, error, discoveryError], () => {
@@ -127,6 +140,7 @@ onBeforeUnmount(() => { clearTimeout(discoveryTimer); clearTimeout(reportTimer);
     <div class="search-rankings">
       <section v-for="table in tables" :key="table.title" class="report-panel search-table"><header><h3>{{ table.title }}</h3></header><div v-if="table.rows.length" class="table-scroll"><table><caption class="sr-only">{{ table.title }} for the selected date range</caption><thead><tr><th scope="col">{{ table.label }}</th><th scope="col" class="numeric">Clicks</th><th scope="col" class="numeric">Impressions</th><th scope="col" class="numeric">CTR</th><th scope="col" class="numeric">Position</th></tr></thead><tbody><tr v-for="(row, i) in table.rows" :key="i"><td class="search-dimension"><button v-if="table.pages" class="search-page-link" :title="row.keys?.[0]" @click="choosePage(row)">{{ displayPage(row.keys?.[0] ?? '') }}<UIcon name="i-lucide-arrow-down-right" /></button><span v-else :title="row.keys?.[0]">{{ row.keys?.[0] }}</span></td><td class="numeric">{{ row.clicks.toLocaleString() }}</td><td class="numeric">{{ row.impressions.toLocaleString() }}</td><td class="numeric">{{ (row.ctr * 100).toFixed(1) }}%</td><td class="numeric">{{ row.position.toFixed(1) }}</td></tr></tbody></table></div><p v-else class="search-table-empty">{{ !report ? 'Connect a property to load this report.' : 'No rows returned for this period.' }}</p></section>
     </div>
+    <SearchEvidence :website-id="ws.selectedId.value" :property="property" :start="start" :end="end" />
     <section class="report-panel url-workbench" aria-labelledby="url-heading">
       <header><div><h3 id="url-heading">Understand a URL</h3><p>Check Google’s indexed version of a page, including crawl status and canonical URL.</p></div></header>
       <form class="url-inspect-form" @submit.prevent="inspectUrl"><label for="inspect-url">Page URL<input id="inspect-url" v-model="pageUrl" type="url" required maxlength="2048" :placeholder="`https://${ws.selected.value?.fqdn || 'example.com'}/`" :disabled="!property"></label><UButton type="submit" icon="i-lucide-scan-search" :loading="toolBusy" :disabled="!property || !pageUrl || toolBusy">Inspect URL</UButton></form>
@@ -134,6 +148,9 @@ onBeforeUnmount(() => { clearTimeout(discoveryTimer); clearTimeout(reportTimer);
       <p v-if="toolError" class="form-error" role="alert">{{ toolError }}</p>
       <div v-if="inspection" class="inspection-result" aria-live="polite"><h4>{{ indexStatus?.coverageState || 'Inspection returned no index status' }}</h4><dl><div><dt>Verdict</dt><dd>{{ indexStatus?.verdict || 'Not reported' }}</dd></div><div><dt>Last crawl</dt><dd>{{ indexStatus?.lastCrawlTime ? time(indexStatus.lastCrawlTime) : 'Not reported' }}</dd></div><div><dt>Robots.txt</dt><dd>{{ indexStatus?.robotsTxtState || 'Not reported' }}</dd></div><div><dt>Indexing allowed</dt><dd>{{ indexStatus?.indexingState || 'Not reported' }}</dd></div><div><dt>Page fetch</dt><dd>{{ indexStatus?.pageFetchState || 'Not reported' }}</dd></div><div><dt>Google canonical</dt><dd>{{ indexStatus?.googleCanonical || 'Not reported' }}</dd></div></dl><a v-if="inspectionLink" :href="inspectionLink" target="_blank" rel="noopener noreferrer" class="settings-link">Open inspection in Search Console <UIcon name="i-lucide-external-link" /></a></div>
       <p class="tool-guidance">URL Inspection is read-only. It describes Google’s indexed version and does not run a live test or request indexing.</p>
+      <button :disabled="!property || !pageUrl || historyBusy" @click="loadHistory()">{{ historyBusy ? 'Reading history…' : 'View saved inspections' }}</button>
+      <p v-if="historyError" role="alert" class="form-error">{{ historyError }}</p>
+      <div v-if="history"><p v-if="!history.observations.length">No saved inspections for this URL and property.</p><ul v-else><li v-for="observation in history.observations" :key="observation.id">{{ time(observation.observed_at) }} · {{ observation.data.inspectionResult?.indexStatusResult?.coverageState || 'Index status not reported' }} · {{ observation.provenance.replaceAll('_', ' ') }}</li></ul><button v-if="history.has_more" :disabled="historyBusy" @click="loadHistory(true)">Load earlier inspections</button></div>
     </section>
   </section>
 </template>

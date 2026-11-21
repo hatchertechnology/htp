@@ -106,6 +106,16 @@ struct SearchInput {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct DatasetInput {
+    site_url: String,
+    start_date: String,
+    end_date: String,
+    dataset: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UrlInput {
     site_url: String,
     url: String,
@@ -174,12 +184,156 @@ pub(crate) fn router(store: WebsiteStore, client: SearchClient) -> Router {
     Router::new()
         .route("/websites/{id}/search/properties", post(properties))
         .route("/websites/{id}/search/dashboard", post(dashboard))
+        .route("/websites/{id}/search/dataset", post(dataset))
         .route("/websites/{id}/search/inspect", post(inspect))
         .route(
             "/websites/{id}/search/inspection-history",
             post(inspection_history),
         )
         .with_state((store, client))
+}
+async fn dataset(
+    State((store, _)): State<(WebsiteStore, SearchClient)>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(input): Json<DatasetInput>,
+) -> Result<Json<Value>, SearchError> {
+    let dates: htp_shared::analytics::AnalyticsRequest = serde_json::from_value(
+        json!({"property_id":"1","start_date":input.start_date,"end_date":input.end_date}),
+    )
+    .map_err(|_| SearchError::Invalid("Use real dates in YYYY-MM-DD format."))?;
+    dates.validate().map_err(SearchError::Invalid)?;
+    let limit = input.limit.unwrap_or(50);
+    let offset = input.offset.unwrap_or(0);
+    if !(1..=100).contains(&limit)
+        || offset > 5000
+        || !matches!(
+            input.dataset.as_str(),
+            "queries"
+                | "pages"
+                | "query_pages"
+                | "devices"
+                | "countries"
+                | "analysis"
+                | "landing_outcomes"
+        )
+    {
+        return Err(SearchError::Invalid(
+            "Choose a supported dataset and page (maximum 100 rows).",
+        ));
+    }
+    let website = store
+        .find(id, &headers)
+        .await
+        .map_err(SearchError::Website)?;
+    if !valid_property(&input.site_url, &website.fqdn) {
+        return Err(SearchError::Invalid(
+            "Choose a Search Console property for this website.",
+        ));
+    }
+    if input.dataset == "landing_outcomes" {
+        let Some(property) = website.ga4_property_id else {
+            return Ok(Json(
+                json!({"semantics_version":1,"dataset":"landing_outcomes","available":false,"reason":"ga4_property_unavailable","rows":[],"offset":offset,"limit":limit,"has_more":false}),
+            ));
+        };
+        let saved = store
+            .saved_report(
+                &headers,
+                id,
+                "conversions",
+                &property,
+                &input.start_date,
+                &input.end_date,
+            )
+            .await
+            .map_err(SearchError::Website)?;
+        return Ok(Json(landing_projection(&saved, offset, limit)));
+    }
+    let saved = store
+        .saved_report(
+            &headers,
+            id,
+            "search",
+            &input.site_url,
+            &input.start_date,
+            &input.end_date,
+        )
+        .await
+        .map_err(SearchError::Website)?;
+    Ok(Json(dataset_projection(
+        &saved,
+        &input.dataset,
+        offset,
+        limit,
+    )))
+}
+
+fn landing_projection(saved: &Value, offset: usize, limit: usize) -> Value {
+    let outcome = &saved["data"]["analysis"]["landing_outcomes"];
+    let exact = saved["sync"]["exact_range_available"] == true;
+    let rows = outcome["rows"].as_array();
+    let available = exact && outcome["available"] == true && rows.is_some();
+    let page: Vec<Value> = if available {
+        rows.unwrap()
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .cloned()
+            .collect()
+    } else {
+        vec![]
+    };
+    let total = if available { rows.map(Vec::len) } else { None };
+    json!({"semantics_version":1,"dataset":"landing_outcomes","available":available,
+        "reason":if !exact { Some("exact_period_snapshot_unavailable") } else { outcome["reason"].as_str().or(if available { None } else { Some("landing_outcomes_unavailable") }) },
+        "rows":page,"offset":offset,"limit":limit,"retained_rows":total,
+        "has_more":total.is_some_and(|n| offset.saturating_add(limit)<n),
+        "collection":outcome.get("collection"),"attribution":outcome.get("attribution"),
+        "currency_code":saved["data"]["pages"]["metadata"].get("currencyCode"),
+        "measurement":saved["data"].get("measurement"),"sync":saved["sync"]})
+}
+
+fn dataset_projection(saved: &Value, name: &str, offset: usize, limit: usize) -> Value {
+    let exact = saved["sync"]["exact_range_available"] == true;
+    let dataset = &saved["data"][name];
+    let rows = if name == "analysis" {
+        dataset["candidates"].as_array()
+    } else {
+        dataset["rows"].as_array()
+    };
+    let available = exact && rows.is_some();
+    let page: Vec<Value> = if available {
+        rows.unwrap()
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .cloned()
+            .collect()
+    } else {
+        vec![]
+    };
+    let page: Vec<Value> = page.into_iter().map(|mut row| {
+        if name == "analysis" {
+            if let Some(evidence) = row.get_mut("evidence").and_then(Value::as_array_mut) {
+                let count = evidence.len();
+                evidence.truncate(25);
+                row["evidence_presentation"] = json!({"retained_rows":count,"returned_rows":count.min(25),"truncated":count>25});
+            }
+        }
+        row
+    }).collect();
+    let total = if available { rows.map(Vec::len) } else { None };
+    json!({"semantics_version":1, "dataset":name, "available":available,
+        "reason":if available { None } else if !exact { Some("exact_period_snapshot_unavailable") } else { Some("dataset_unavailable") },
+        "rows":page, "offset":offset, "limit":limit, "retained_rows":total,
+        "has_more":total.is_some_and(|n| offset.saturating_add(limit)<n),
+        "collection":if available { dataset.get("collection").cloned() } else { None },
+        "comparison":if available && name == "analysis" { dataset.get("comparison").cloned() } else { None },
+        "coverage":if available && name == "analysis" { dataset.get("coverage").cloned() } else { None },
+        "policy":if available && name == "analysis" { dataset.get("policy").cloned() } else { None },
+        "measurement":if available { saved["data"].get("measurement").cloned() } else { None },
+        "sync":saved["sync"]})
 }
 async fn properties(
     State((store, _google)): State<(WebsiteStore, SearchClient)>,
@@ -481,6 +635,51 @@ mod tests {
         headers.append("x-google-access-token", "another".parse().unwrap());
         assert!(token(&headers).is_err());
     }
+    #[test]
+    fn dataset_pages_preserve_metadata_and_require_exact_period() {
+        let mut saved = json!({"sync":{"exact_range_available":true,"fetched_at":"2026-11-01"},
+            "data":{"measurement":{"version":1},"queries":{"rows":[{"keys":["a"]},{"keys":["b"]}],
+            "collection":{"truncated":true,"anonymized_queries":"excluded"}}}});
+        let page = dataset_projection(&saved, "queries", 0, 1);
+        assert_eq!(page["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(page["has_more"], true);
+        assert_eq!(page["collection"]["truncated"], true);
+        assert_eq!(page["measurement"]["version"], 1);
+        saved["sync"]["exact_range_available"] = json!(false);
+        let unavailable = dataset_projection(&saved, "queries", 0, 1);
+        assert_eq!(unavailable["reason"], "exact_period_snapshot_unavailable");
+        assert!(unavailable["rows"].as_array().unwrap().is_empty());
+        saved["sync"]["exact_range_available"] = json!(true);
+        assert_eq!(
+            dataset_projection(&saved, "countries", 0, 1)["reason"],
+            "dataset_unavailable"
+        );
+    }
+    #[test]
+    fn landing_projection_requires_exact_valid_observation() {
+        let mut saved = json!({"sync":{"exact_range_available":true},"data":{"analysis":{"landing_outcomes":{"available":true,"rows":[{"landing_page":"/","metrics":{"sessions":0}}],"collection":{"truncated":false}}}}});
+        let result = landing_projection(&saved, 0, 25);
+        assert_eq!(result["rows"][0]["metrics"]["sessions"], 0);
+        assert_eq!(result["collection"]["truncated"], false);
+        saved["sync"]["exact_range_available"] = json!(false);
+        assert_eq!(
+            landing_projection(&saved, 0, 25)["reason"],
+            "exact_period_snapshot_unavailable"
+        );
+        saved["sync"]["exact_range_available"] = json!(true);
+        saved["data"]["analysis"]["landing_outcomes"]["available"] = json!(false);
+        saved["data"]["analysis"]["landing_outcomes"]["reason"] = json!("thresholded_or_sampled");
+        assert_eq!(
+            landing_projection(&saved, 0, 25)["reason"],
+            "thresholded_or_sampled"
+        );
+        assert!(
+            landing_projection(&saved, 0, 25)["rows"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
     async fn mock_upstream() -> (
         String,
         tokio::task::JoinHandle<()>,
@@ -559,6 +758,17 @@ mod tests {
         .unwrap();
         assert_eq!(body["properties"].as_array().unwrap().len(), 1);
         assert_eq!(call(app.clone(), "dashboard", json!({"site_url":"sc-domain:example.com","start_date":"2026-10-01","end_date":"2026-10-27"})).await.status(), StatusCode::OK);
+        let dataset = json!({"site_url":"sc-domain:example.com","start_date":"2026-10-01","end_date":"2026-10-27","dataset":"queries","offset":0,"limit":25});
+        assert_eq!(
+            call(app.clone(), "dataset", dataset.clone()).await.status(),
+            StatusCode::OK
+        );
+        let mut invalid_dataset = dataset;
+        invalid_dataset["limit"] = json!(101);
+        assert_eq!(
+            call(app.clone(), "dataset", invalid_dataset).await.status(),
+            StatusCode::BAD_REQUEST
+        );
         let base = json!({"site_url":"sc-domain:example.com","url":"https://example.com/jobs/1"});
         assert_eq!(
             call(app.clone(), "inspect", base.clone()).await.status(),
@@ -599,7 +809,7 @@ mod tests {
             .iter()
             .filter(|r| r.1 == "/rest/v1/rpc/request_google_report")
             .collect();
-        assert_eq!(saved.len(), 2);
+        assert_eq!(saved.len(), 3);
         assert_eq!(saved[1].2["p_kind"], "search");
         assert_eq!(saved[1].2["p_property_id"], "sc-domain:example.com");
         assert!(
