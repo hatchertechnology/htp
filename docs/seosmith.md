@@ -273,3 +273,5 @@ reports store their derived summary on insertion.
 
 Once v2 rows exist, v2 receiver and historical read support is a permanent
 compatibility requirement; disabling producer generation does not remove it.
+
+Independent audit evidence must be exported and explicitly removed by the owner before website or account deletion can cascade; see [independent audits](independent-audits.md).

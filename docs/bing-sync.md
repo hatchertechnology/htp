@@ -139,3 +139,5 @@ References: [OAuth](https://learn.microsoft.com/en-us/bingwebmaster/oauth2),
 [API reference](https://learn.microsoft.com/en-us/dotnet/api/microsoft.bing.webmaster.api.interfaces.iwebmasterapi?view=bing-webmaster-dotnet),
 [Traffic semantics](https://learn.microsoft.com/en-us/dotnet/api/microsoft.bing.webmaster.api.interfaces.iwebmasterapi.getrankandtrafficstats?view=bing-webmaster-dotnet),
 [API faults](https://learn.microsoft.com/en-us/dotnet/api/microsoft.bing.webmaster.api.interfaces.apierrorcode?view=bing-webmaster-dotnet).
+
+Independent audit evidence must be exported and explicitly removed by the owner before website or account deletion can cascade; see [independent audits](independent-audits.md).
