@@ -27,3 +27,11 @@ complete numeric lexical validation, all source/scope/registry/identity and
 projection checks, independent rule state and omitted-population recomputation,
 summary/read support, authorization and lifecycle tests, and production-budget
 measurements. Never install these helpers or advertise capability as-is.
+
+`fixtures/edge-candidate-8d98/` is an exact, unfrozen producer bundle pinned by
+its own manifest SHA256 `8d98cfcd6f0e0c86fa7cf4eda4df84a71dbf8a7f0768b431529dd28cff57d99d`.
+The edge predicate experiment checks emitted examples and the ambiguous-target
+negative; it deliberately rescans pages and is not budget-safe, does not
+reconstruct omitted edges, and must never be installed as a receiver. The
+edge gate test confirms both actual RPC paths still reject even the candidate
+positives. This is safety evidence, not paired acceptance.
