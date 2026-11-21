@@ -53,9 +53,15 @@ async fn ingest(
     else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
+    if body.report_json.len() > 4_952_756 {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(json!({"error":"report_limit"})),
+        )
+            .into_response();
+    }
     if headers.get("idempotency-key").and_then(|h| h.to_str().ok())
         != Some(body.delivery_id.to_string().as_str())
-        || body.report_json.len() > 16 * 1024 * 1024
         || body.sha256.len() != 64
         || !body
             .sha256
@@ -102,8 +108,12 @@ async fn import(
     Path(id): Path<Uuid>,
     Json(body): Json<Import>,
 ) -> Response {
-    if body.report_json.len() > 16 * 1024 * 1024 {
-        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    if body.report_json.len() > 4_952_756 {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(json!({"error":"report_limit"})),
+        )
+            .into_response();
     }
     match store
         .rpc(
@@ -490,6 +500,74 @@ mod tests {
             }
             server.abort();
         }
+    }
+
+    #[tokio::test]
+    async fn raw_input_limit_is_inclusive_for_worker_and_owner() {
+        let rpc = Router::new()
+            .route(
+                "/rest/v1/rpc/ingest_seosmith_audit",
+                post(|| async { Json(json!({"accepted":true})) }),
+            )
+            .route(
+                "/rest/v1/rpc/import_seosmith_audit",
+                post(|| async { Json(json!({"accepted":true})) }),
+            )
+            .layer(DefaultBodyLimit::max(32 * 1024 * 1024));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let store = WebsiteStore::new(
+            &format!("http://{}", listener.local_addr().unwrap()),
+            "publishable",
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, rpc).await.unwrap() });
+        let id = "00000000-0000-0000-0000-000000000001";
+        for size in [4_952_756, 4_952_757] {
+            for worker in [true, false] {
+                let report = "x".repeat(size);
+                let (app, uri, body) = if worker {
+                    (
+                        ingest_router(store.clone()),
+                        "/integrations/seosmith/audits".to_string(),
+                        json!({"delivery_id":id,"sha256":"a".repeat(64),"report_json":report}),
+                    )
+                } else {
+                    (
+                        read_router(store.clone()),
+                        format!("/websites/{id}/seo/audits/import"),
+                        json!({"report_json":report}),
+                    )
+                };
+                let response = app
+                    .oneshot(
+                        Request::builder()
+                            .method("POST")
+                            .uri(uri)
+                            .header("content-type", "application/json")
+                            .header("authorization", format!("Bearer {}", "x".repeat(64)))
+                            .header("idempotency-key", id)
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    if size == 4_952_756 {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::PAYLOAD_TOO_LARGE
+                    }
+                );
+                if size > 4_952_756 {
+                    let body: serde_json::Value = serde_json::from_slice(
+                        &to_bytes(response.into_body(), 4096).await.unwrap(),
+                    )
+                    .unwrap();
+                    assert_eq!(body["error"], "report_limit");
+                }
+            }
+        }
+        server.abort();
     }
 
     #[tokio::test]

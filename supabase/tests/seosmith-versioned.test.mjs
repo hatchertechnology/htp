@@ -394,3 +394,37 @@ test('ingest budget migration raises only the two ingest RPCs to a bounded 20s',
     assert.deepEqual(await roles(),beforeRoles)
   } finally {await db.close()}
 })
+
+test('new input cap is inclusive, rejects historical retries, and preserves stored reads', async () => {
+  const db=await setup()
+  try {
+    await upgrade(db)
+    const raw=JSON.stringify(legacy), id=legacy.request.request_id, max=4952756
+    const historical=raw+' '.repeat(max+1-Buffer.byteLength(raw))
+    const push=bytes=>db.query('select public.ingest_seosmith_audit($1,$2,$3,$4) as r',['x'.repeat(64),id,hash(bytes),bytes]).then(r=>r.rows[0].r)
+    await db.exec('set role anon'); await push(historical); await db.exec('reset role')
+    await db.exec(await readFile(new URL('../migrations/20261121120000_seosmith_input_cap.sql',import.meta.url),'utf8'))
+    assert.equal((await db.query('select public.seosmith_receiver_capabilities() as c')).rows[0].c.max_report_bytes,max)
+    await db.exec('set role anon')
+    await assert.rejects(()=>push(historical),/report_limit/)
+    await identity(db)
+    await assert.rejects(()=>db.query('select public.import_seosmith_audit($1,$2)',[site,historical]),/report_limit/)
+    assert.equal((await db.query('select public.seosmith_audit_detail($1,$2) as d',[site,id])).rows[0].d.report_json,historical)
+    await db.exec('reset role')
+    const newer=JSON.stringify({...legacy,request:{...legacy.request,request_id:'00000000-0000-4000-8000-000000000099'}})
+    const boundary=newer+' '.repeat(max-Buffer.byteLength(newer))
+    const newId='00000000-0000-4000-8000-000000000099'
+    await db.exec('set role anon')
+    const pushNew=bytes=>db.query('select public.ingest_seosmith_audit($1,$2,$3,$4) as r',['x'.repeat(64),newId,hash(bytes),bytes]).then(r=>r.rows[0].r)
+    await assert.rejects(()=>pushNew(boundary+' '),/report_limit/)
+    await assert.rejects(()=>pushNew(boundary.slice(0,-1)+'é'),/report_limit/)
+    const receipt=await pushNew(boundary); assert.equal(receipt.accepted,true); assert.deepEqual(await pushNew(boundary),receipt)
+    await identity(db)
+    assert.deepEqual((await db.query('select public.import_seosmith_audit($1,$2) as r',[site,boundary])).rows[0].r,receipt)
+    await assert.rejects(()=>db.query('select public.import_seosmith_audit($1,$2)',[site,boundary+' ']),/report_limit/)
+    await db.exec('reset role')
+    await db.exec(await readFile(new URL('../rollbacks/20261121120000_seosmith_input_cap.sql',import.meta.url),'utf8'))
+    assert.equal((await db.query('select public.seosmith_receiver_capabilities() as c')).rows[0].c.max_report_bytes,16777216)
+    await db.exec('set role anon'); assert.equal((await push(historical)).accepted,true)
+  } finally { await db.close() }
+})

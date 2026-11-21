@@ -1,3 +1,5 @@
+> Historical decision: the production input cap was subsequently reduced to 4,952,756 UTF-8 bytes inclusive. See `docs/seosmith.md` for the current contract.
+
 # ADR 0001: Bounded inline evidence transport for the Seosmith pilot
 
 - **Status:** Proposed (Wave 0 design gate). Design only: no code, schema, or deployment change.
