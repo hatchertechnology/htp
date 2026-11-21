@@ -9,7 +9,7 @@ export interface LifecycleEntry {
 }
 export interface LifecycleComparison {
   version: 1; baseline_id: string; current_id: string; entries: LifecycleEntry[]
-  coverage: { rule: string; entities: number; attempted: number; unknown: number; excluded: number }[]
+  coverage: { rule: string; entities: number; attempted: number; not_attempted: number | null; attempt_unknown: number | null; unknown: number; excluded: number }[]
   urls: UrlChange[]
 }
 
@@ -36,8 +36,8 @@ function evaluated(e: AuditEvaluation | undefined): boolean {
 }
 
 /** Input is ordered oldest to newest and must be a contiguous, explicitly selected history. */
-export function lifecycleHistory(runs: AuditDetail[], baselineId?: string): LifecycleComparison | null {
-  if (runs.length < 2 || new Set(runs.map(r => r.delivery_id)).size !== runs.length || !runs.every((r, i) => Number.isFinite(Date.parse(r.scan_at)) && (i === 0 || (compatible(runs[0]!, r) && Date.parse(r.scan_at) >= Date.parse(runs[i - 1]!.scan_at))))) return null
+export function lifecycleHistory(runs: AuditDetail[], baselineId?: string, historyComplete = false): LifecycleComparison | null {
+  if (runs.length < 2 || new Set(runs.map(r => r.delivery_id)).size !== runs.length || !runs.every((r, i) => Number.isFinite(Date.parse(r.scan_at)) && (i === 0 || (compatible(runs[0]!, r) && Date.parse(r.scan_at) > Date.parse(runs[i - 1]!.scan_at))))) return null
   const current = runs[runs.length - 1]!, baseline = baselineId ? runs.slice(0, -1).find(r => r.delivery_id === baselineId) : runs[runs.length - 2]
   if (!baseline) return null
   const previous = new Map(baseline.report.evidence_contract!.evaluations.map(e => [identity(e), e]))
@@ -55,11 +55,15 @@ export function lifecycleHistory(runs: AuditDetail[], baselineId?: string): Life
     let state: LifecycleState = 'not_observed'
     if (evaluated(before) && evaluated(now) && before!.rule_version === now!.rule_version && before!.validator_version === now!.validator_version) {
       if (before!.outcome === 'fail' && now!.outcome === 'pass') state = 'resolved'
-      else if (before!.outcome === 'fail' && now!.outcome === 'fail') state = detail(b) === detail(n) ? 'persisting' : 'changed'
+      else if (before!.outcome === 'fail' && now!.outcome === 'fail' && b && n) state = detail(b) === detail(n) ? 'persisting' : 'changed'
       else if (before!.outcome === 'pass' && now!.outcome === 'pass' && runs.slice(0, runs.indexOf(baseline)).some(r => r.report.evidence_contract!.evaluations.some(e => identity(e) === key && evaluated(e) && e.outcome === 'fail' && e.rule_version === now!.rule_version && e.validator_version === now!.validator_version))) state = 'resolved'
       else if (before!.outcome === 'pass' && now!.outcome === 'fail') {
-        // A prior failure followed by an explicit pass is a reopening, not merely a new issue.
-        state = runs.slice(0, runs.indexOf(baseline)).some(r => r.report.evidence_contract!.evaluations.some(e => identity(e) === key && evaluated(e) && e.outcome === 'fail' && e.rule_version === now!.rule_version && e.validator_version === now!.validator_version)) ? 'reopened' : 'new'
+        const prior = runs.slice(0, -1).map(r => r.report.evidence_contract!.evaluations.find(e => identity(e) === key))
+        const matches = (e: AuditEvaluation | undefined) => evaluated(e) && e!.rule_version === now!.rule_version && e!.validator_version === now!.validator_version
+        // Reopening needs a recorded failure followed by a recorded pass; gaps do not erase that evidence.
+        const reopened = prior.some((e, i) => matches(e) && e!.outcome === 'fail' && prior.slice(i + 1).some(later => matches(later) && later!.outcome === 'pass'))
+        if (reopened) state = 'reopened'
+        else if (historyComplete && prior.every(e => matches(e) && e!.outcome === 'pass')) state = 'new'
       }
     }
     const observed = runs.filter(r => r.report.evidence_contract!.evaluations.some(e => identity(e) === key && evaluated(e) && e.outcome === 'fail'))
@@ -68,16 +72,16 @@ export function lifecycleHistory(runs: AuditDetail[], baselineId?: string): Life
     const storedFinding = evidence.finding_key ? findings(source).get(evidence.finding_key) : undefined
     entries.push({ entity_id: sample.entity_id, rule: sample.rule, state, first_observed: observed[0]?.scan_at ?? source.scan_at, last_observed: observed[observed.length - 1]?.scan_at ?? source.scan_at, finding: storedFinding ?? null, source_delivery_id: source.delivery_id, source_locator: evidence.source_locator })
   }
-  const coverage = current.report.evidence_contract!.coverage.map(c => ({ rule: c.rule, entities: c.entities, attempted: c.attempted, unknown: c.unknown, excluded: c.ineligible + c.eligibility_unknown }))
+  const coverage = current.report.evidence_contract!.coverage.map(c => ({ rule: c.rule, entities: c.entities, attempted: c.attempted, not_attempted: c.not_attempted ?? null, attempt_unknown: c.attempt_unknown ?? null, unknown: c.unknown, excluded: c.ineligible + c.eligibility_unknown }))
   return { version: 1, baseline_id: baseline.delivery_id, current_id: current.delivery_id, entries, coverage, urls: compareUrls(baseline, current) }
 }
 
 /** Only compare properties that exist in both available source observations. */
 export function urlPropertyChanges(before: AuditPage, current: AuditPage): { property: string; before: unknown; current: unknown }[] {
-  if (before.url !== current.url || !!before.is_resource !== !!current.is_resource || before.error || current.error || before.blocked_by_robots || current.blocked_by_robots || before.status == null || current.status == null || before.extraction_truncated || current.extraction_truncated) return []
+  if (before.url !== current.url || !!before.is_resource !== !!current.is_resource || before.error || current.error || before.blocked_by_robots || current.blocked_by_robots || before.status == null || current.status == null || before.status < 100 || before.status >= 600 || current.status < 100 || current.status >= 600 || before.extraction_truncated || current.extraction_truncated) return []
   const fields: (keyof AuditPage)[] = ['status', 'content_type', 'redirect']
   const html = (p: AuditPage) => p.status != null && p.status >= 200 && p.status < 300 && !p.is_resource && ['text/html', 'application/xhtml+xml', 'application/vnd.wap.xhtml+xml'].includes(p.content_type?.split(';', 1)[0]?.trim().toLowerCase() ?? '')
-  if (html(before) && html(current)) fields.push('title', 'description', 'canonical', 'header_canonical', 'robots', 'language', 'body_hash', 'links', 'relationships', 'alternates')
+  if (html(before) && html(current)) fields.push('title', 'description', 'canonical', 'header_canonical', 'robots', 'language', 'body_hash', 'words', 'dom_nodes', 'headings', 'links', 'images', 'relationships', 'alternates', 'structured_data', 'open_graph', 'twitter')
   return fields.filter(k => before[k] !== undefined && current[k] !== undefined && JSON.stringify(before[k]) !== JSON.stringify(current[k])).map(property => ({ property, before: before[property], current: current[property] }))
 }
 
@@ -98,7 +102,7 @@ export function compareUrls(baseline: AuditDetail, current: AuditDetail): UrlCha
   for (const entity_id of new Set([...before.keys(), ...now.keys()])) {
     const b = before.get(entity_id), n = now.get(entity_id)
     const bp = page(baseline, b?.source_locator), np = page(current, n?.source_locator)
-    const usable = b?.state === 'available' && n?.state === 'available' && bp && np && bp.url === np.url && !!bp.is_resource === !!np.is_resource && !bp.error && !np.error && !bp.blocked_by_robots && !np.blocked_by_robots && bp.status != null && np.status != null && !bp.extraction_truncated && !np.extraction_truncated && ![...(bp.flags ?? []), ...(np.flags ?? [])].some(f => ['extraction_limit', 'discovery_limit', 'legacy_checkpoint_metadata'].includes(f))
+    const usable = b?.state === 'available' && n?.state === 'available' && bp && np && bp.url === np.url && !!bp.is_resource === !!np.is_resource && !bp.error && !np.error && !bp.blocked_by_robots && !np.blocked_by_robots && bp.status != null && bp.status >= 100 && bp.status < 600 && np.status != null && np.status >= 100 && np.status < 600 && !bp.extraction_truncated && !np.extraction_truncated && ![...(bp.flags ?? []), ...(np.flags ?? [])].some(f => ['extraction_limit', 'discovery_limit', 'legacy_checkpoint_metadata'].includes(f))
     if (!usable) {
       result.push({ entity_id, url: np?.url ?? bp?.url ?? entity_id, state: 'not_observed', properties: [], baseline_locator: b?.source_locator ?? null, current_locator: n?.source_locator ?? null })
       continue

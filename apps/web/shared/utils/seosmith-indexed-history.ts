@@ -1,6 +1,6 @@
 /** Read-time transitions over a contiguous page chain of saved evaluations. */
 export interface IndexedHistoryRow {
-  delivery_id: string; scan_at: string; evidence_state: string
+  delivery_id: string; scan_at: string; ingestion_source: 'worker' | 'import'; evidence_state: string
   comparison_key: string | null; schema_version: string | null; engine_version: string | null; ruleset_version: string | null; policy_digest: string | null
   evaluation: { outcome: string; eligibility: string; attempt: string; rule_version: string; validator_version: string; source_locator: string; finding_digest: string | null } | null
 }

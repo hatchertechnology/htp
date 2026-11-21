@@ -98,7 +98,7 @@ function canResolve(finding: AuditFinding, pages: Map<string, AuditPage>): boole
   })
 }
 export function findingChanges(current: AuditRun, previous: AuditRun, now: AuditFinding[], before: AuditFinding[], currentPages: AuditPage[]) {
-  if (!comparable(current, previous)) return null
+  if (current.summary.schema_version !== 1 || previous.summary.schema_version !== 1 || !comparable(current, previous)) return null
   const key = (f: AuditFinding) => `${f.rule}\n${f.url}`
   const currentKeys = new Set(now.map(key)), previousKeys = new Set(before.map(key))
   const pages = new Map(currentPages.map(page => [page.url, page]))

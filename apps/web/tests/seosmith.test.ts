@@ -202,7 +202,7 @@ it('keeps versioned partial/unknown evidence and legacy-v2 pairs from resolving 
     expect(findingChanges(current, previous, [], before, [page])).toBeNull()
   }
   current.summary.evaluation_coverage_complete = true
-  expect(findingChanges(current, previous, [], before, [page])?.resolved).toBe(1)
+  expect(findingChanges(current, previous, [], before, [page])).toBeNull()
   current.summary.coverage_complete = false
   expect(findingChanges(current, previous, [], before, [page])).toBeNull()
 })

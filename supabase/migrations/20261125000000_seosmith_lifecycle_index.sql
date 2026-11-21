@@ -69,7 +69,11 @@ begin
         public.seosmith_url_property_digests(a.report->'pages'->((substring(o->>'source_locator' from '^/pages/([0-9]+)$'))::integer),o->>'state')
       from jsonb_array_elements(a.report#>'{evidence_contract,observations}') o;
     insert into public.seosmith_lifecycle_evaluations(delivery_id,entity_id,rule,evaluation,finding_digest)
-      select a.delivery_id,e->>'entity_id',e->>'rule',e,
+      select a.delivery_id,e->>'entity_id',e->>'rule',jsonb_build_object(
+        'rule_version',e->'rule_version','validator_version',e->'validator_version',
+        'eligibility',e->'eligibility','attempt',e->'attempt','outcome',e->'outcome',
+        'unknown_reason',e->'unknown_reason','source_locator',e->'source_locator',
+        'finding_key',e->'finding_key','confidence',e->'confidence'),
         case when e->>'outcome'='fail' then encode(sha256(convert_to((a.report->'findings'->((substring(e->>'source_locator' from '^/findings/([0-9]+)$'))::integer))::text,'UTF8')),'hex') end
       from jsonb_array_elements(a.report#>'{evidence_contract,evaluations}') e;
   end if;
@@ -81,6 +85,21 @@ begin perform public.seosmith_index_lifecycle(new.delivery_id); return new; end 
 revoke all on function public.seosmith_index_lifecycle_trigger() from public,anon,authenticated;
 create trigger seosmith_lifecycle_index_after_insert after insert on public.seosmith_audits
 for each row execute function public.seosmith_index_lifecycle_trigger();
+
+-- Explicit targeted repair: lock the immutable audit and atomically replace
+-- index rows only. The original report and receipt are never updated.
+create function public.seosmith_lifecycle_reindex(p_delivery_id uuid) returns void
+language plpgsql security definer set search_path='' as $$
+begin
+  perform 1 from public.seosmith_audits where delivery_id=p_delivery_id for update;
+  if not found then raise exception 'audit_not_found' using errcode='22023'; end if;
+  delete from public.seosmith_lifecycle_evaluations where delivery_id=p_delivery_id;
+  delete from public.seosmith_lifecycle_observations where delivery_id=p_delivery_id;
+  delete from public.seosmith_lifecycle_indexed where delivery_id=p_delivery_id;
+  perform public.seosmith_index_lifecycle(p_delivery_id);
+end $$;
+revoke all on function public.seosmith_lifecycle_reindex(uuid) from public,anon,authenticated;
+grant execute on function public.seosmith_lifecycle_reindex(uuid) to service_role;
 
 -- Explicit privileged maintenance; never run by a read. Repeat until zero.
 create function public.seosmith_lifecycle_backfill(p_limit integer default 50) returns integer

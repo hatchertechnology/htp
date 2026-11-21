@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { indexedTransitions, type IndexedHistoryRow } from '../shared/utils/seosmith-indexed-history'
 let seq=0
-const row=(outcome: string, digest: string | null = 'same'): IndexedHistoryRow => ({delivery_id:'id',scan_at:new Date(Date.UTC(2026,10,20,0,0,0,1000-(seq++))).toISOString(),evidence_state:'evaluated',comparison_key:'k',schema_version:'2',engine_version:'e',ruleset_version:'r',policy_digest:'p',evaluation:{outcome,eligibility:'eligible',attempt:'completed',rule_version:'r',validator_version:'v',source_locator:'/findings/0',finding_digest:digest}})
+const row=(outcome: string, digest: string | null = 'same'): IndexedHistoryRow => ({delivery_id:'id',ingestion_source:'worker',scan_at:new Date(Date.UTC(2026,10,20,0,0,0,1000-(seq++))).toISOString(),evidence_state:'evaluated',comparison_key:'k',schema_version:'2',engine_version:'e',ruleset_version:'r',policy_digest:'p',evaluation:{outcome,eligibility:'eligible',attempt:'completed',rule_version:'r',validator_version:'v',source_locator:'/findings/0',finding_digest:digest}})
 it('classifies explicit adjacent outcomes and preserves unknown gaps',()=>{
  expect(indexedTransitions([row('pass'),row('fail')],false)).toEqual(['resolved','not_observed'])
  expect(indexedTransitions([row('fail'),row('fail')],false)[0]).toBe('persisting')
