@@ -243,7 +243,7 @@ provider grants and performs the same checks as dashboard operations.
 | `website_audit_export_start_v1` | `website_id`, `delivery_id` UUID | Start or reuse an owner-scoped snapshot of the complete saved detail JSON |
 | `website_audit_export_chunk_v1` | `website_id`, `delivery_id`, `exportId`, byte `offset` | At most 256 KiB of base64-encoded snapshot bytes |
 | `website_audit_export_close_v1` | `website_id`, `delivery_id`, `exportId` | Release a snapshot; authorized close is idempotent |
-| `import_website_audit` | `website_id`, `report_json` string | Validated, deduplicated Seosmith import (16 MiB report limit) |
+| `import_website_audit` | `website_id`, `report_json` string | Validated, deduplicated Seosmith import (4,952,756-byte inclusive raw report input limit) |
 
 For an `EXPORT_REQUIRED` response, discover and call export-v1 explicitly. Read
 chunks in byte order, concatenate decoded bytes, and verify the descriptor's
@@ -292,7 +292,7 @@ a completed collection. Dashboard date selection is read-only and does not regis
 `isError:true`; handler errors retain sanitized messages and HTTP status in the
 structured content. Delete is marked destructive; create is non-idempotent.
 MCP request bodies allow 32 MiB to accommodate JSON-encoded audit imports, while
-the audit handler still enforces the 16 MiB report limit.
+the audit handler still enforces the 4,952,756-byte inclusive raw report input limit.
 
 Provider authorization/consent, authorized-app revocation and Seosmith worker
 credential provisioning remain outside these tools. They are authorization or infrastructure operations,

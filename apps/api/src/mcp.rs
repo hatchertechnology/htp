@@ -211,7 +211,7 @@ struct AuditDetailInput {
 struct AuditImportInput {
     #[schemars(with = "String")]
     website_id: uuid::Uuid,
-    /// Complete Seosmith report JSON as a string, at most 16 MiB.
+    /// Complete Seosmith report JSON as a string, at most 4,952,756 UTF-8 bytes.
     report_json: String,
 }
 

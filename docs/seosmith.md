@@ -47,8 +47,8 @@ Select the exact website in HTP, then use **Import JSON report**. The signed-in
 owner can import a report whose seed hostname matches the selected website.
 This path maps a local-only website UUID to the owned HTP record while preserving
 the original request, run UUID and bytes. It does not require a worker credential.
-Report files are limited to 16 MiB. Other owners and anonymous accounts cannot
-import or read a report. Website renames hide previous-FQDN runs from the new
+Report uploads are limited to 4,952,756 UTF-8 bytes inclusive. Other owners and
+anonymous accounts cannot import or read a report. Website renames hide previous-FQDN runs from the new
 hostname's dashboard; website deletion follows the existing cascade policy.
 
 ## API
@@ -118,7 +118,7 @@ The Rust API forwards opaque JSON without projecting away additive fields.
 The common SQL validator permits at most **20,000 page observations plus 20,000
 resource observations**, **40,000 combined records**, and **400,000 findings**.
 Explicit request budgets must be within 1–20,000 pages and 0–20,000 resources.
-These are independent of the unchanged **16 MiB exact-report byte limit**;
+These are independent of the **4,952,756-byte exact-report input limit**;
 inventories that fit the record counts can still exceed the byte limit and must
 use smaller crawl scopes. Both worker ingestion and manual import reject a report
 before returning an accepted receipt when any limit fails. Raising the byte limit
@@ -234,7 +234,7 @@ reports were removed after verification.
 
 [ADR 0001](adr/0001-bounded-inline-evidence-transport.md) records the Wave 0
 decision for HTP #19: the pilot keeps bounded inline transport with the existing
-16 MiB exact-report cap and record budgets. It also sets the requirements for
+input cap and record budgets. It also sets the requirements for
 S01 v2 evidence, the receiver-first rollout, and a future chunk or artifact
 protocol. Nothing in that document is deployed or advertised. Screenshot and
 object upload are not available.
@@ -247,10 +247,13 @@ database fails closed; the API executable alone does not prove support. The
 response is not cached. Consumers must inspect `schema_versions` before enabling
 a producer contract. Capability discovery grants no ingestion or website access.
 
-The exact UTF-8 `report_json` limit remains 16,777,216 bytes on worker and owner
-import paths. Receipt fields remain `delivery_id`, `sha256`, and `accepted`; the
-digest covers the original string bytes, including whitespace. Retries use those
-same bytes. A different byte sequence under an existing delivery ID conflicts.
+The exact UTF-8 `report_json` input limit is 4,952,756 bytes inclusive on worker
+and owner import paths. Larger uploads, including retries of historical receipts,
+fail with `report_limit` (HTTP 413). Existing stored reports remain readable and
+exportable. Receipt fields remain `delivery_id`, `sha256`, and `accepted`; the
+digest covers the original string bytes, including whitespace. In-cap retries use
+those same bytes. A different in-cap byte sequence under an existing delivery ID
+conflicts.
 Unknown or invalid contracts must fail before any accepted receipt is returned.
 
 Deploy and verify the receiver migration, API, and read surfaces before activating

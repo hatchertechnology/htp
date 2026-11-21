@@ -169,7 +169,7 @@ snapshot; cleanup is a backend obligation. Never expose private paths or tokens.
 
 For a requested import, pass the complete report text to `import_website_audit`
 as `report_json` with the target `website_id`. The report must match its hostname
-and be at most 16 MiB. Run identities deduplicate retries; conflicting content
+and be at most 4,952,756 UTF-8 bytes. Run identities deduplicate retries; conflicting content
 is an error. Verify the returned run in audit detail/history. Importing does not
 launch a crawl or provision a Seosmith worker.
 

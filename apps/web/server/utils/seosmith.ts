@@ -10,7 +10,8 @@ export async function proxySeosmith(event: H3Event, action: 'history' | 'detail'
   let body: { report_json: string } | undefined
   if (action === 'import') {
     const input = await readBody(event)
-    if (typeof input?.report_json !== 'string' || new TextEncoder().encode(input.report_json).length > 16 * 1024 * 1024 || Object.keys(input).some(key => key !== 'report_json')) throw createError({ statusCode: 400, message: 'Choose a Seosmith JSON report under 16 MiB.' })
+    if (typeof input?.report_json !== 'string' || Object.keys(input).some(key => key !== 'report_json')) throw createError({ statusCode: 400, message: 'Choose a Seosmith JSON report.' })
+    if (new TextEncoder().encode(input.report_json).length > 4_952_756) throw createError({ statusCode: 413, message: 'report_limit' })
     body = { report_json: input.report_json }
   }
   const suffix = action === 'history' ? '' : action === 'import' ? '/import' : `/${run}`

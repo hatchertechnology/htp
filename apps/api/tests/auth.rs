@@ -1748,7 +1748,7 @@ async fn mcp_audit_import_accepts_large_envelopes_but_bounds_report_bytes() {
     )
     .await;
     let token = TestAuth::token(&auth.claims(), "test-key");
-    for (size, accepted) in [(4 * 1024 * 1024 + 1, true), (16 * 1024 * 1024 + 1, false)] {
+    for (size, accepted) in [(4_952_756, true), (4_952_757, false)] {
         let result = response_json(research_mcp_call(&auth, Some(&token), "import_website_audit",
             json!({"website_id":uuid::Uuid::from_u128(1).to_string(),"report_json":"x".repeat(size)})).await).await;
         assert_eq!(result["result"]["isError"], !accepted, "{result}");

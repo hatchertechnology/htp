@@ -38,3 +38,12 @@ it('round-trips expanded evidence and preserves rejected import status without a
   mocks.raw.mockResolvedValueOnce({ status: 200, _data: detail })
   expect(await proxySeosmith(event, 'detail')).toEqual(detail)
 })
+it('enforces inclusive UTF-8 input cap before proxying imports', async () => {
+  vi.stubGlobal('getMethod', () => 'POST')
+  vi.stubGlobal('readBody', () => ({ report_json: 'x'.repeat(4_952_756) }))
+  await proxySeosmith(event, 'import')
+  expect(mocks.raw).toHaveBeenCalledTimes(1)
+  vi.stubGlobal('readBody', () => ({ report_json: 'x'.repeat(4_952_755) + 'é' }))
+  await expect(proxySeosmith(event, 'import')).rejects.toMatchObject({ statusCode: 413, message: 'report_limit' })
+  expect(mocks.raw).toHaveBeenCalledTimes(1)
+})

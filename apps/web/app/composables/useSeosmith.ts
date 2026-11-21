@@ -34,7 +34,7 @@ export function useSeosmith() {
     const gen = generation, site = ws.selectedId.value, user = ws.user.value?.id
     importing.value = true; error.value = ''; notice.value = ''
     try {
-      if (file.size > 16 * 1024 * 1024) throw new Error('Choose a JSON report under 16 MiB.')
+      if (file.size > 4_952_756) throw new Error('Choose a JSON report at most 4,952,756 bytes.')
       const report_json = await file.text()
       try { JSON.parse(report_json) } catch { throw new Error('This file is not a valid JSON report.') }
       const receipt = await ws.request<{delivery_id: string}>(`/api/websites/${site}/seo/audits/import`, { method: 'POST', body: { report_json } })
