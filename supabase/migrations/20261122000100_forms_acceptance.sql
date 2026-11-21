@@ -22,6 +22,17 @@ create table public.website_form_rate_windows (
 alter table public.website_form_rate_windows enable row level security;
 revoke all on public.website_form_rate_windows from public, anon, authenticated;
 
+-- Minimal retained hashes preserve idempotency after a response is deleted.
+create table public.website_form_submission_tombstones (
+  form_id uuid not null references public.website_forms(id) on delete restrict,
+  submission_id uuid not null,
+  value_hash text not null,
+  deleted_at timestamptz not null default now(),
+  primary key(form_id,submission_id)
+);
+alter table public.website_form_submission_tombstones enable row level security;
+revoke all on public.website_form_submission_tombstones from public, anon, authenticated;
+
 -- Privileged callers must supply a canonical HTTPS origin hostname. This RPC
 -- is deliberately unavailable to browser roles. The function rechecks all
 -- safety-critical state in the same transaction that stores the response.
@@ -43,6 +54,10 @@ begin
   select * into existing from public.website_form_responses where form_id=f.id and submission_id=p_submission_id;
   if found then
     if existing.values = p_values then return jsonb_build_object('ok',true,'duplicate',true); end if;
+    return jsonb_build_object('error','idempotency_conflict');
+  end if;
+  if exists(select 1 from public.website_form_submission_tombstones where form_id=f.id and submission_id=p_submission_id) then
+    if exists(select 1 from public.website_form_submission_tombstones where form_id=f.id and submission_id=p_submission_id and value_hash=encode(sha256(convert_to(p_values::text,'UTF8')),'hex')) then return jsonb_build_object('ok',true,'duplicate',true); end if;
     return jsonb_build_object('error','idempotency_conflict');
   end if;
   insert into public.website_form_rate_windows(form_id,started_at,count) values(f.id,now(),0) on conflict do nothing;

@@ -43,7 +43,7 @@ async function save() {
   if (await mutate(updated ? 'PATCH' : 'POST', editing.value?.id, canonical)) {
     cancelEdit()
     await workspace.load()
-    toast.add({ title: updated ? 'Website updated' : 'Website added', color: 'success', icon: 'i-lucide-check' })
+    toast.add({ title: updated ? 'Website updated' : 'Website added', description: updated ? 'Forms, if any, were paused. Verify their hosts again before reactivating them.' : undefined, color: 'success', icon: 'i-lucide-check' })
   }
 }
 async function remove() {
@@ -89,7 +89,7 @@ watch(() => user.value?.id, () => { cancelEdit(); removing.value = null })
               </form>
               <RepositorySettings :website-id="website.id" :fqdn="website.fqdn" />
               <WebsiteForms :website-id="website.id" :fqdn="website.fqdn" />
-              <div v-if="removing?.id === website.id" class="website-delete" role="group" :aria-label="`Confirm deletion of ${website.fqdn}`"><p>Delete <strong>{{ website.fqdn }}</strong>? This removes the record only.</p><div><UButton color="neutral" variant="outline" :disabled="saving" @click="removing = null">Cancel</UButton><UButton color="error" :loading="saving" @click="remove">Delete record</UButton></div></div>
+              <div v-if="removing?.id === website.id" class="website-delete" role="group" :aria-label="`Confirm deletion of ${website.fqdn}`"><p>Delete <strong>{{ website.fqdn }}</strong>? This removes the website record and any empty form configuration. Websites with saved form responses or independent audit evidence cannot be deleted until those records are explicitly removed. If a notification is sending, try again after delivery.</p><div><UButton color="neutral" variant="outline" :disabled="saving" @click="removing = null">Cancel</UButton><UButton color="error" :loading="saving" @click="remove">Delete record</UButton></div></div>
             </li>
           </ul>
           <div v-if="hasMore" class="website-load-more"><UButton color="neutral" variant="outline" :loading="loading" :disabled="saving" @click="load(true)">Load more websites</UButton></div>

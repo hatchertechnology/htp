@@ -2,6 +2,8 @@
 type Field = { key: string; label: string; kind: 'text'|'email'|'telephone'|'multiline'; required: boolean; max_length: number }
 type Host = { id: string; hostname: string; verified_at: string | null }
 type Form = { id: string; form_key: string; name: string; fields: Field[]; active: boolean }
+type Recipient = { id:string; email:string; verified_at:string|null; enabled:boolean }
+type Delivery = { id:string; recipient_id:string; response_id:string|null; kind:string; state:string; attempts:number }
 type Submission = { id: string; received_at: string; status: string; values: Record<string,string> }
 const props = defineProps<{ websiteId: string; fqdn: string }>()
 const { $supabase } = useNuxtApp()
@@ -9,6 +11,8 @@ const auth = useAuth()
 const config = useRuntimeConfig()
 const expanded = ref(false), busy = ref(false), error = ref(''), notice = ref('')
 const hosts = ref<Host[]>([]), forms = ref<Form[]>([]), submissions = ref<Submission[]>([])
+const deleting = ref<string|null>(null)
+const recipients = ref<Recipient[]>([]), deliveries = ref<Delivery[]>([]), recipientEmail = ref('')
 const selected = ref<Form | null>(null), editing = ref<string | null>(null), moreResponses = ref(false)
 const hostname = ref(props.fqdn), challenge = ref<{host_id:string;txt_name:string;txt_value:string}|null>(null)
 const name = ref(''), formKey = ref(''), enabled = ref(false), chosenHosts = ref<string[]>([])
@@ -64,6 +68,41 @@ async function inbox(form:Form, more = false) {
   const {data,error:err}=await $supabase.from('website_form_responses').select('id,received_at,status,values').eq('website_id',props.websiteId).eq('form_id',form.id).order('received_at',{ascending:false}).order('id').range(submissions.value.length,submissions.value.length + 99)
   if (!owner || auth.user.value?.id !== owner || selected.value?.id !== form.id) return
   if(err) { fail(err); return }; const rows=(data ?? []) as Submission[]; submissions.value.push(...rows); moreResponses.value=rows.length===100
+  const result=await $supabase.from('website_form_recipients').select('id,email,verified_at,enabled').eq('website_id',props.websiteId).eq('form_id',form.id)
+  if (auth.user.value?.id !== owner || selected.value?.id !== form.id) return
+  if (result.error) { fail(result.error); return }
+  recipients.value=(result.data ?? []) as Recipient[]
+  if (recipients.value.length) {
+    const all:Delivery[]=[]
+    for (let offset=0; ; offset+=500) {
+      const jobs=await $supabase.from('website_form_delivery_jobs').select('id,recipient_id,response_id,kind,state,attempts').in('recipient_id',recipients.value.map(r=>r.id)).order('created_at',{ascending:false}).order('id').range(offset,offset+499)
+      if (auth.user.value?.id !== owner || selected.value?.id !== form.id) return
+      if (jobs.error) { fail(jobs.error); return }
+      all.push(...((jobs.data ?? []) as Delivery[]))
+      if (!jobs.data || jobs.data.length<500) break
+    }
+    deliveries.value=all
+  } else deliveries.value=[]
+}
+async function addRecipient() {
+  if (!selected.value) return
+  busy.value=true; error.value=''; notice.value=''
+  try { const {error:err}=await $supabase.rpc('request_form_recipient',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_email:recipientEmail.value}); if (err) throw err; recipientEmail.value=''; notice.value='Verification email queued.'; await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
+}
+async function disableRecipient(recipient:Recipient) {
+  if (!selected.value) return
+  busy.value=true; error.value=''
+  try { const {error:err}=await $supabase.rpc('disable_form_recipient',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_recipient_id:recipient.id}); if(err) throw err; await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
+}
+async function retryDelivery(job:Delivery) {
+  if (!selected.value) return
+  busy.value=true; error.value=''
+  try { const {data,error:err}=await $supabase.rpc('retry_form_delivery',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_job_id:job.id}); if (err || !data) throw new Error('This delivery cannot be retried.'); await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
+}
+async function deleteResponse(row:Submission) {
+  if (!selected.value) return
+  busy.value=true; error.value=''
+  try { const {error:err}=await $supabase.rpc('delete_website_form_response',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_response_id:row.id}); if(err) throw err; deleting.value=null; await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
 }
 async function status(row:Submission, next:string) {
   if (!selected.value) return
@@ -89,7 +128,7 @@ async function exportCsv() {
     const url=URL.createObjectURL(new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8'})); const link=document.createElement('a'); link.href=url; link.download=`${form.form_key}.csv`; link.click(); URL.revokeObjectURL(url)
   } catch(cause) { fail(cause) } finally { busy.value=false }
 }
-watch(()=>auth.user.value?.id,()=>{ hosts.value=[]; forms.value=[]; submissions.value=[]; selected.value=null; challenge.value=null; reset(); expanded.value=false })
+watch(()=>auth.user.value?.id,()=>{ hosts.value=[]; forms.value=[]; submissions.value=[]; recipients.value=[]; deliveries.value=[]; selected.value=null; deleting.value=null; challenge.value=null; reset(); expanded.value=false })
 </script>
 
 <template>
@@ -127,7 +166,8 @@ watch(()=>auth.user.value?.id,()=>{ hosts.value=[]; forms.value=[]; submissions.
         </form>
       </div>
       <div class="forms-block"><h4>Your forms</h4><p v-if="!forms.length">No forms yet.</p><ul><li v-for="form in forms" :key="form.id"><strong>{{ form.name }}</strong> — {{ form.active ? 'Active' : 'Paused' }} <UButton color="neutral" variant="ghost" @click="edit(form)">Edit</UButton><UButton color="neutral" variant="ghost" @click="inbox(form)">Responses</UButton><p>Submission endpoint: <code>{{ config.public.supabaseUrl }}/functions/v1/form-submit?form={{ form.id }}</code></p></li></ul></div>
-      <div v-if="selected" class="forms-block"><h4>Responses: {{ selected.name }}</h4><p>Showing {{ submissions.length }} responses.</p><UButton :disabled="busy || !submissions.length" color="neutral" variant="outline" @click="exportCsv">Export all CSV</UButton><p v-if="!submissions.length">No responses to display.</p><UButton v-if="moreResponses" color="neutral" variant="outline" @click="inbox(selected, true)">Load more</UButton><ul><li v-for="row in submissions" :key="row.id"><p><time>{{ row.received_at }}</time> — {{ row.status }}</p><dl><template v-for="(value,key) in row.values" :key="key"><dt>{{ key }}</dt><dd>{{ value }}</dd></template></dl><UButton color="neutral" variant="ghost" :disabled="busy" @click="status(row,'reviewed')">Mark reviewed</UButton><UButton color="neutral" variant="ghost" :disabled="busy" @click="status(row,'spam')">Mark spam</UButton></li></ul></div>
+      <div v-if="selected" class="forms-block"><h4>Notification recipients</h4><p>Each recipient must confirm their address before inquiries are sent. Delivery status records whether the email provider accepted the message.</p><form @submit.prevent="addRecipient"><label>Email address <input v-model="recipientEmail" type="email" required maxlength="254"></label><UButton type="submit" :loading="busy">Send verification</UButton></form><ul><li v-for="recipient in recipients" :key="recipient.id">{{ recipient.email }} — {{ !recipient.enabled ? 'Disabled' : recipient.verified_at ? 'Verified' : 'Awaiting verification' }} <UButton v-if="recipient.enabled" color="neutral" variant="ghost" @click="disableRecipient(recipient)">Disable</UButton><ul><li v-for="job in deliveries.filter(item => item.recipient_id === recipient.id && item.kind === 'verification')" :key="job.id">Verification: {{ job.state }} <UButton v-if="job.state === 'failed'" color="neutral" variant="ghost" @click="retryDelivery(job)">Retry</UButton></li></ul></li></ul></div>
+      <div v-if="selected" class="forms-block"><h4>Responses: {{ selected.name }}</h4><p>Showing {{ submissions.length }} responses.</p><UButton :disabled="busy || !submissions.length" color="neutral" variant="outline" @click="exportCsv">Export all CSV</UButton><p v-if="!submissions.length">No responses to display.</p><UButton v-if="moreResponses" color="neutral" variant="outline" @click="inbox(selected, true)">Load more</UButton><ul><li v-for="row in submissions" :key="row.id"><p><time>{{ row.received_at }}</time> — {{ row.status }}</p><dl><template v-for="(value,key) in row.values" :key="key"><dt>{{ key }}</dt><dd>{{ value }}</dd></template></dl><ul><li v-for="job in deliveries.filter(item => item.response_id === row.id)" :key="job.id">Notification {{ recipients.find(item => item.id === job.recipient_id)?.email }}: {{ job.state }} <UButton v-if="job.state === 'failed'" color="neutral" variant="ghost" @click="retryDelivery(job)">Retry</UButton><span v-if="job.state === 'uncertain'"> Provider outcome unknown; check before resending.</span></li></ul><UButton color="neutral" variant="ghost" :disabled="busy" @click="status(row,'reviewed')">Mark reviewed</UButton><UButton color="neutral" variant="ghost" :disabled="busy" @click="status(row,'spam')">Mark spam</UButton><UButton color="neutral" variant="ghost" :disabled="busy" @click="deleting = row.id">Delete</UButton><div v-if="deleting === row.id"><p>Permanently delete this response and its notification history?</p><UButton color="error" :loading="busy" @click="deleteResponse(row)">Delete response</UButton><UButton color="neutral" variant="outline" @click="deleting = null">Cancel</UButton></div></li></ul></div>
     </div>
   </section>
 </template>
@@ -135,13 +175,13 @@ watch(()=>auth.user.value?.id,()=>{ hosts.value=[]; forms.value=[]; submissions.
 <style scoped>
 .forms-section { border-top: 1px solid #d9e1e7; padding: 12px 0; }
 .forms-content { padding: 8px 12px 16px; }
-.forms-content h3 { font-weight: 700; font-size: 1.1rem; }
+.forms-content h3 { font-weight: 700; font-size: 14px; }
 .forms-block { border-top: 1px solid #d9e1e7; padding: 16px 0; margin-top: 16px; }
 .forms-block h4 { font-weight: 700; margin-bottom: 8px; }
 .forms-block form, .forms-block fieldset, .forms-field { display: grid; gap: 8px; }
 .forms-block fieldset { border: 1px solid #d9e1e7; padding: 12px; }
 .forms-block label { display: block; }
-.forms-block input:not([type=checkbox]), .forms-block select { border: 1px solid #8b9aaa; border-radius: 4px; padding: 6px 8px; max-width: 100%; }
+.forms-block input:not([type=checkbox]), .forms-block select { border: 1px solid #53677e; border-radius: 4px; padding: 6px 8px; max-width: 100%; }
 .forms-block code, .forms-block dd { overflow-wrap: anywhere; white-space: pre-wrap; }
 .forms-block dt { font-weight: 600; }
 .forms-block li { margin: 12px 0; }
