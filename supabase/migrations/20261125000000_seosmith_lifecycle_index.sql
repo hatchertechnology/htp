@@ -12,6 +12,7 @@ create table public.seosmith_lifecycle_evaluations (
   entity_id text not null,
   rule text not null,
   evaluation jsonb not null,
+  finding_digest text,
   primary key (delivery_id, entity_id, rule)
 );
 alter table public.seosmith_lifecycle_indexed enable row level security;
@@ -40,8 +41,9 @@ begin
     on conflict (delivery_id) do nothing;
   if not found then return; end if;
   if index_state='indexed_v1' then
-    insert into public.seosmith_lifecycle_evaluations(delivery_id,entity_id,rule,evaluation)
-      select a.delivery_id,e->>'entity_id',e->>'rule',e
+    insert into public.seosmith_lifecycle_evaluations(delivery_id,entity_id,rule,evaluation,finding_digest)
+      select a.delivery_id,e->>'entity_id',e->>'rule',e,
+        case when e->>'outcome'='fail' then encode(sha256(convert_to((a.report->'findings'->((substring(e->>'source_locator' from '^/findings/([0-9]+)$'))::integer))::text,'UTF8')),'hex') end
       from jsonb_array_elements(a.report#>'{evidence_contract,evaluations}') e;
   end if;
 end $$;
@@ -92,7 +94,7 @@ begin
         'validator_version',e.evaluation->'validator_version','eligibility',e.evaluation->'eligibility',
         'attempt',e.evaluation->'attempt','outcome',e.evaluation->'outcome','unknown_reason',e.evaluation->'unknown_reason',
         'source_locator',e.evaluation->'source_locator','finding_key',e.evaluation->'finding_key',
-        'confidence',e.evaluation->'confidence','evidence_values_omitted',true) end evaluation
+        'confidence',e.evaluation->'confidence','finding_digest',e.finding_digest,'evidence_values_omitted',true) end evaluation
     from public.seosmith_audits a
     left join public.seosmith_lifecycle_indexed i on i.delivery_id=a.delivery_id
     left join public.seosmith_lifecycle_evaluations e on e.delivery_id=a.delivery_id and e.entity_id=p_entity_id and e.rule=p_rule

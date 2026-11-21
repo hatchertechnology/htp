@@ -492,6 +492,7 @@ test('lifecycle index preserves validated v1 and v2 receiver evidence and exact 
     const observed=history.items.find(row=>row.delivery_id===delivery)
     assert.equal(observed.evaluation.source_locator,ev.source_locator)
     assert.equal(observed.evaluation.evidence_values_omitted,true)
+    assert.match(observed.evaluation.finding_digest,/^[0-9a-f]{64}$/)
     assert.equal(observed.rule_coverage.rule,ev.rule)
     assert.equal(history.items.find(row=>row.delivery_id===legacy.request.request_id).evidence_state,'legacy_unknown')
     assert.equal((await db.query('select public.seosmith_audit_detail($1,$2) d',[report.request.website_id,legacy.request.request_id])).rows[0].d.report_json,legacyRaw)
