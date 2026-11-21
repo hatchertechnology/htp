@@ -483,6 +483,8 @@ test('cross-path exact retries preserve the first receipt provenance', async () 
       const initial=await (first==='worker' ? worker() : ownerImport())
       const retry=await (first==='worker' ? ownerImport() : worker())
       assert.deepEqual(retry,initial)
+      await identity(db)
+      await assert.rejects(() => db.query('select public.import_seosmith_audit($1,$2)',[site,raw+' ']), /delivery_conflict/)
       await db.exec('reset role')
       const stored=(await db.query('select ingestion_source,raw_report_json from public.seosmith_audits where delivery_id=$1',[id])).rows[0]
       assert.equal(stored.ingestion_source,first)

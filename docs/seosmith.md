@@ -287,9 +287,10 @@ states, not evidence of a verified fix. Verification attempts are append-only
 observations and do not automatically resolve a finding. A related audit ID,
 when provided, must be a saved audit for the same owner and current hostname.
 
-The panel preserves the original evidence and severity and labels confidence,
-intended policy, and affected reach as unknown where the report cannot establish
-them. Business exposure, effort, segment, assignee, exception, and rationale
+The panel preserves original evidence, severity and collection interval. It shows
+confidence and rule/validator attribution only when exactly one explicit failed
+evaluation points to that saved finding; otherwise confidence is unknown.
+Intended policy and affected reach remain unknown where not established. Business exposure, effort, segment, assignee, exception, and rationale
 are explicit user-entered planning fields; no revenue uplift is calculated.
 Schema 4 is not accepted or advertised by this change. H03 lifecycle and H15
 notification integration must not infer resolution from these mutable states.

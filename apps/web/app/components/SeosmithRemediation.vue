@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AuditDetail } from '../../shared/types/seosmith'
+import { findingEvaluation } from '../../shared/utils/seosmith-remediation'
 const props = defineProps<{ audit: AuditDetail }>()
 type Attempt = { id: string; result: string; note: string; created_at: string; delivery_id: string | null }
 type Work = { id: string; finding_index: number; status: string; assignee: string | null; segments: Record<string, string>; exception_note: string | null; notes: string | null; business_exposure: string | null; estimated_effort: string | null; rationale: string | null; attempts: Attempt[] }
@@ -10,6 +11,7 @@ const attemptNote = ref(''), attemptResult = ref('unverified'), attemptAudit = r
 const finding = computed(() => props.audit.report.findings[index.value])
 const rankedFindings = computed(() => props.audit.report.findings.map((item, index) => ({ item, index })).sort((a, b) => ['critical', 'alert', 'warning'].indexOf(a.item.severity) - ['critical', 'alert', 'warning'].indexOf(b.item.severity) || a.index - b.index))
 const current = computed(() => items.value.find(item => item.finding_index === index.value))
+const evaluation = computed(() => findingEvaluation(props.audit.report, index.value))
 const endpoint = computed(() => `/api/websites/${ws.selectedId.value}/seo/audits/${props.audit.delivery_id}/work`)
 let generation = 0
 function populate() {
@@ -55,7 +57,8 @@ async function addAttempt() {
     <p v-if="!audit.report.findings.length" class="compact-empty">This audit has no findings to plan.</p>
     <template v-else>
       <label class="insight-control">Finding<select v-model.number="index" :disabled="busy"><option v-for="entry in rankedFindings" :key="entry.index" :value="entry.index">{{ entry.item.severity }} · {{ entry.item.rule }} · {{ entry.item.url }}</option></select></label>
-      <p v-if="finding" class="report-caption">Technical severity: {{ finding.severity }} · Evidence: {{ finding.evidence || 'Unavailable' }} · Confidence: unknown · Intended policy: unknown · Affected reach: unknown. Coverage: {{ audit.summary.coverage_complete ? 'complete crawl' : 'partial or unknown' }}.</p>
+      <p v-if="finding" class="report-caption">Technical severity: {{ finding.severity }} · Evidence: {{ finding.evidence || 'Unavailable' }} · Source: /findings/{{ index }} · Confidence: {{ evaluation?.confidence ?? 'unknown' }} · Intended policy: unknown · Affected reach: unknown. Coverage: {{ audit.summary.coverage_complete ? 'complete crawl' : 'partial or unknown' }}.</p>
+      <p class="report-caption">Collection interval: {{ audit.report.started_at || 'unknown' }} to {{ audit.report.finished_at || 'unknown' }}<template v-if="evaluation"> · Rule {{ evaluation.rule_version }} · Validator {{ evaluation.validator_version }} · Expected: {{ evaluation.expected.state === 'known' ? evaluation.expected.value : evaluation.expected.state === 'source' ? evaluation.expected.source_locator : 'unavailable' }}</template>.</p>
       <form class="seo-filters" @submit.prevent="save">
         <label>Status<select v-model="form.status"><option value="open">Open</option><option value="in_progress">In progress</option><option value="done">Done (unverified)</option><option value="excepted">Exception</option></select></label>
         <label>Owner<input v-model="form.assignee" maxlength="4096" /></label>
