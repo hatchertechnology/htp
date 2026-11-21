@@ -2265,3 +2265,59 @@ async fn profile_slow_audit_export_fails_without_snapshot() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn search_evidence_requires_auth_and_reads_only_owner_scoped_saved_data() {
+    let fixture = WebsiteFixture::default();
+    fixture.0.lock().await.push(htp_shared::Website {
+        id: uuid::Uuid::from_u128(1),
+        fqdn: "www.example.com".into(),
+        ga4_property_id: None,
+    });
+    let calls = Arc::new(AtomicUsize::new(0));
+    let hits = calls.clone();
+    let saved = Router::new().route("/rest/v1/rpc/request_google_report", axum::routing::post(move |headers: axum::http::HeaderMap, Json(input): Json<Value>| {
+        let hits = hits.clone(); async move {
+            hits.fetch_add(1, Ordering::SeqCst);
+            assert!(headers["authorization"].to_str().unwrap().starts_with("Bearer "));
+            assert!(!headers.contains_key("x-google-access-token"));
+            assert_eq!(input["p_kind"], "search");
+            Json(json!({"data":{"query_page_segments":{"rows":[
+                {"keys":["fixture","https://www.example.com/","MOBILE","usa"],"clicks":1,"impressions":5,"ctr":0.2,"position":2},
+                {"keys":["fixture","https://www.example.com/","DESKTOP","usa"],"clicks":2,"impressions":5,"ctr":0.4,"position":2}],
+                "collection":{"truncated":true,"anonymized_queries":"excluded"}}},
+                "sync":{"exact_range_available":true,"connection_status":"disconnected"}}))
+        }
+    }));
+    let auth = TestAuth::with_routes(
+        Router::new()
+            .route("/rest/v1/websites", axum::routing::any(data_api_fixture))
+            .with_state(fixture)
+            .merge(saved),
+    )
+    .await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let input = json!({"site_url":"sc-domain:example.com","start_date":"2026-10-01","end_date":"2026-10-27","dataset":"query_page_segments","device":"MOBILE","country":"usa","limit":1});
+    let path = "/websites/00000000-0000-0000-0000-000000000001/search/dataset";
+    assert_eq!(
+        analytics_request(&auth, path, None, None, input.clone())
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let response = analytics_request(&auth, path, Some(&token), None, input.clone()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    assert_eq!(body["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(body["rows"][0]["keys"][2], "MOBILE");
+    assert_eq!(body["collection"]["truncated"], true);
+    assert_eq!(body["sync"]["connection_status"], "disconnected");
+    let other = "/websites/00000000-0000-0000-0000-000000000002/search/dataset";
+    assert_eq!(
+        analytics_request(&auth, other, Some(&token), None, input)
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
