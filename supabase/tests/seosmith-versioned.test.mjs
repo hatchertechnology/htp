@@ -428,3 +428,37 @@ test('new input cap is inclusive, rejects historical retries, and preserves stor
     await db.exec('set role anon'); assert.equal((await push(historical)).accepted,true)
   } finally { await db.close() }
 })
+
+test('v2 interval accepts bounded explicit RFC3339 offsets and orders instants', async () => {
+  const db=await setup()
+  try {
+    await upgrade(db)
+    await db.exec(await readFile(new URL('../migrations/20261121095609_seosmith_rfc3339_intervals.sql',import.meta.url),'utf8'))
+    const base=JSON.parse(await readFile(new URL('fixtures/contracts/v2-complete.json',import.meta.url),'utf8'))
+    const interval=(start,end) => {
+      const report=structuredClone(base)
+      report.started_at=start; report.finished_at=end
+      report.evidence_contract.observed_at={started_at:start,finished_at:end}
+      return report
+    }
+    const validate=report=>db.query('select public.seosmith_validate_evidence($1::jsonb)',[JSON.stringify(report)])
+    await validate(interval('2026-11-16T12:00:00Z','2026-11-16T12:01:00Z'))
+    await validate(interval('2026-11-16T12:00:00.123Z','2026-11-16T12:00:01.123456789+00:00'))
+    // Lexically earlier finish is a later instant when its offset differs.
+    await validate(interval('2026-11-16T12:00:00+02:00','2026-11-16T11:01:00+01:00'))
+    await validate(interval('2026-11-16T12:00:00-05:00','2026-11-17T07:00:00+14:00'))
+    for (const [start,end] of [
+      ['2026-11-16T12:01:00Z','2026-11-16T12:00:00Z'],
+      ['2026-11-16T12:00:00-05:00','2026-11-16T12:01:00+01:00'],
+      ['2026-02-30T12:00:00Z','2026-03-01T12:00:00Z'],
+      ['2026-11-16T12:00:00','2026-11-16T12:01:00Z'],
+      ['2026-11-16T12:00:00+15:00','2026-11-16T12:01:00Z'],
+      ['2026-11-16T12:00:00+01:60','2026-11-16T12:01:00Z'],
+      ['2026-11-16T12:00:00.1234567890Z','2026-11-16T12:01:00Z'],
+      ['not-a-time','2026-11-16T12:01:00Z'],
+    ]) await assert.rejects(()=>validate(interval(start,end)),/invalid_evidence_interval/)
+    const mismatch=interval('2026-11-16T12:00:00Z','2026-11-16T12:01:00Z')
+    mismatch.evidence_contract.observed_at.finished_at='2026-11-16T12:01:00+00:00'
+    await assert.rejects(()=>validate(mismatch),/invalid_evidence_interval/)
+  } finally { await db.close() }
+})
