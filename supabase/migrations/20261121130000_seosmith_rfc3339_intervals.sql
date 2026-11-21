@@ -5,6 +5,7 @@ declare
   c jsonb := r->'evidence_contract'; o jsonb; e jsonb; v jsonb; p jsonb; src jsonb;
   coverage jsonb; policy jsonb; rule_ids jsonb; n integer; observed integer; omitted integer;
   field text; reason text; expected_count integer; actual_count integer; complete boolean; canonical text;
+  start_second timestamptz; end_second timestamptz; start_ns integer; end_ns integer;
 begin
   if r->'schema_version' is distinct from '2'::jsonb or jsonb_typeof(c) is distinct from 'object'
      or c->'version' is distinct from '1'::jsonb then
@@ -72,7 +73,13 @@ begin
      not pg_catalog.pg_input_is_valid(r->>'finished_at','timestamp with time zone') then
     raise exception 'invalid_evidence_interval' using errcode='22023';
   end if;
-  if (r->>'started_at')::timestamptz > (r->>'finished_at')::timestamptz then
+  -- PostgreSQL rounds timestamps to microseconds; split seconds and fractional
+  -- nanoseconds so a reversed sub-microsecond interval is not accepted.
+  start_second := regexp_replace(r->>'started_at', '\.\d{1,9}(Z|[+-]\d{2}:\d{2})$', '\1')::timestamptz;
+  end_second := regexp_replace(r->>'finished_at', '\.\d{1,9}(Z|[+-]\d{2}:\d{2})$', '\1')::timestamptz;
+  start_ns := rpad(coalesce(substring(r->>'started_at' from '\.(\d{1,9})'),''),9,'0')::integer;
+  end_ns := rpad(coalesce(substring(r->>'finished_at' from '\.(\d{1,9})'),''),9,'0')::integer;
+  if (start_second,start_ns) > (end_second,end_ns) then
     raise exception 'invalid_evidence_interval' using errcode='22023';
   end if;
   if exists(select 1 from jsonb_array_elements(r->'pages') page

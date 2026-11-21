@@ -447,8 +447,10 @@ test('v2 interval accepts bounded explicit RFC3339 offsets and orders instants',
     // Lexically earlier finish is a later instant when its offset differs.
     await validate(interval('2026-11-16T12:00:00+02:00','2026-11-16T11:01:00+01:00'))
     await validate(interval('2026-11-16T12:00:00-05:00','2026-11-17T07:00:00+14:00'))
+    await validate(interval('2026-11-16T12:00:00.000000001Z','2026-11-16T13:00:00.000000002+01:00'))
     for (const [start,end] of [
       ['2026-11-16T12:01:00Z','2026-11-16T12:00:00Z'],
+      ['2026-11-16T12:00:00.000000002Z','2026-11-16T13:00:00.000000001+01:00'],
       ['2026-11-16T12:00:00-05:00','2026-11-16T12:01:00+01:00'],
       ['2026-02-30T12:00:00Z','2026-03-01T12:00:00Z'],
       ['2026-11-16T12:00:00','2026-11-16T12:01:00Z'],
