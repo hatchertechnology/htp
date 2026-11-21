@@ -30,6 +30,7 @@ pub(crate) fn read_router(store: WebsiteStore) -> Router {
     Router::new()
         .route("/websites/{id}/seo/audits", get(read))
         .route("/websites/{id}/seo/audits/import", post(import))
+        .route("/websites/{id}/seo/audits/lifecycle", get(lifecycle))
         .route("/websites/{id}/seo/audits/{run}", get(detail))
         .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
         .with_state(store)
@@ -94,6 +95,26 @@ async fn read(
 ) -> Response {
     match store.rpc(&headers,"seosmith_audit_history",json!({"p_website_id":id,"p_limit":q.limit.unwrap_or(50),"p_before":q.before,"p_before_id":q.before_id})).await {
         Ok(value)=>([(header::CACHE_CONTROL,"no-store")],Json(value)).into_response(),Err(e)=>e.into_response()
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LifecycleQuery {
+    entity_id: String,
+    rule: String,
+    limit: Option<u32>,
+    before: Option<String>,
+    before_id: Option<Uuid>,
+}
+async fn lifecycle(
+    State(store): State<WebsiteStore>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Query(q): Query<LifecycleQuery>,
+) -> Response {
+    match store.rpc(&headers, "seosmith_lifecycle_history", json!({"p_website_id":id,"p_entity_id":q.entity_id,"p_rule":q.rule,"p_limit":q.limit.unwrap_or(50),"p_before":q.before,"p_before_id":q.before_id})).await {
+        Ok(value) => ([(header::CACHE_CONTROL,"no-store")],Json(value)).into_response(), Err(e) => e.into_response()
     }
 }
 

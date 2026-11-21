@@ -470,3 +470,37 @@ test('v2 interval accepts bounded explicit RFC3339 offsets and orders instants',
     await assert.rejects(()=>validate(mismatch),/invalid_evidence_interval/)
   } finally { await db.close() }
 })
+
+test('lifecycle index preserves validated v1 and v2 receiver evidence and exact receipts', async () => {
+  const db=await setup()
+  try {
+    await upgrade(db)
+    await db.exec(await readFile(new URL('../migrations/20261125000000_seosmith_lifecycle_index.sql',import.meta.url),'utf8'))
+    const raw=await readFile(new URL('fixtures/contracts/v2-partial.json',import.meta.url),'utf8'), report=JSON.parse(raw), delivery=report.request.request_id
+    await db.query('delete from public.websites where id=$1',[site])
+    await db.query("insert into public.websites(id,owner_id,fqdn) values($1,$2,'example.com')",[report.request.website_id,owner])
+    await db.query('insert into public.seosmith_bindings(website_id,token_sha256) values($1,$2)',[report.request.website_id,hash('x'.repeat(64))])
+    await db.exec('set role anon')
+    const receipt=(await db.query('select public.ingest_seosmith_audit($1,$2,$3,$4) r',['x'.repeat(64),delivery,hash(raw),raw])).rows[0].r
+    assert.equal(receipt.sha256,hash(raw));assert.equal(receipt.accepted,true)
+    await identity(db)
+    const legacyRaw=JSON.stringify(legacy,null,2)
+    const legacyReceipt=(await db.query('select public.import_seosmith_audit($1,$2) r',[report.request.website_id,legacyRaw])).rows[0].r
+    assert.equal(legacyReceipt.sha256,hash(legacyRaw))
+    const ev=report.evidence_contract.evaluations[0]
+    const history=(await db.query('select public.seosmith_lifecycle_history($1,$2,$3) h',[report.request.website_id,ev.entity_id,ev.rule])).rows[0].h
+    const observed=history.items.find(row=>row.delivery_id===delivery)
+    assert.equal(observed.evaluation.source_locator,ev.source_locator)
+    assert.equal(observed.evaluation.evidence_values_omitted,true)
+    assert.equal(observed.rule_coverage.rule,ev.rule)
+    assert.equal(history.items.find(row=>row.delivery_id===legacy.request.request_id).evidence_state,'legacy_unknown')
+    assert.equal((await db.query('select public.seosmith_audit_detail($1,$2) d',[report.request.website_id,legacy.request.request_id])).rows[0].d.report_json,legacyRaw)
+    assert.equal((await db.query('select public.seosmith_audit_detail($1,$2) d',[report.request.website_id,delivery])).rows[0].d.report_json,raw)
+    await db.exec('reset role')
+    assert.equal((await db.query('select count(*)::int n from public.seosmith_lifecycle_indexed')).rows[0].n,2)
+    await db.exec('set role anon')
+    assert.deepEqual((await db.query('select public.ingest_seosmith_audit($1,$2,$3,$4) r',['x'.repeat(64),delivery,hash(raw),raw])).rows[0].r,receipt)
+    await db.exec('reset role')
+    assert.equal((await db.query('select count(*)::int n from public.seosmith_lifecycle_indexed')).rows[0].n,2)
+  } finally {await db.close()}
+})

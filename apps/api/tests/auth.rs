@@ -561,6 +561,10 @@ async fn every_website_operation_requires_authentication() {
         ("GET", "/websites"),
         (
             "GET",
+            "/websites/00000000-0000-0000-0000-000000000001/seo/audits/lifecycle?entity_id=x&rule=missing_title",
+        ),
+        (
+            "GET",
             "/websites/00000000-0000-0000-0000-000000000001/repository/issues",
         ),
         ("POST", "/websites"),
@@ -2264,4 +2268,33 @@ async fn profile_slow_audit_export_fails_without_snapshot() {
             .get("exportId")
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn lifecycle_history_forwards_the_user_and_bounded_identity_query() {
+    let rpc = Router::new().route(
+        "/rest/v1/rpc/seosmith_lifecycle_history",
+        axum::routing::post(
+            |headers: axum::http::HeaderMap, Json(body): Json<Value>| async move {
+                assert!(
+                    headers["authorization"]
+                        .to_str()
+                        .unwrap()
+                        .starts_with("Bearer ")
+                );
+                assert_eq!(body["p_rule"], "missing_title");
+                assert_eq!(body["p_limit"], 2);
+                (StatusCode::OK, Json(json!({"items":[],"has_more":false})))
+            },
+        ),
+    );
+    let auth = TestAuth::with_routes(rpc).await;
+    let path = format!(
+        "/websites/00000000-0000-0000-0000-000000000001/seo/audits/lifecycle?entity_id=sha256:{}&rule=missing_title&limit=2",
+        "a".repeat(64)
+    );
+    let response = website_request(&auth, "GET", &path, Value::Null).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert_eq!(response_json(response).await["items"], json!([]));
 }
