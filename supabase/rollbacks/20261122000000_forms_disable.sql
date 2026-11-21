@@ -18,3 +18,5 @@ revoke execute on function public.claim_form_delivery() from service_role;
 revoke execute on function public.finish_form_delivery(uuid,uuid,text) from service_role;
 revoke execute on function public.retry_form_delivery(uuid,uuid,uuid) from authenticated;
 commit;
+
+revoke execute on function public.charge_form_client(text) from service_role;

@@ -158,11 +158,43 @@ export async function handle(request: Request, rpc: Rpc): Promise<Response> {
   }
 }
 
+// The public API is the sole caller. Authentication happens before any RPC or
+// request-body processing, including preflights. Missing configuration fails closed.
+export async function privateHandle(
+  request: Request,
+  rpc: Rpc,
+  secret: string,
+): Promise<Response> {
+  const supplied = request.headers.get("x-forms-ingress-secret") ?? "";
+  if (secret.length < 32 || supplied.length < 32 || supplied.length > 256) {
+    return Response.json({ error: "form_unavailable" }, { status: 403 });
+  }
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign", "verify"],
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    encoder.encode(supplied),
+  );
+  if (
+    !await crypto.subtle.verify("HMAC", key, signature, encoder.encode(secret))
+  ) {
+    return Response.json({ error: "form_unavailable" }, { status: 403 });
+  }
+  return handle(request, rpc);
+}
+
 if (import.meta.main) {
   const base = Deno.env.get("SUPABASE_URL") ?? "";
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   Deno.serve((request) =>
-    handle(request, async (name, params) => {
+    privateHandle(request, async (name, params) => {
       if (!base || !key) throw new Error("not_configured");
       const response = await fetch(`${base}/rest/v1/rpc/${name}`, {
         method: "POST",
@@ -177,6 +209,6 @@ if (import.meta.main) {
       });
       if (!response.ok) throw new Error("database_unavailable");
       return await response.json();
-    })
+    }, Deno.env.get("FORMS_INGRESS_SECRET") ?? "")
   );
 }

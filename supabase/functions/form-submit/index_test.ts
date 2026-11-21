@@ -191,3 +191,71 @@ Deno.test("form-wide ingress limits include preflights and retain CORS for the a
   assertEquals(response.headers.get("retry-after"), "600");
   assertEquals(calls, ["charge_form_ingress", "website_form_origin_allowed"]);
 });
+
+Deno.test("private receiver rejects unauthenticated requests before RPC, including OPTIONS", async () => {
+  const { privateHandle } = await import("./index.ts");
+  let calls = 0;
+  const rpc = () => {
+    calls++;
+    return Promise.resolve("ok");
+  };
+  const secret = "a".repeat(48);
+  for (
+    const [method, supplied, configured] of [["POST", "", secret], [
+      "OPTIONS",
+      "b".repeat(48),
+      secret,
+    ], ["OPTIONS", secret, ""]]
+  ) {
+    const response = await privateHandle(
+      new Request(endpoint, {
+        method,
+        headers: { "x-forms-ingress-secret": supplied },
+      }),
+      rpc,
+      configured,
+    );
+    assertEquals(response.status, 403);
+  }
+  assertEquals(calls, 0);
+  const response = await privateHandle(
+    new Request(endpoint, {
+      method: "OPTIONS",
+      headers: {
+        "x-forms-ingress-secret": secret,
+        origin: "https://www.example.com",
+      },
+    }),
+    () => Promise.resolve(true),
+    secret,
+  );
+  // Authentication passes; the stub's invalid admission result is rejected safely.
+  assertEquals(response.status, 503);
+});
+
+Deno.test("authenticated receiver preserves accepted duplicate response", async () => {
+  const { privateHandle } = await import("./index.ts");
+  const secret = "c".repeat(48);
+  const response = await privateHandle(
+    new Request(endpoint, {
+      method: "POST",
+      headers: {
+        origin: "https://www.example.com",
+        "content-type": "application/json",
+        "x-forms-ingress-secret": secret,
+      },
+      body: JSON.stringify({ submission_id: submission, name: "Ada" }),
+    }),
+    (name) =>
+      Promise.resolve(
+        name === "charge_form_ingress"
+          ? "ok"
+          : name === "website_form_origin_allowed"
+          ? true
+          : { ok: true, duplicate: true },
+      ),
+    secret,
+  );
+  assertEquals(response.status, 200);
+  assertEquals(await response.json(), { ok: true, duplicate: true });
+});

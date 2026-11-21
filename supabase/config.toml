@@ -16,7 +16,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.form-submit]
-# Visitors have no HTP account; the handler enforces verified origins.
+# Public ingress authenticates to this receiver with a separate server-only secret.
 verify_jwt = false
 
 [functions.form-notifications]
