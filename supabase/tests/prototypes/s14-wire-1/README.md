@@ -34,7 +34,9 @@ The edge predicate experiment checks emitted examples and the ambiguous-target
 negative; it deliberately rescans pages and is not budget-safe, does not
 reconstruct omitted edges, and must never be installed as a receiver. The
 edge gate test confirms both actual RPC paths still reject even the candidate
-positives. This is safety evidence, not paired acceptance.
+positives. A separate Node reference independently enumerates all source links
+and checks candidate order and coverage outcomes, including omitted states; it
+is fixture-review code, not the PostgreSQL receiver implementation. This is safety evidence, not paired acceptance.
 
 `fixtures/policy-raw-203b/` contains the pinned embedded-policy raw scanner
 subset from a later candidate bundle. The experimental scanner bounds raw policy
