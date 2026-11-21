@@ -140,7 +140,7 @@ Deno.test("Search preserves separate totals, finalized data, hostname filters an
       });
     }) as typeof fetch,
   );
-  assert(requests.length === 10 && result.summary.rows[0].clicks === 12);
+  assert(requests.length === 11 && result.summary.rows[0].clicks === 12);
   assert(requests.find((r) => r.dimensions[0] === "query")?.rowLimit === 1000);
   assert(validProperty("sc-domain:example.com", "www.example.com"));
   assert(!validProperty("sc-domain:example.com", "badexample.com"));
@@ -397,4 +397,28 @@ Deno.test("Search device coverage is complete for all three supported device cat
   assert(result.devices.rows.length === 3);
   assert(result.devices.collection.truncated === false);
   assert(result.devices.collection.returned_rows === 3);
+});
+
+Deno.test("segmented search is bounded and failure leaves the primary report available", async () => {
+  const result = await fetchReport(
+    { ...job, kind: "search", property_id: "sc-domain:example.com" },
+    "token",
+    (async (_url, options) => {
+      const body = JSON.parse(String(options?.body));
+      if (body.dimensions.join(",") === "query,page,device,country") {
+        assert(body.rowLimit === 1000 && body.startRow === 0);
+        return Response.json({ error: { message: "quota" } }, { status: 429 });
+      }
+      return Response.json({
+        rows: body.dimensions.length === 0
+          ? [{ clicks: 2, impressions: 10, ctr: 0.2, position: 1 }]
+          : [],
+      });
+    }) as typeof fetch,
+  );
+  assert(result.summary.rows[0].clicks === 2);
+  assert(result.query_page_segments.unavailable === true);
+  assert(
+    result.query_page_segments.reason === "segment_collection_unavailable",
+  );
 });

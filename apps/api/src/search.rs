@@ -106,6 +106,18 @@ struct SearchInput {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct DatasetInput {
+    site_url: String,
+    start_date: String,
+    end_date: String,
+    dataset: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    device: Option<String>,
+    country: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UrlInput {
     site_url: String,
     url: String,
@@ -174,12 +186,258 @@ pub(crate) fn router(store: WebsiteStore, client: SearchClient) -> Router {
     Router::new()
         .route("/websites/{id}/search/properties", post(properties))
         .route("/websites/{id}/search/dashboard", post(dashboard))
+        .route("/websites/{id}/search/dataset", post(dataset))
+        .route("/websites/{id}/search/crawl-evidence", post(crawl_evidence))
         .route("/websites/{id}/search/inspect", post(inspect))
         .route(
             "/websites/{id}/search/inspection-history",
             post(inspection_history),
         )
         .with_state((store, client))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CrawlEvidenceInput {
+    delivery_id: Uuid,
+    site_url: String,
+    url: String,
+    finding_after: Option<i32>,
+    evaluation_after: Option<i32>,
+    limit: Option<i32>,
+}
+async fn crawl_evidence(
+    State((store, _)): State<(WebsiteStore, SearchClient)>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(input): Json<CrawlEvidenceInput>,
+) -> Result<Json<Value>, SearchError> {
+    let website = store
+        .find(id, &headers)
+        .await
+        .map_err(SearchError::Website)?;
+    if !normalized_inspection(&input.url, &input.site_url, &website.fqdn)
+        .is_some_and(|(url, _)| url == input.url)
+        || input.finding_after.is_some_and(|n| n < -1)
+        || input.evaluation_after.is_some_and(|n| n < -1)
+        || input.limit.is_some_and(|n| !(1..=50).contains(&n))
+    {
+        return Err(SearchError::Invalid(
+            "Choose an exact website URL, delivery and valid evidence cursor.",
+        ));
+    }
+    let data = store.rpc(&headers, "search_crawl_evidence", json!({
+        "p_website_id":id,"p_delivery_id":input.delivery_id,"p_url":input.url,
+        "p_finding_after":input.finding_after.unwrap_or(-1),"p_evaluation_after":input.evaluation_after.unwrap_or(-1),"p_limit":input.limit.unwrap_or(25)
+    })).await.map_err(SearchError::Website)?;
+    Ok(Json(data))
+}
+
+async fn dataset(
+    State((store, _)): State<(WebsiteStore, SearchClient)>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(input): Json<DatasetInput>,
+) -> Result<Json<Value>, SearchError> {
+    let dates: htp_shared::analytics::AnalyticsRequest = serde_json::from_value(
+        json!({"property_id":"1","start_date":input.start_date,"end_date":input.end_date}),
+    )
+    .map_err(|_| SearchError::Invalid("Use real dates in YYYY-MM-DD format."))?;
+    dates.validate().map_err(SearchError::Invalid)?;
+    let limit = input.limit.unwrap_or(50);
+    let offset = input.offset.unwrap_or(0);
+    if !(1..=100).contains(&limit)
+        || offset > 5000
+        || !matches!(
+            input.dataset.as_str(),
+            "queries"
+                | "pages"
+                | "query_pages"
+                | "query_page_segments"
+                | "devices"
+                | "countries"
+                | "analysis"
+                | "landing_outcomes"
+        )
+    {
+        return Err(SearchError::Invalid(
+            "Choose a supported dataset and page (maximum 100 rows).",
+        ));
+    }
+    if (input.device.is_some() || input.country.is_some()) && input.dataset != "query_page_segments"
+        || input
+            .device
+            .as_deref()
+            .is_some_and(|v| !matches!(v, "DESKTOP" | "MOBILE" | "TABLET"))
+        || input
+            .country
+            .as_deref()
+            .is_some_and(|v| v.len() != 3 || !v.bytes().all(|b| b.is_ascii_lowercase()))
+    {
+        return Err(SearchError::Invalid(
+            "Choose a valid device and three-letter country code for segments.",
+        ));
+    }
+    let website = store
+        .find(id, &headers)
+        .await
+        .map_err(SearchError::Website)?;
+    if !valid_property(&input.site_url, &website.fqdn) {
+        return Err(SearchError::Invalid(
+            "Choose a Search Console property for this website.",
+        ));
+    }
+    let (kind, property) = if input.dataset == "landing_outcomes" {
+        let Some(property) = website.ga4_property_id else {
+            return Ok(Json(
+                json!({"semantics_version":1,"dataset":"landing_outcomes","available":false,"reason":"ga4_property_unavailable","rows":[],"offset":offset,"limit":limit,"has_more":false}),
+            ));
+        };
+        ("conversions", property)
+    } else {
+        ("search", input.site_url.clone())
+    };
+    let mut saved = store
+        .rpc(
+            &headers,
+            "read_search_exact_snapshot",
+            json!({
+                "p_website_id":id,"p_kind":kind,"p_property_id":property,
+                "p_start_date":input.start_date,"p_end_date":input.end_date
+            }),
+        )
+        .await
+        .map_err(SearchError::Website)?;
+    let daily = store
+        .saved_report(
+            &headers,
+            id,
+            kind,
+            &property,
+            &input.start_date,
+            &input.end_date,
+        )
+        .await;
+    saved["daily_sync"] = daily.map_or(Value::Null, |value| value["sync"].clone());
+    if input.dataset == "landing_outcomes" {
+        return Ok(Json(landing_projection(&saved, offset, limit)));
+    }
+
+    if input.dataset == "query_page_segments" {
+        return Ok(Json(segment_projection(
+            &saved,
+            input.device.as_deref(),
+            input.country.as_deref(),
+            offset,
+            limit,
+        )));
+    }
+    Ok(Json(dataset_projection(
+        &saved,
+        &input.dataset,
+        offset,
+        limit,
+    )))
+}
+
+fn segment_projection(
+    saved: &Value,
+    device: Option<&str>,
+    country: Option<&str>,
+    offset: usize,
+    limit: usize,
+) -> Value {
+    let mut filtered = saved.clone();
+    let mut invalid_rows = 0;
+    if let Some(rows) = filtered["data"]["query_page_segments"]["rows"].as_array_mut() {
+        rows.retain(|row| {
+            if !row["keys"]
+                .as_array()
+                .is_some_and(|keys| keys.len() == 4 && keys.iter().all(Value::is_string))
+            {
+                invalid_rows += 1;
+                return false;
+            }
+            let keys = row["keys"].as_array();
+            keys.is_some_and(|keys| {
+                keys.len() == 4
+                    && keys.iter().all(Value::is_string)
+                    && device.is_none_or(|v| keys[2].as_str() == Some(v))
+                    && country.is_none_or(|v| keys[3].as_str() == Some(v))
+            })
+        });
+    }
+    let mut result = dataset_projection(&filtered, "query_page_segments", offset, limit);
+    result["filters"] = json!({"device":device,"country":country});
+    result["filter_scope"] = json!("retained_bounded_rows_only");
+    result["invalid_rows_omitted"] = json!(invalid_rows);
+    result
+}
+
+fn landing_projection(saved: &Value, offset: usize, limit: usize) -> Value {
+    let outcome = &saved["data"]["analysis"]["landing_outcomes"];
+    let exact = saved["sync"]["exact_range_available"] == true;
+    let rows = outcome["rows"].as_array();
+    let available = exact && outcome["available"] == true && rows.is_some();
+    let page: Vec<Value> = if available {
+        rows.unwrap()
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .cloned()
+            .collect()
+    } else {
+        vec![]
+    };
+    let total = if available { rows.map(Vec::len) } else { None };
+    json!({"semantics_version":1,"dataset":"landing_outcomes","available":available,
+        "reason":if !exact { Some("exact_period_snapshot_unavailable") } else { outcome["reason"].as_str().or(if available { None } else { Some("landing_outcomes_unavailable") }) },
+        "rows":page,"offset":offset,"limit":limit,"retained_rows":total,
+        "has_more":total.is_some_and(|n| offset.saturating_add(limit)<n),
+        "collection":outcome.get("collection"),"attribution":outcome.get("attribution"),
+        "currency_code":saved["data"]["pages"]["metadata"].get("currencyCode"),
+        "measurement":saved["data"].get("measurement"),"sync":saved["sync"],"daily_sync":saved["daily_sync"]})
+}
+
+fn dataset_projection(saved: &Value, name: &str, offset: usize, limit: usize) -> Value {
+    let exact = saved["sync"]["exact_range_available"] == true;
+    let dataset = &saved["data"][name];
+    let rows = if name == "analysis" {
+        dataset["candidates"].as_array()
+    } else {
+        dataset["rows"].as_array()
+    };
+    let available = exact && rows.is_some();
+    let page: Vec<Value> = if available {
+        rows.unwrap()
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .cloned()
+            .collect()
+    } else {
+        vec![]
+    };
+    let page: Vec<Value> = page.into_iter().map(|mut row| {
+        if name == "analysis" {
+            if let Some(evidence) = row.get_mut("evidence").and_then(Value::as_array_mut) {
+                let count = evidence.len();
+                evidence.truncate(25);
+                row["evidence_presentation"] = json!({"retained_rows":count,"returned_rows":count.min(25),"truncated":count>25});
+            }
+        }
+        row
+    }).collect();
+    let total = if available { rows.map(Vec::len) } else { None };
+    json!({"semantics_version":1, "dataset":name, "available":available,
+        "reason":if available { None } else if !exact { Some("exact_period_snapshot_unavailable") } else { dataset["reason"].as_str().or(Some("dataset_unavailable")) },
+        "rows":page, "offset":offset, "limit":limit, "retained_rows":total,
+        "has_more":total.is_some_and(|n| offset.saturating_add(limit)<n),
+        "collection":if available { dataset.get("collection").cloned() } else { None },
+        "comparison":if available && name == "analysis" { dataset.get("comparison").cloned() } else { None },
+        "coverage":if available && name == "analysis" { dataset.get("coverage").cloned() } else { None },
+        "policy":if available && name == "analysis" { dataset.get("policy").cloned() } else { None },
+        "measurement":if available { saved["data"].get("measurement").cloned() } else { None },
+        "sync":saved["sync"],"daily_sync":saved["daily_sync"]})
 }
 async fn properties(
     State((store, _google)): State<(WebsiteStore, SearchClient)>,
@@ -481,6 +739,91 @@ mod tests {
         headers.append("x-google-access-token", "another".parse().unwrap());
         assert!(token(&headers).is_err());
     }
+    #[test]
+    fn dataset_pages_preserve_metadata_and_require_exact_period() {
+        let mut saved = json!({"sync":{"exact_range_available":true,"fetched_at":"2026-11-01"},
+            "data":{"measurement":{"version":1},"queries":{"rows":[{"keys":["a"]},{"keys":["b"]}],
+            "collection":{"truncated":true,"anonymized_queries":"excluded"}}}});
+        let page = dataset_projection(&saved, "queries", 0, 1);
+        assert_eq!(page["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(page["has_more"], true);
+        assert_eq!(page["collection"]["truncated"], true);
+        assert_eq!(page["measurement"]["version"], 1);
+        saved["sync"]["exact_range_available"] = json!(false);
+        let unavailable = dataset_projection(&saved, "queries", 0, 1);
+        assert_eq!(unavailable["reason"], "exact_period_snapshot_unavailable");
+        assert!(unavailable["rows"].as_array().unwrap().is_empty());
+        saved["sync"]["exact_range_available"] = json!(true);
+        assert_eq!(
+            dataset_projection(&saved, "countries", 0, 1)["reason"],
+            "dataset_unavailable"
+        );
+    }
+    #[test]
+    fn exact_freshness_and_daily_status_remain_separate() {
+        let saved = json!({"sync":{"exact_range_available":true,"snapshot_id":7,"fetched_at":"2026-01-01T00:00:00Z","state":"stale"},"daily_sync":{"fetched_at":"2026-11-01T00:00:00Z","state":"error","last_error":"google_quota_exceeded"},"data":{"queries":{"rows":[]},"query_page_segments":{"unavailable":true,"reason":"segment_collection_unavailable"}}});
+        let result = dataset_projection(&saved, "queries", 0, 25);
+        assert_eq!(result["sync"]["snapshot_id"], 7);
+        assert_eq!(result["sync"]["state"], "stale");
+        assert_eq!(result["daily_sync"]["state"], "error");
+        assert_eq!(
+            dataset_projection(&saved, "query_page_segments", 0, 25)["reason"],
+            "segment_collection_unavailable"
+        );
+    }
+    #[test]
+    fn segments_filter_only_retained_matching_dimensions() {
+        let saved = json!({"sync":{"exact_range_available":true},"data":{"query_page_segments":{
+            "collection":{"truncated":true,"anonymized_queries":"excluded"},"rows":[
+              {"keys":["q","https://example.com/","MOBILE","usa"],"clicks":1},
+              {"keys":["q","https://example.com/","DESKTOP","usa"],"clicks":2},
+              {"keys":["q","https://example.com/","MOBILE","can"],"clicks":3},
+              {"keys":["malformed"]}]}}});
+        let page = segment_projection(&saved, Some("MOBILE"), Some("usa"), 0, 10);
+        assert_eq!(page["retained_rows"], 1);
+        assert_eq!(page["rows"][0]["clicks"], 1);
+        assert_eq!(page["collection"]["truncated"], true);
+        assert_eq!(page["filter_scope"], "retained_bounded_rows_only");
+        assert_eq!(
+            segment_projection(&saved, Some("TABLET"), None, 0, 10)["retained_rows"],
+            0
+        );
+        assert_eq!(
+            segment_projection(
+                &json!({"sync":{"exact_range_available":false}}),
+                None,
+                None,
+                0,
+                10
+            )["available"],
+            false
+        );
+    }
+    #[test]
+    fn landing_projection_requires_exact_valid_observation() {
+        let mut saved = json!({"sync":{"exact_range_available":true},"data":{"analysis":{"landing_outcomes":{"available":true,"rows":[{"landing_page":"/","metrics":{"sessions":0}}],"collection":{"truncated":false}}}}});
+        let result = landing_projection(&saved, 0, 25);
+        assert_eq!(result["rows"][0]["metrics"]["sessions"], 0);
+        assert_eq!(result["collection"]["truncated"], false);
+        saved["sync"]["exact_range_available"] = json!(false);
+        assert_eq!(
+            landing_projection(&saved, 0, 25)["reason"],
+            "exact_period_snapshot_unavailable"
+        );
+        saved["sync"]["exact_range_available"] = json!(true);
+        saved["data"]["analysis"]["landing_outcomes"]["available"] = json!(false);
+        saved["data"]["analysis"]["landing_outcomes"]["reason"] = json!("thresholded_or_sampled");
+        assert_eq!(
+            landing_projection(&saved, 0, 25)["reason"],
+            "thresholded_or_sampled"
+        );
+        assert!(
+            landing_projection(&saved, 0, 25)["rows"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
     async fn mock_upstream() -> (
         String,
         tokio::task::JoinHandle<()>,
@@ -499,6 +842,10 @@ mod tests {
                     if headers.get("x-test-no-website").is_some() { return Json(json!([])); }
                     return Json(json!([{"id":"a19a3adb-148d-4714-9278-c2d709fe0ad1","fqdn":"example.com"}]));
                 }
+                if uri.path() == "/rest/v1/rpc/read_search_exact_snapshot" {
+                    assert_eq!(headers["authorization"], "Bearer owner-token");
+                    return Json(json!({"data":{"queries":{"rows":[]}},"sync":{"exact_range_available":true,"snapshot_id":5,"fetched_at":"2026-10-01T00:00:00Z","state":"stale"}}));
+                }
                 if uri.path() == "/rest/v1/rpc/request_google_report" {
                     assert_eq!(headers["authorization"], "Bearer owner-token");
                     if input["p_kind"] == "properties" { return Json(json!({"data":{"properties":[{"siteUrl":"sc-domain:example.com","permissionLevel":"siteOwner"}]},"sync":{"state":"ready"}})); }
@@ -508,6 +855,10 @@ mod tests {
                     assert_eq!(headers["authorization"], "Bearer owner-token");
                     assert!(headers.get("x-google-access-token").is_none());
                     return Json(json!({"id":1,"observed_at":"2026-11-01T00:00:00Z"}));
+                }
+                if uri.path() == "/rest/v1/rpc/search_crawl_evidence" {
+                    assert_eq!(headers["authorization"], "Bearer owner-token");
+                    return Json(json!({"available":true,"coverage":"unknown","findings":[],"evaluations":[]}));
                 }
                 if uri.path() == "/rest/v1/rpc/search_inspection_history" {
                     assert_eq!(headers["authorization"], "Bearer owner-token");
@@ -559,6 +910,32 @@ mod tests {
         .unwrap();
         assert_eq!(body["properties"].as_array().unwrap().len(), 1);
         assert_eq!(call(app.clone(), "dashboard", json!({"site_url":"sc-domain:example.com","start_date":"2026-10-01","end_date":"2026-10-27"})).await.status(), StatusCode::OK);
+        let dataset = json!({"site_url":"sc-domain:example.com","start_date":"2026-10-01","end_date":"2026-10-27","dataset":"queries","offset":0,"limit":25});
+        assert_eq!(
+            call(app.clone(), "dataset", dataset.clone()).await.status(),
+            StatusCode::OK
+        );
+        let mut invalid_dataset = dataset;
+        invalid_dataset["limit"] = json!(101);
+        assert_eq!(
+            call(app.clone(), "dataset", invalid_dataset).await.status(),
+            StatusCode::BAD_REQUEST
+        );
+        let crawl = json!({"site_url":"sc-domain:example.com","url":"https://example.com/jobs/1","delivery_id":"00000000-0000-0000-0000-000000000004"});
+        assert_eq!(
+            call(app.clone(), "crawl-evidence", crawl.clone())
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        let mut bad_crawl = crawl;
+        bad_crawl["url"] = json!("https://other.example/jobs/1");
+        assert_eq!(
+            call(app.clone(), "crawl-evidence", bad_crawl)
+                .await
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
         let base = json!({"site_url":"sc-domain:example.com","url":"https://example.com/jobs/1"});
         assert_eq!(
             call(app.clone(), "inspect", base.clone()).await.status(),
@@ -599,7 +976,7 @@ mod tests {
             .iter()
             .filter(|r| r.1 == "/rest/v1/rpc/request_google_report")
             .collect();
-        assert_eq!(saved.len(), 2);
+        assert_eq!(saved.len(), 3);
         assert_eq!(saved[1].2["p_kind"], "search");
         assert_eq!(saved[1].2["p_property_id"], "sc-domain:example.com");
         assert!(
