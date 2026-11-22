@@ -18,3 +18,13 @@ ready, then web; hold web first when disabling. A mismatch fails closed at the
 remaining disabled layer. These settings are not secrets and do not establish
 website ownership. Never enable Forms ingress without separately verified trusted
 proxy identity and its required service and IP-hash configuration.
+
+Before and after a separately authorized deployment, run the held and enabled
+browser checks in an isolated application with synthetic authentication and
+intercepted Supabase requests (`apps/web/tests/fixtures/check-rollout-held.mjs`
+and `check-independent-audits.mjs`). Confirm held comparisons make no RPCs,
+Forms controls are hidden, and enabled controls work with fixture data. These
+checks are not currently in PR CI: the existing jobs run unit and Vite fixtures
+but do not build or start the full Nuxt application; adding a second application
+build solely for this check would duplicate that work. The local dev-server
+fixture is not a deployed application or production authorization test.
