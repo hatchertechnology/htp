@@ -11,6 +11,7 @@ required = [
     'supabase/functions/_shared/limited_body.ts',
     'apps/api/src/form_ingress.rs',
     'apps/web/app/components/WebsiteForms.vue',
+    'apps/web/tests/fixtures/check-forms-api-cors.mjs',
     'supabase/tests/website-forms.test.mjs',
     'supabase/tests/forms-client-admission.test.mjs',
 ]
@@ -58,4 +59,11 @@ with tempfile.TemporaryDirectory(prefix='forms-ci-scope-') as temporary:
     (root / required[0]).rename(moved)
     renamed = commit('move helper')
     check(base, renamed, 1, '')
-    print('PASS: complete forms run, stale unrelated head skips, required-file deletion or rename fails')
+    git('checkout', '-qB', 'legacy', stale)
+    legacy = 'supabase/functions/form-submit/index.ts'
+    put(legacy)
+    legacy_base = commit('legacy submission function')
+    (root / legacy).unlink()
+    legacy_removed = commit('remove legacy function')
+    check(legacy_base, legacy_removed, 1, '')
+    print('PASS: complete runs; stale unrelated skips; required deletion, rename and legacy removal fail')

@@ -170,7 +170,27 @@ fn browser_origin(headers: &HeaderMap) -> Option<(String, String)> {
         url.host_str()?.to_owned(),
     ))
 }
+const REQUEST_DEADLINE: Duration = Duration::from_secs(25);
 async fn submit(State(c): State<Config>, Path(id): Path<String>, request: Request) -> Response {
+    submit_with_deadline(c, id, request, REQUEST_DEADLINE).await
+}
+async fn submit_with_deadline(
+    c: Config,
+    id: String,
+    request: Request,
+    deadline: Duration,
+) -> Response {
+    match tokio::time::timeout(deadline, submit_inner(c, id, request)).await {
+        Ok(response) => response,
+        // A cancelled HTTP request does not prove the database rolled back.
+        Err(_) => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "temporarily_unavailable",
+            None,
+        ),
+    }
+}
+async fn submit_inner(c: Config, id: String, request: Request) -> Response {
     if !c.ready() {
         return error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -599,6 +619,68 @@ mod tests {
                 .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
                 .is_none()
         );
+    }
+    #[tokio::test]
+    async fn aggregate_deadline_releases_slot_and_retry_preserves_uncertain_write() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let stored = calls.clone();
+        let fake = Router::new().route(
+            "/rest/v1/rpc/{name}",
+            axum::routing::post(
+                move |Path(name): Path<String>, axum::Json(args): axum::Json<Value>| {
+                    let stored = stored.clone();
+                    async move {
+                        match name.as_str() {
+                            "charge_form_client" | "charge_form_ingress" => axum::Json(json!("ok")),
+                            "website_form_origin_allowed" => axum::Json(json!(true)),
+                            "accept_website_form" => {
+                                assert_eq!(args["p_submission_id"], SID);
+                                assert_eq!(args["p_values"]["name"], "Ada");
+                                let n = stored.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                if n == 0 {
+                                    tokio::time::sleep(Duration::from_secs(3)).await;
+                                }
+                                axum::Json(json!({"ok":true,"duplicate":n>0}))
+                            }
+                            _ => axum::Json(Value::Null),
+                        }
+                    }
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
+        let mut c = configured(base);
+        c.slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let payload =
+            json!({"submission_id":SID,"name":"Ada","email":"ada@example.com"}).to_string();
+        let timed = submit_with_deadline(
+            c.clone(),
+            ID.into(),
+            request(Method::POST, &payload),
+            Duration::from_millis(500),
+        )
+        .await;
+        assert_eq!(timed.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            timed
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none()
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(c.slots.available_permits(), 1);
+        let retry = submit_with_deadline(
+            c,
+            ID.into(),
+            request(Method::POST, &payload),
+            Duration::from_secs(2),
+        )
+        .await;
+        assert_eq!(retry.status(), StatusCode::OK);
+        assert_eq!(value(retry).await["duplicate"], true);
+        server.abort();
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "requires Node, OpenSSL, and installed Playwright Chromium"]
