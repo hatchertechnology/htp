@@ -8,6 +8,6 @@ From `apps/web`, run `npm ci` and `npx playwright install chromium` once. Start 
 
 Run `npm run fixture:forms:serve`, then `npm run fixture:forms:check` in another terminal. It mounts the actual forms component with synthetic data and checks desktop/mobile response rendering, escaping and export availability. It does not exercise a hosted backend.
 
-# Cross-origin forms fixture
+# API-only cross-origin browser fixture
 
-Generate a disposable self-signed certificate and key outside the auth tree. Set `FORMS_TEST_CERT` and `FORMS_TEST_KEY` to their paths and run `deno run --allow-net=127.0.0.1:56575 --allow-read --allow-env=FORMS_TEST_CERT,FORMS_TEST_KEY tests/fixtures/forms-cors-server.ts` from `apps/web`. Then run `npm run fixture:forms:cors`. The browser maps synthetic `visitor.test` and `api.test` to loopback. The fixture exercises the actual Edge handler with mocked RPC results and a simulated early API 429; it does not validate a deployed proxy or the API process.
+After installing web dependencies and Playwright Chromium, run `cargo test --locked -p htp-api --lib form_ingress::tests::browser_cors_against_actual_api -- --ignored --nocapture` from the repository root. This starts the actual API handler and a mocked RPC server on loopback; the Node fixture provides disposable loopback TLS and synthetic browser host mapping. OpenSSL is required. It tests preflight and browser-visible responses, not deployed Fly identity or real PostgREST.

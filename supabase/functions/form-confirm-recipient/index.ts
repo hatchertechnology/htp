@@ -1,4 +1,4 @@
-import { limitedBody } from "../form-submit/index.ts";
+import { limitedBody } from "../_shared/limited_body.ts";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export async function handle(
   request: Request,
