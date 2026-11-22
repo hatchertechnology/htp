@@ -92,6 +92,25 @@ pub fn router() -> Router {
     Router::new()
         .route("/public/forms/{form_id}", any(submit))
         .with_state(Config::from_env())
+        .layer(axum::middleware::from_fn_with_state(
+            std::env::var("HTP_ROLLOUT_FORMS").as_deref() == Ok("true"),
+            forms_gate,
+        ))
+}
+async fn forms_gate(
+    State(enabled): State<bool>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if !enabled {
+        return respond(
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"error":"temporarily_unavailable"}),
+            None,
+            false,
+        );
+    }
+    next.run(request).await
 }
 fn respond(status: StatusCode, value: Value, origin: Option<&str>, retry: bool) -> Response {
     let mut response = (status, axum::Json(value)).into_response();
@@ -410,6 +429,18 @@ async fn submit_inner(c: Config, id: String, request: Request) -> Response {
 mod tests {
     use super::*;
     use tower::ServiceExt;
+    #[tokio::test]
+    async fn rollout_gate_is_closed_by_default_and_does_not_bypass_readiness() {
+        for enabled in [false, true] {
+            let app = Router::new()
+                .route("/public/forms/{form_id}", any(submit))
+                .with_state(Config::from_env())
+                .layer(axum::middleware::from_fn_with_state(enabled, forms_gate));
+            let response = app.oneshot(request(Method::POST, "{}")).await.unwrap();
+            // Even with the rollout enabled, absent trusted ingress configuration fails closed.
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
     const ID: &str = "00000000-0000-0000-0000-000000000003";
     const SID: &str = "00000000-0000-0000-0000-000000000005";
     fn request(method: Method, body: &str) -> Request {

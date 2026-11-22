@@ -113,6 +113,7 @@ export async function fetchReport(
   job: Job,
   access: string,
   fetcher = fetch,
+  searchEvidence = false,
 ): Promise<Json> {
   const headers = {
     Authorization: `Bearer ${access}`,
@@ -251,31 +252,45 @@ export async function fetchReport(
     const previousEnd = new Date(start - day).toISOString().slice(0, 10);
     const [datasets, previousDatasets, segmented] = await Promise.all([
       collect(job.start_date, job.end_date),
-      collect(
-        previousStart,
-        previousEnd,
-        shapes.filter(([name]) => ["summary", "daily", "pages"].includes(name)),
-      ).catch(() => ({
-        summary: { collection: { truncated: true } },
-        daily: { rows: [] },
-        pages: { rows: [], collection: { truncated: true } },
-        unavailable: true,
-        reason: "previous_period_unavailable",
-      })),
+      searchEvidence
+        ? collect(
+          previousStart,
+          previousEnd,
+          shapes.filter(([name]) =>
+            ["summary", "daily", "pages"].includes(name)
+          ),
+        ).catch(() => ({
+          summary: { collection: { truncated: true } },
+          daily: { rows: [] },
+          pages: { rows: [], collection: { truncated: true } },
+          unavailable: true,
+          reason: "previous_period_unavailable",
+        }))
+        : Promise.resolve({
+          summary: { collection: { truncated: true } },
+          daily: { rows: [] },
+          pages: { rows: [], collection: { truncated: true } },
+          unavailable: true,
+          reason: "rollout_held",
+        }),
       // Optional bounded intersection. A quota or timeout here must not erase
       // the primary report. Filtering these top rows is not an exhaustive query.
-      collect(job.start_date, job.end_date, [["query_page_segments", [
-        "query",
-        "page",
-        "device",
-        "country",
-      ], 1000]], AbortSignal.timeout(8_000))
-        .catch(() => ({
-          query_page_segments: {
-            unavailable: true,
-            reason: "segment_collection_unavailable",
-          },
-        })),
+      searchEvidence
+        ? collect(job.start_date, job.end_date, [["query_page_segments", [
+          "query",
+          "page",
+          "device",
+          "country",
+        ], 1000]], AbortSignal.timeout(8_000))
+          .catch(() => ({
+            query_page_segments: {
+              unavailable: true,
+              reason: "segment_collection_unavailable",
+            },
+          }))
+        : Promise.resolve({
+          query_page_segments: { unavailable: true, reason: "rollout_held" },
+        }),
     ]);
     const latestDate = (data: Json) =>
       data.daily.rows.flatMap((row: Json) =>

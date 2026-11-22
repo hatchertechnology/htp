@@ -10,7 +10,7 @@ beforeEach(() => {
   mocks.token.mockResolvedValue('private-google-token')
   mocks.raw.mockResolvedValue({ status: 200, _data: { properties: [] } })
   vi.stubGlobal('getRouterParam', () => id)
-  vi.stubGlobal('useRuntimeConfig', () => ({ apiBaseUrl: 'https://api.example/' }))
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiBaseUrl: 'https://api.example/', public: { rolloutSearchEvidence: true } }))
   vi.stubGlobal('readBody', async () => ({ site_url: 'sc-domain:example.com', url: 'https://example.com/jobs/1' }))
   vi.stubGlobal('setResponseStatus', vi.fn())
   vi.stubGlobal('createError', (v: object) => Object.assign(new Error(), v))
@@ -52,4 +52,12 @@ it('reads crawl evidence with the owner session only', async () => {
   await proxySearch(event, 'crawl-evidence')
   expect(mocks.token).not.toHaveBeenCalled()
   expect(mocks.raw).toHaveBeenCalledWith(`https://api.example/websites/${id}/search/crawl-evidence`, expect.objectContaining({ headers: { Authorization: 'Bearer app-token' } }))
+})
+
+it('returns unavailable for held evidence without contacting the API', async () => {
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiBaseUrl: 'https://api.example/', public: { rolloutSearchEvidence: false } }))
+  for (const action of ['dataset', 'crawl-evidence'] as const) await expect(proxySearch(event, action)).rejects.toMatchObject({ statusCode: 503 })
+  expect(mocks.raw).not.toHaveBeenCalled()
+  await proxySearch(event, 'dashboard')
+  expect(mocks.raw).toHaveBeenCalledOnce()
 })

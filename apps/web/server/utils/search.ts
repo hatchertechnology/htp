@@ -3,6 +3,7 @@ import { googleAccessToken, requireDashboardUser } from './google'
 
 export async function proxySearch(event: H3Event, action: 'properties' | 'dashboard' | 'dataset' | 'crawl-evidence' | 'inspect' | 'inspection-history') {
   const user = await requireDashboardUser(event)
+  if ((action === 'dataset' || action === 'crawl-evidence') && useRuntimeConfig(event).public.rolloutSearchEvidence !== true) throw createError({ statusCode: 503, message: 'Search evidence is not available yet.' })
   const id = getRouterParam(event, 'id')
   if (!id || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) throw createError({ statusCode: 400, message: 'Choose a valid website.' })
   const token = action === 'inspect' ? await googleAccessToken(event, user.id, 'search') : null

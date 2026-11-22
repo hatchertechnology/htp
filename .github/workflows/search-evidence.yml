@@ -54,3 +54,4 @@ jobs:
           done
           node tests/fixtures/check-search-evidence.mjs
           node tests/fixtures/check-search-evaluation.mjs
+          node tests/fixtures/check-rollout-browser.mjs
