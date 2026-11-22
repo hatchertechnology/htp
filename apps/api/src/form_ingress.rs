@@ -600,6 +600,54 @@ mod tests {
                 .is_none()
         );
     }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires Node, OpenSSL, and installed Playwright Chromium"]
+    async fn browser_cors_against_actual_api() {
+        let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let accepted_rpc = accepted.clone();
+        let early = format!(
+            "{:x}",
+            Sha256::digest(format!("{}\0{}", "h".repeat(48), "192.0.2.2").as_bytes())
+        );
+        let fake=Router::new().route("/rest/v1/rpc/{name}",axum::routing::post(move |Path(name):Path<String>, axum::Json(args):axum::Json<Value>| {
+            let accepted=accepted_rpc.clone(); let early=early.clone(); async move {
+                axum::Json(match name.as_str() {
+                    "charge_form_client" if args["p_hash"] == early => json!("rate_limited"),
+                    "charge_form_client" => json!("ok"),
+                    "charge_form_ingress" if args["p_form_id"] == ID => json!("rate_limited"),
+                    "charge_form_ingress" => json!("ok"),
+                    "website_form_origin_allowed" => json!(args["p_host"] == "visitor.test"),
+                    "accept_website_form" => json!({"ok":true,"duplicate":accepted.fetch_add(1,std::sync::atomic::Ordering::SeqCst)>0}),
+                    _=>Value::Null,
+                })
+            }
+        }));
+        let rpc_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let db = format!("http://{}", rpc_listener.local_addr().unwrap());
+        let rpc_server =
+            tokio::spawn(async move { axum::serve(rpc_listener, fake).await.unwrap() });
+        let app = Router::new()
+            .route("/public/forms/{form_id}", any(submit))
+            .with_state(configured(db));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let api_server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let web = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../web");
+        let result = tokio::task::spawn_blocking(move || {
+            std::process::Command::new("node")
+                .current_dir(web)
+                .env("FORMS_BROWSER_API_PORT", port.to_string())
+                .arg("tests/fixtures/check-forms-api-cors.mjs")
+                .status()
+        })
+        .await
+        .unwrap()
+        .expect("run browser fixture");
+        api_server.abort();
+        rpc_server.abort();
+        assert!(result.success(), "browser fixture failed");
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
     #[tokio::test]
     #[ignore = "requires disposable PostgREST and PostgreSQL fixture"]
     async fn disposable_postgrest_acceptance_and_retry() {

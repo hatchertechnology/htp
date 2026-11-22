@@ -122,9 +122,9 @@ jobs:
           node-version: 22.23.1
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
-      - uses: denoland/setup-deno@v2
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          deno-version: v2.9.7
+          toolchain: 1.100.0
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
@@ -143,3 +143,6 @@ jobs:
             sleep 1
           done
           npm run fixture:forms:check
+      - name: Test actual API cross-origin behavior in Chromium
+        working-directory: .
+        run: cargo test --locked -p htp-api --lib form_ingress::tests::browser_cors_against_actual_api -- --ignored --nocapture
