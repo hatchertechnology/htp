@@ -6,7 +6,7 @@ From `apps/web`, run `npm ci` and `npx playwright install chromium` once. Start 
 
 # Forms inbox browser fixture
 
-Run `npm run fixture:forms:serve`, then `npm run fixture:forms:check` in another terminal. It mounts the actual forms component with synthetic data and checks desktop/mobile response rendering, escaping and export availability. It does not exercise a hosted backend.
+Run `npm run fixture:forms:serve`, then `npm run fixture:forms:check` in another terminal. It mounts the actual forms component with synthetic data and checks desktop/mobile response rendering, escaping, export availability and host-quota error messages. It does not exercise a hosted backend.
 
 # API-only cross-origin browser fixture
 
