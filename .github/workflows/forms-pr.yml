@@ -26,19 +26,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          changed=$(git diff --name-only "$(git merge-base "$BASE_SHA" "$HEAD_SHA")" "$HEAD_SHA")
+          changed=$(git diff --no-renames --name-only "$(git merge-base "$BASE_SHA" "$HEAD_SHA")" "$HEAD_SHA")
           complete=true
+          required_changed=false
           for required in supabase/functions/_shared/limited_body.ts apps/api/src/form_ingress.rs apps/web/app/components/WebsiteForms.vue supabase/tests/website-forms.test.mjs supabase/tests/forms-client-admission.test.mjs; do
             if [[ ! -f "$required" ]]; then complete=false; fi
+            if grep -Fxq "$required" <<< "$changed"; then required_changed=true; fi
           done
           if [[ "$complete" == true ]]; then
             echo "run_forms=true" >> "$GITHUB_OUTPUT"
-          elif grep -Eq '^(docs/forms/|supabase/rollbacks/20261122|supabase/functions/form-(submit|verify|notifications|confirm-recipient)/|supabase/migrations/20261122|supabase/tests/(website-forms|forms-client-admission)\.test\.mjs$|apps/api/src/form_ingress\.rs$|apps/web/app/(components/WebsiteForms\.vue|utils/forms-csv\.ts)$|apps/web/tests/(forms-csv\.test\.ts|fixtures/(forms|check-forms)))' <<< "$changed"; then
+          elif [[ "$required_changed" == true ]] || grep -Eq '^(docs/forms/|supabase/rollbacks/20261122|supabase/functions/form-(submit|verify|notifications|confirm-recipient)/|supabase/migrations/20261122|supabase/tests/(website-forms|forms-client-admission)\.test\.mjs$|apps/api/src/form_ingress\.rs$|apps/web/app/(components/WebsiteForms\.vue|utils/forms-csv\.ts)$|apps/web/tests/(forms-csv\.test\.ts|fixtures/(forms|check-forms)))' <<< "$changed"; then
             echo 'Forms-specific files changed but the forms implementation is incomplete' >&2
             exit 1
           else
             echo 'Forms implementation incomplete and no forms-specific files changed; skipping forms checks.'
             echo "run_forms=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Test scope detector when available
+        shell: bash
+        run: |
+          if [[ -f .github/scripts/test-forms-ci-scope.py ]]; then
+            python3 .github/scripts/test-forms-ci-scope.py
           fi
 
   edge:

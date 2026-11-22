@@ -1,0 +1,61 @@
+"""Exercise the workflow's actual detector in disposable Git repositories."""
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import textwrap
+
+workflow = (Path(__file__).resolve().parents[1] / 'workflows/forms-pr.yml').read_text()
+script = textwrap.dedent(workflow.split('        run: |\n', 1)[1].split('\n      - name: Test scope detector', 1)[0])
+required = [
+    'supabase/functions/_shared/limited_body.ts',
+    'apps/api/src/form_ingress.rs',
+    'apps/web/app/components/WebsiteForms.vue',
+    'supabase/tests/website-forms.test.mjs',
+    'supabase/tests/forms-client-admission.test.mjs',
+]
+with tempfile.TemporaryDirectory(prefix='forms-ci-scope-') as temporary:
+    root = Path(temporary)
+    def git(*args):
+        return subprocess.run(['git', *args], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+    def put(name):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('fixture\n')
+    def commit(message):
+        git('add', '-A')
+        git('commit', '-qm', message)
+        return git('rev-parse', 'HEAD')
+    def check(base, head, expected_code, expected_output):
+        output = root / '.git' / 'scope-output'
+        output.write_text('')
+        env = {**os.environ, 'BASE_SHA': base, 'HEAD_SHA': head, 'GITHUB_OUTPUT': str(output)}
+        result = subprocess.run(['bash', '-c', script], cwd=root, env=env, capture_output=True, text=True)
+        assert result.returncode == expected_code, (result.returncode, result.stderr)
+        assert expected_output in output.read_text(), output.read_text()
+    git('init', '-q', '-b', 'base')
+    git('config', 'user.name', 'Fixture')
+    git('config', 'user.email', 'fixture@example.invalid')
+    put('README')
+    commit('initial')
+    git('checkout', '-qb', 'stale')
+    put('unrelated.txt')
+    stale = commit('unrelated')
+    git('checkout', '-q', 'base')
+    for name in required:
+        put(name)
+    base = commit('add forms')
+    check(base, base, 0, 'run_forms=true')
+    git('checkout', '-q', 'stale')
+    check(base, stale, 0, 'run_forms=false')
+    for index, name in enumerate(required):
+        git('checkout', '-qB', f'delete-{index}', base)
+        (root / name).unlink()
+        missing = commit(f'delete {name}')
+        check(base, missing, 1, '')
+    git('checkout', '-qB', 'rename-helper', base)
+    moved = root / 'moved-helper.ts'
+    (root / required[0]).rename(moved)
+    renamed = commit('move helper')
+    check(base, renamed, 1, '')
+    print('PASS: complete forms run, stale unrelated head skips, required-file deletion or rename fails')
