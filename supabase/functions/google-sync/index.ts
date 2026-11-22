@@ -34,6 +34,7 @@ export async function handle(request: Request): Promise<Response> {
     };
     const repositories = await runRepositorySync(rpc);
     const result = await runSync(rpc, {
+      searchEvidence: Deno.env.get("HTP_ROLLOUT_SEARCH_EVIDENCE") === "true",
       pagespeedKey: Deno.env.get("GOOGLE_PAGESPEED_KEY"),
       cruxKey: Deno.env.get("GOOGLE_CRUX_KEY"),
       key: required("GOOGLE_GRANT_KEY"),

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { compareIndependent, parseControlledCsv, CURRENT_SEMANTICS } from '#shared/utils/independent-audit'
 useHead({ title: 'Hatch · Independent audit comparisons' })
+const comparisonEnabled = useRuntimeConfig().public.rolloutComparisons === true
 const ws = useWorkspace(), supabase = useNuxtApp().$supabase
 const snapshots = ref<any[]>([]), imports = ref<any[]>([]), selected = ref<any>(null), runs = ref<any[]>([]), run = ref(''), report = ref<any>(null)
 const importCursor = ref<any>(null), snapshotCursor = ref<any>(null), runCursor = ref<any>(null)
@@ -22,7 +23,7 @@ async function load() {
   selectionGeneration++
   importCursor.value = null; snapshotCursor.value = null; runCursor.value = null
   snapshots.value = []; imports.value = []; selected.value = null; runs.value = []; report.value = null; run.value = ''; error.value = ''
-  if (!site || !ws.user.value) return
+  if (!comparisonEnabled || !site || !ws.user.value) return
   try {
     const [history, audits, comparisons] = await Promise.all([
       supabase.rpc('independent_audit_history', { p_website_id: site, p_id: null }),
@@ -171,7 +172,8 @@ onBeforeUnmount(() => { generation++ })
     <h1>Independent audit comparisons</h1>
     <p>Compare explicit observations with a saved SEOsmith run. Agreement is not ground truth, and proprietary scores are not comparable.</p>
     <p><NuxtLink to="/">Back to dashboard</NuxtLink></p>
-    <p v-if="!ws.user.value">Sign in to access your websites.</p>
+    <p v-if="!comparisonEnabled" role="status">Independent audit comparisons are not available yet.</p>
+    <p v-else-if="!ws.user.value">Sign in to access your websites.</p>
     <template v-else>
       <label>Website <select v-model="ws.selectedId.value"><option v-for="site in ws.sites.value" :key="site.id" :value="site.id">{{ site.fqdn }}</option></select></label>
       <p v-if="!ws.selected.value">Choose or add a website first.</p>

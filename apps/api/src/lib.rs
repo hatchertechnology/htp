@@ -42,6 +42,30 @@ pub fn app_with_analytics(
     websites: websites::WebsiteStore,
     analytics: analytics::AnalyticsClient,
 ) -> Router {
+    app_with_capabilities(auth, websites, analytics, RolloutCapabilities::from_env())
+}
+
+/// Explicit availability controls; they never replace authentication or database ACLs.
+#[derive(Clone, Copy, Default)]
+pub struct RolloutCapabilities {
+    pub search_evidence: bool,
+    pub lifecycle: bool,
+}
+impl RolloutCapabilities {
+    fn from_env() -> Self {
+        Self {
+            search_evidence: std::env::var("HTP_ROLLOUT_SEARCH_EVIDENCE").as_deref() == Ok("true"),
+            lifecycle: std::env::var("HTP_ROLLOUT_LIFECYCLE").as_deref() == Ok("true"),
+        }
+    }
+}
+
+pub fn app_with_capabilities(
+    auth: auth::SupabaseAuth,
+    websites: websites::WebsiteStore,
+    analytics: analytics::AnalyticsClient,
+    capabilities: RolloutCapabilities,
+) -> Router {
     let oauth_routes = oauth::router(auth.project_url());
     let seosmith_ingest = seosmith::ingest_router(websites.clone());
     let mcp_limit = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
@@ -64,6 +88,7 @@ pub fn app_with_analytics(
         .merge(seosmith::read_router(websites.clone()))
         .merge(repositories::router(websites.clone()))
         .merge(websites::router(websites))
+        .layer(middleware::from_fn_with_state(capabilities, rollout_gate))
         .layer(middleware::from_fn_with_state(auth, auth::require_user));
 
     Router::new()
@@ -73,6 +98,37 @@ pub fn app_with_analytics(
         .merge(seosmith_ingest)
         .merge(form_ingress::router())
         .merge(protected)
+}
+
+async fn rollout_gate(
+    axum::extract::State(capabilities): axum::extract::State<RolloutCapabilities>,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path: Vec<_> = request.uri().path().split('/').collect();
+    let held = match path.as_slice() {
+        ["", "websites", _, "search", "dataset" | "crawl-evidence"] => {
+            !capabilities.search_evidence
+        }
+        [
+            "",
+            "websites",
+            _,
+            "seo",
+            "audits",
+            "lifecycle" | "url-lifecycle",
+        ] => !capabilities.lifecycle,
+        _ => false,
+    };
+    if held {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error":"This feature is not available yet."})),
+        )
+            .into_response();
+    }
+    next.run(request).await
 }
 
 fn secured_message() -> MessageResponse {

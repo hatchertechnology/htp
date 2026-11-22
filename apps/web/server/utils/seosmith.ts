@@ -3,6 +3,7 @@ import { requireDashboardUser } from './google'
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
 export async function proxySeosmith(event: H3Event, action: 'history' | 'detail' | 'import' | 'lifecycle' | 'url-lifecycle') {
   const user = await requireDashboardUser(event)
+  if ((action === 'lifecycle' || action === 'url-lifecycle') && useRuntimeConfig(event).public.rolloutLifecycle !== true) throw createError({ statusCode: 503, message: 'Indexed history is not available yet.' })
   const id = getRouterParam(event, 'id'), run = getRouterParam(event, 'run')
   if (!id || !UUID.test(id) || (action === 'detail' && (!run || !UUID.test(run)))) throw createError({ statusCode: 400, message: 'Choose a valid website and run.' })
   const method = getMethod(event)

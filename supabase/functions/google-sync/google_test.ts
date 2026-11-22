@@ -4,12 +4,14 @@ import { createCipheriv } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { authorized, openGrant, sealGrant } from "./crypto.ts";
 import {
-  fetchReport,
+  fetchReport as fetchReportRaw,
   type Job,
   refreshToken,
   validProperty,
 } from "./google.ts";
 import { runSync } from "./worker.ts";
+const fetchReport = (job: Job, access: string, fetcher?: typeof fetch) =>
+  fetchReportRaw(job, access, fetcher, true);
 function assert(value: unknown, message = "Assertion failed"): asserts value {
   if (!value) throw new Error(message);
 }
@@ -421,4 +423,22 @@ Deno.test("segmented search is bounded and failure leaves the primary report ava
   assert(
     result.query_page_segments.reason === "segment_collection_unavailable",
   );
+});
+
+Deno.test("held Search evidence omits optional provider requests and retains primary report", async () => {
+  const calls: string[] = [];
+  const result = await fetchReportRaw(
+    { ...job, kind: "search", property_id: "sc-domain:example.com" },
+    "token",
+    (async (_url, options) => {
+      const input = JSON.parse(String(options?.body));
+      calls.push(`${input.startDate}:${input.dimensions.join(",")}`);
+      return Response.json({ rows: [] });
+    }) as typeof fetch,
+  );
+  assert(calls.every((value) => value.startsWith(job.start_date + ":")));
+  assert(!calls.some((value) => value.includes("query,page,device,country")));
+  assert(result.summary && result.daily && result.pages);
+  assert(result.previous_period.reason === "rollout_held");
+  assert(result.query_page_segments.reason === "rollout_held");
 });

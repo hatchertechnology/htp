@@ -45,10 +45,14 @@ impl TestAuth {
         let server = tokio::spawn(async move {
             axum::serve(listener, jwks.merge(routes)).await.unwrap();
         });
-        let app = htp_api::app_with_analytics(
+        let app = htp_api::app_with_capabilities(
             SupabaseAuth::new(&url),
             htp_api::websites::WebsiteStore::new(&url, "publishable-fixture-key"),
             htp_api::analytics::AnalyticsClient::new(&url),
+            htp_api::RolloutCapabilities {
+                search_evidence: true,
+                lifecycle: true,
+            },
         );
         Self {
             url,
@@ -2385,4 +2389,42 @@ async fn search_evidence_requires_auth_and_reads_only_owner_scoped_saved_data() 
         StatusCode::NOT_FOUND
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn held_rollout_routes_do_not_call_the_data_api_and_keep_authentication() {
+    let mut auth = TestAuth::new().await;
+    auth.app = htp_api::app_with_capabilities(
+        SupabaseAuth::new(&auth.url),
+        htp_api::websites::WebsiteStore::new(&auth.url, "publishable-fixture-key"),
+        htp_api::analytics::AnalyticsClient::new(&auth.url),
+        htp_api::RolloutCapabilities::default(),
+    );
+    let id = "00000000-0000-0000-0000-000000000001";
+    for suffix in ["dataset", "crawl-evidence"] {
+        let path = format!("/websites/{id}/search/{suffix}");
+        assert_eq!(
+            analytics_request(&auth, &path, None, None, json!({}))
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            website_request(&auth, "POST", &path, json!({}))
+                .await
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+    for suffix in ["lifecycle", "url-lifecycle"] {
+        let path = format!("/websites/{id}/seo/audits/{suffix}");
+        assert_eq!(
+            website_request(&auth, "GET", &path, Value::Null)
+                .await
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+    let response = website_request(&auth, "GET", "/secured", Value::Null).await;
+    assert_eq!(response.status(), StatusCode::OK);
 }

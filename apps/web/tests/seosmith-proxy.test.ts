@@ -8,7 +8,7 @@ beforeEach(() => {
   mocks.user.mockResolvedValue({ authorization: 'Bearer current.user.token' }); mocks.raw.mockResolvedValue({ status: 200, _data: { items: [], has_more: false, next_cursor: null } })
   vi.stubGlobal('$fetch', { raw: mocks.raw }); vi.stubGlobal('getRouterParam', (_e: H3Event, key: string) => key === 'id' ? id : '00000000-0000-0000-0000-000000000002')
   vi.stubGlobal('getMethod', () => 'GET'); vi.stubGlobal('getQuery', () => ({ limit: 50, before: '2026-10-31T00:00:00Z', before_id: id, url: 'https://evil.invalid/' }))
-  vi.stubGlobal('useRuntimeConfig', () => ({ apiBaseUrl: 'https://api.example.test/' })); vi.stubGlobal('setResponseStatus', vi.fn()); vi.stubGlobal('setHeader', vi.fn())
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiBaseUrl: 'https://api.example.test/', public: { rolloutLifecycle: true } })); vi.stubGlobal('setResponseStatus', vi.fn()); vi.stubGlobal('setHeader', vi.fn())
   vi.stubGlobal('createError', (options: { statusCode: number; message: string }) => Object.assign(new Error(options.message), options))
 })
 afterEach(() => { vi.unstubAllGlobals(); vi.resetAllMocks() })
@@ -58,4 +58,10 @@ it('forwards URL observation history using only the fixed owner-scoped route', a
   vi.stubGlobal('getQuery', () => ({ entity_id, limit: 10, url: 'https://evil.invalid/' }))
   await proxySeosmith(event, 'url-lifecycle')
   expect(mocks.raw).toHaveBeenCalledWith(`https://api.example.test/websites/${id}/seo/audits/url-lifecycle`, expect.objectContaining({ headers: { Authorization: 'Bearer current.user.token' }, query: { entity_id, limit: 10, before: undefined, before_id: undefined }, retry: 0 }))
+})
+
+it('holds indexed history without contacting the API', async () => {
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiBaseUrl: 'https://api.example.test/', public: { rolloutLifecycle: false } }))
+  for (const action of ['lifecycle', 'url-lifecycle'] as const) await expect(proxySeosmith(event, action)).rejects.toMatchObject({ statusCode: 503 })
+  expect(mocks.raw).not.toHaveBeenCalled()
 })

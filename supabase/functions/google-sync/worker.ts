@@ -9,6 +9,7 @@ export interface Config extends InsightKeys {
   key: string;
   clientId: string;
   clientSecret: string;
+  searchEvidence?: boolean;
 }
 export async function runSync(
   rpc: Rpc,
@@ -52,7 +53,12 @@ export async function runSync(
         data = ["analytics", "search", "properties", "conversions"].includes(
             job.kind,
           )
-          ? await fetchReport(job, token.access, fetcher)
+          ? await fetchReport(
+            job,
+            token.access,
+            fetcher,
+            config.searchEvidence === true,
+          )
           : await fetchInsight(job, token.access, config, fetcher);
       }
     } catch (cause) {
