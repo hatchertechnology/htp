@@ -14,6 +14,7 @@ required = [
     'apps/web/tests/fixtures/check-forms-api-cors.mjs',
     'supabase/tests/website-forms.test.mjs',
     'supabase/tests/forms-client-admission.test.mjs',
+    'supabase/tests/forms-host-challenge-quota.test.mjs',
 ]
 with tempfile.TemporaryDirectory(prefix='forms-ci-scope-') as temporary:
     root = Path(temporary)

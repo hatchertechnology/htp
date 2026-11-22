@@ -239,7 +239,12 @@ test('verified recipients receive a single queued delivery and failed sends can 
     await db.exec(await readFile(new URL('../rollbacks/20261122000000_forms_disable.sql',import.meta.url),'utf8'))
     assert.equal((await db.query("select has_function_privilege('service_role','public.accept_website_form(uuid,uuid,text,jsonb)','execute') allowed")).rows[0].allowed,false)
     assert.equal((await db.query("select has_function_privilege('service_role','public.charge_form_client(text)','execute') allowed")).rows[0].allowed,false)
-    await db.exec(await readFile(new URL('../rollbacks/20261122000000_forms_restore.sql',import.meta.url),'utf8'))
+    const restore=await readFile(new URL('../rollbacks/20261122000000_forms_restore.sql',import.meta.url),'utf8')
+    await assert.rejects(()=>db.exec(restore),/forms_host_challenge_quota_required/)
+    await db.exec('rollback')
+    assert.equal((await db.query("select has_function_privilege('service_role','public.accept_website_form(uuid,uuid,text,jsonb)','execute') allowed")).rows[0].allowed,false)
+    await db.exec(await readFile(new URL('../migrations/20261128000000_forms_host_challenge_quota.sql',import.meta.url),'utf8'))
+    await db.exec(restore)
     assert.equal((await db.query("select has_function_privilege('service_role','public.accept_website_form(uuid,uuid,text,jsonb)','execute') allowed")).rows[0].allowed,true)
     assert.equal((await db.query("select has_function_privilege('service_role','public.charge_form_client(text)','execute') allowed")).rows[0].allowed,true)
   } finally {await db.close()}

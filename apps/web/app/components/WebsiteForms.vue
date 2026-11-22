@@ -35,6 +35,9 @@ async function begin() {
   busy.value=true; error.value=''; notice.value=''
   try {
     const {data,error:err}=await $supabase.rpc('begin_form_host_verification',{p_website_id:props.websiteId,p_hostname:hostname.value.trim().toLowerCase()})
+    if (err?.message === 'form_host_rate_limited') throw new Error('Too many verification requests. Try again in 10 minutes.')
+    if (err?.message === 'form_host_limit') throw new Error('This website has reached its limit of 64 hosts.')
+    if (err?.message === 'form_host_account_limit') throw new Error('This account has reached its limit of 256 hosts.')
     if (err) throw err
     challenge.value=data
     await load()
