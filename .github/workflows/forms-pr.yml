@@ -28,7 +28,7 @@ jobs:
           set -euo pipefail
           changed=$(git diff --name-only "$(git merge-base "$BASE_SHA" "$HEAD_SHA")" "$HEAD_SHA")
           complete=true
-          for required in supabase/functions/form-submit/index.ts apps/api/src/form_ingress.rs apps/web/app/components/WebsiteForms.vue apps/web/tests/fixtures/check-forms-cors.mjs supabase/tests/website-forms.test.mjs supabase/tests/forms-client-admission.test.mjs; do
+          for required in supabase/functions/_shared/limited_body.ts apps/api/src/form_ingress.rs apps/web/app/components/WebsiteForms.vue supabase/tests/website-forms.test.mjs supabase/tests/forms-client-admission.test.mjs; do
             if [[ ! -f "$required" ]]; then complete=false; fi
           done
           if [[ "$complete" == true ]]; then
@@ -58,7 +58,6 @@ jobs:
       - name: Test forms handlers
         run: >-
           deno test --allow-env --allow-net
-          supabase/functions/form-submit/index_test.ts
           supabase/functions/form-verify/index_test.ts
           supabase/functions/form-confirm-recipient/index_test.ts
           supabase/functions/form-notifications/index_test.ts
@@ -144,19 +143,3 @@ jobs:
             sleep 1
           done
           npm run fixture:forms:check
-      - name: Test cross-origin browser behavior
-        shell: bash
-        run: |
-          set -euo pipefail
-          cert_dir=$(mktemp -d "$RUNNER_TEMP/forms-cors.XXXXXXXX")
-          export FORMS_TEST_CERT="$cert_dir/cert.pem" FORMS_TEST_KEY="$cert_dir/key.pem"
-          openssl req -x509 -newkey rsa:2048 -nodes -keyout "$FORMS_TEST_KEY" -out "$FORMS_TEST_CERT" -days 1 -subj /CN=fixture.test > /dev/null 2>&1
-          deno run --allow-net=127.0.0.1:56575 --allow-read --allow-env=FORMS_TEST_CERT,FORMS_TEST_KEY tests/fixtures/forms-cors-server.ts > "$RUNNER_TEMP/forms-cors.log" 2>&1 &
-          fixture_pid=$!
-          trap 'kill "$fixture_pid" 2>/dev/null || true; rm -r "$cert_dir"' EXIT
-          for attempt in {1..30}; do
-            if curl -ksS https://127.0.0.1:56575/ > /dev/null; then break; fi
-            if ! kill -0 "$fixture_pid" 2>/dev/null; then cat "$RUNNER_TEMP/forms-cors.log"; exit 1; fi
-            sleep 1
-          done
-          npm run fixture:forms:cors

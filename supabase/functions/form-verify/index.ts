@@ -1,4 +1,4 @@
-import { limitedBody } from "../form-submit/index.ts";
+import { limitedBody } from "../_shared/limited_body.ts";
 type Dependencies = {
   challenge: (
     authorization: string,
