@@ -14,7 +14,7 @@ test('queue is gated and atomic; reads enforce owner and hostname', async () => 
    create table public.bing_report_jobs(id uuid primary key,website_id uuid,fqdn text);
    create table public.website_repositories(id uuid primary key,website_id uuid,fqdn text);
    grant usage on schema public,auth to authenticated,anon;`)
-  await db.exec(await readFile(new URL('../migrations/20261130000000_audit_event_queue.sql',import.meta.url),'utf8'))
+  await db.exec(await readFile(new URL('../migrations/20261203000000_audit_event_queue.sql',import.meta.url),'utf8'))
   await db.query('insert into public.websites values($1,$2,$3)',[site,owner,'example.com'])
   await db.query('insert into public.google_report_jobs values($1,$2,$3)',[a,site,'example.com'])
   const operation=(outcome,error=null)=>db.query('select public.audit_operational_completion($1,$2,$3,$4,$5,$6) id',[site,'example.com','google',a,outcome,error]).then(r=>r.rows[0].id)
@@ -81,7 +81,7 @@ test('real receiver and import keep immutable receipts and enqueue worker once',
    grant usage on schema auth,public to authenticated,anon,service_role; alter default privileges grant execute on functions to anon,authenticated;`)
   for(const name of ['20261028142440_create_websites.sql','20261031053344_seosmith_audits.sql','20261031053413_seosmith_history.sql','20261031053524_seosmith_explicit_function_privileges.sql','20261101054016_seosmith_expanded_evidence.sql','20261101060006_seosmith_policy_exclusions.sql','20261116210550_seosmith_versioned_receiver.sql','20261116221958_seosmith_summary_target_lookup.sql','20261116223631_h01_scanner_budget.sql','20261116224641_seosmith_summary_compact_input.sql']) await db.exec(await readFile(new URL('../migrations/'+name,import.meta.url),'utf8'))
   if (process.env.HTP_LIFECYCLE_MIGRATION_PATH) await db.exec(await readFile(process.env.HTP_LIFECYCLE_MIGRATION_PATH,'utf8'))
-  await db.exec(await readFile(new URL('../migrations/20261130000000_audit_event_queue.sql',import.meta.url),'utf8'))
+  await db.exec(await readFile(new URL('../migrations/20261203000000_audit_event_queue.sql',import.meta.url),'utf8'))
   await db.query('insert into auth.users values($1)',[owner])
   await db.query("insert into public.websites(id,owner_id,fqdn) values($1,$2,'example.com')",[report.request.website_id,owner])
   const token='x'.repeat(64)
@@ -130,7 +130,7 @@ test('processor requires lock and lease and holds missing or ambiguous evidence'
    create table public.seosmith_audits(delivery_id uuid primary key,website_id uuid,fqdn text,generation bigint,ingestion_source text,summary jsonb,scan_at timestamptz,report jsonb);
    create table public.seosmith_lifecycle_indexed(delivery_id uuid primary key,state text,evidence_truncated boolean,policy_digest text,comparison_key text,engine_version text,ruleset_version text);
    create table public.seosmith_lifecycle_evaluations(delivery_id uuid,entity_id text,rule text,evaluation jsonb,primary key(delivery_id,entity_id,rule));`)
-  await db.exec(await readFile(new URL('../migrations/20261130000000_audit_event_queue.sql',import.meta.url),'utf8'))
+  await db.exec(await readFile(new URL('../migrations/20261203000000_audit_event_queue.sql',import.meta.url),'utf8'))
   await db.query("insert into public.websites values($1,$2,'example.com')",[site,owner])
   await db.exec('update public.audit_event_config set enqueue_enabled=true,processing_enabled=true')
   const add=(id,time,outcome)=>db.query('insert into public.seosmith_audits values($1,$2,$3,1,$4,$5,$6,$7)',[id,site,'example.com','worker',{schema_version:2},time,{findings:outcome==='fail'?[{key:'f',severity:'warning'}]:[]}])
