@@ -1,6 +1,18 @@
 -- DISPOSABLE PROTOTYPE ROLLBACK ONLY; not a hosted procedure.
 begin;
 do $$ begin if current_setting('forms.pilot_fixture',true) is distinct from 'disposable' then raise exception 'fixture_only'; end if; end $$;
+-- Close service ingress/completion before restoring ungated bodies; assert
+-- effective denial so inherited grants cause a transaction rollback.
+revoke execute on function public.accept_website_form(uuid,uuid,text,jsonb), public.website_form_origin_allowed(uuid,text), public.complete_form_host_verification(uuid,text) from public,anon,authenticated,service_role;
+do $$ declare r text; reachable_role text; n text; begin
+  foreach r in array array['anon','authenticated','service_role'] loop
+    for reachable_role in select rolname from pg_roles where pg_has_role(r,oid,'MEMBER') loop
+      foreach n in array array['public.accept_website_form(uuid,uuid,text,jsonb)','public.website_form_origin_allowed(uuid,text)','public.complete_form_host_verification(uuid,text)'] loop
+        if has_function_privilege(reachable_role,n,'execute') then raise exception 'service_hold_drift'; end if;
+      end loop;
+    end loop;
+  end loop;
+end $$;
 create or replace function public.begin_form_host_verification(p_website_id uuid, p_hostname text)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare
@@ -228,6 +240,15 @@ returns boolean language sql stable security definer set search_path = '' as $$
     where f.id=p_form_id and f.active and h.hostname=p_host and h.verified_at is not null)
 $$;
 revoke execute on function public.begin_form_host_verification(uuid,text),public.form_host_challenge(uuid),public.save_website_form(uuid,uuid,text,text,jsonb,boolean,uuid[]),public.set_website_form_response_status(uuid,uuid,uuid,text),public.request_form_recipient(uuid,uuid,text),public.disable_form_recipient(uuid,uuid,uuid),public.retry_form_delivery(uuid,uuid,uuid),public.delete_website_form_response(uuid,uuid,uuid) from public,anon,authenticated;
+do $$ declare r text; reachable_role text; n text; begin
+  foreach r in array array['anon','authenticated'] loop
+    for reachable_role in select rolname from pg_roles where pg_has_role(r,oid,'MEMBER') loop
+      foreach n in array array['public.begin_form_host_verification(uuid,text)','public.form_host_challenge(uuid)','public.save_website_form(uuid,uuid,text,text,jsonb,boolean,uuid[])','public.set_website_form_response_status(uuid,uuid,uuid,text)','public.request_form_recipient(uuid,uuid,text)','public.disable_form_recipient(uuid,uuid,uuid)','public.retry_form_delivery(uuid,uuid,uuid)','public.delete_website_form_response(uuid,uuid,uuid)'] loop
+        if has_function_privilege(reachable_role,n,'execute') then raise exception 'owner_hold_drift'; end if;
+      end loop;
+    end loop;
+  end loop;
+end $$;
 drop function public.forms_pilot_site_allowed(uuid);
 drop table public.forms_pilot_approved_sites;
 commit;

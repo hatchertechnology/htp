@@ -1,12 +1,35 @@
 -- LOCAL PROTOTYPE ONLY: not a migration, not authorized for hosted use.
 -- Empty by default. No GRANT statements reopen held RPCs.
+begin;
 do $$ begin if current_setting('forms.pilot_fixture',true) is distinct from 'disposable' then raise exception 'fixture_only'; end if; end $$;
 create table public.forms_pilot_approved_sites (
   website_id uuid primary key references public.websites(id) on delete cascade,
   owner_id uuid not null
 );
 alter table public.forms_pilot_approved_sites enable row level security;
-revoke all on public.forms_pilot_approved_sites from public, anon, authenticated;
+revoke all on public.forms_pilot_approved_sites from public, anon, authenticated, service_role;
+-- Reject inherited privileges or membership in the owning role. REVOKE alone
+-- cannot undo a grant inherited through some other role.
+do $$
+declare r text; reachable_role text; p text; c text; owner_name text;
+begin
+  select pg_get_userbyid(relowner) into owner_name from pg_class where oid='public.forms_pilot_approved_sites'::regclass;
+  foreach r in array array['anon','authenticated','service_role'] loop
+    if pg_has_role(r,owner_name,'MEMBER') then raise exception 'pilot_approval_owner_membership'; end if;
+    -- Include every membership-reachable role, even NOINHERIT memberships
+    -- which could be activated with SET ROLE rather than inherited directly.
+    for reachable_role in select rolname from pg_roles where pg_has_role(r,oid,'MEMBER') loop
+      foreach p in array array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'] loop
+        if has_table_privilege(reachable_role,'public.forms_pilot_approved_sites',p) then raise exception 'pilot_approval_privilege_drift'; end if;
+      end loop;
+      foreach c in array array['website_id','owner_id'] loop
+        foreach p in array array['SELECT','INSERT','UPDATE','REFERENCES'] loop
+          if has_column_privilege(reachable_role,'public.forms_pilot_approved_sites',c,p) then raise exception 'pilot_approval_column_privilege_drift'; end if;
+        end loop;
+      end loop;
+    end loop;
+  end loop;
+end $$;
 
 -- Hold both rows until transaction end so approval deletion and ownership
 -- transfer wait for a guarded transaction. Existing owner checks remain.
@@ -18,7 +41,16 @@ begin
     where a.website_id=p_website_id for share of a,w;
   return found;
 end $$;
-revoke all on function public.forms_pilot_site_allowed(uuid) from public,anon,authenticated;
+revoke all on function public.forms_pilot_site_allowed(uuid) from public,anon,authenticated,service_role;
+do $$
+declare r text; reachable_role text;
+begin
+  foreach r in array array['anon','authenticated','service_role'] loop
+    for reachable_role in select rolname from pg_roles where pg_has_role(r,oid,'MEMBER') loop
+      if has_function_privilege(reachable_role,'public.forms_pilot_site_allowed(uuid)','execute') then raise exception 'pilot_helper_privilege_drift'; end if;
+    end loop;
+  end loop;
+end $$;
 create or replace function public.begin_form_host_verification(p_website_id uuid, p_hostname text)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare
@@ -29,7 +61,6 @@ declare
   sampled_at timestamptz;
 begin
   if (select auth.jwt()->>'is_anonymous') is distinct from 'false' or not exists (select 1 from public.websites where id=p_website_id and owner_id=(select auth.uid())) then raise exception 'Website not found' using errcode='42501'; end if;
-  if not public.forms_pilot_site_allowed(p_website_id) then raise exception 'Website not found' using errcode='42501'; end if;
   if (select auth.jwt()->>'is_anonymous') is distinct from 'false' or caller is null
     or not exists (select 1 from public.websites where id=p_website_id and owner_id=caller) then
     raise exception 'Website not found' using errcode='42501';
@@ -40,6 +71,9 @@ begin
 
   perform 1 from auth.users where id=caller for key share;
   if not found then raise exception 'Website not found' using errcode='42501'; end if;
+  -- Preserve quota migration's user-before-website lock order: account
+  -- deletion takes the user row before cascading into websites.
+  if not public.forms_pilot_site_allowed(p_website_id) then raise exception 'Website not found' using errcode='42501'; end if;
   insert into public.website_form_host_challenge_windows(owner_id,started_at,count)
     values(caller,now(),0) on conflict(owner_id) do nothing;
   select * into window_row from public.website_form_host_challenge_windows where owner_id=caller for update;
@@ -265,3 +299,4 @@ begin
     join public.website_form_hosts h on h.id=o.host_id and h.website_id=o.website_id
     where f.id=p_form_id and f.active and h.hostname=p_host and h.verified_at is not null);
 end $$;
+commit;
