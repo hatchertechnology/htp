@@ -14,13 +14,16 @@ test('pilot gate keeps held grants, enforces owner/site, and preserves retry dat
   await assert.rejects(()=>db.exec(prototype),/fixture_only/); await db.exec('rollback')
   await db.exec("select set_config('forms.pilot_fixture','disposable',false)")
   // Model provider default table grants and a dangerous inherited grant.
-  await db.exec('create role pilot_inherited; grant pilot_inherited to service_role; alter role service_role noinherit; alter default privileges in schema public grant all on tables to service_role; alter default privileges in schema public grant insert on tables to pilot_inherited')
+  await db.exec('create role pilot_inherited; grant pilot_inherited to service_role with inherit false, set true; alter default privileges in schema public grant all on tables to service_role; alter default privileges in schema public grant insert on tables to pilot_inherited')
   await assert.rejects(()=>db.exec(prototype),/pilot_approval_privilege_drift/); await db.exec('rollback')
   assert.equal((await db.query("select to_regclass('public.forms_pilot_approved_sites') name")).rows[0].name,null)
-  await db.exec('alter default privileges in schema public revoke insert on tables from pilot_inherited; alter role service_role inherit')
+  await db.exec('alter default privileges in schema public revoke insert on tables from pilot_inherited; alter default privileges in schema public grant maintain on tables to pilot_inherited')
+  await assert.rejects(()=>db.exec(prototype),/pilot_approval_privilege_drift/); await db.exec('rollback')
+  assert.equal((await db.query("select to_regclass('public.forms_pilot_approved_sites') name")).rows[0].name,null)
+  await db.exec('alter default privileges in schema public revoke maintain on tables from pilot_inherited')
   await db.exec(prototype)
   for(const role of ['anon','authenticated','service_role']) {
-    for(const privilege of ['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) assert.equal((await db.query("select has_table_privilege($1,'public.forms_pilot_approved_sites',$2) allowed",[role,privilege])).rows[0].allowed,false)
+    for(const privilege of ['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','MAINTAIN']) assert.equal((await db.query("select has_table_privilege($1,'public.forms_pilot_approved_sites',$2) allowed",[role,privilege])).rows[0].allowed,false)
     for(const column of ['website_id','owner_id']) for(const privilege of ['SELECT','INSERT','UPDATE','REFERENCES']) assert.equal((await db.query("select has_column_privilege($1,'public.forms_pilot_approved_sites',$2,$3) allowed",[role,column,privilege])).rows[0].allowed,false)
     assert.equal((await db.query("select has_function_privilege($1,'public.forms_pilot_site_allowed(uuid)','execute') allowed",[role])).rows[0].allowed,false)
   }

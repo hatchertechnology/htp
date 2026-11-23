@@ -19,7 +19,7 @@ begin
     -- Include every membership-reachable role, even NOINHERIT memberships
     -- which could be activated with SET ROLE rather than inherited directly.
     for reachable_role in select rolname from pg_roles where pg_has_role(r,oid,'MEMBER') loop
-      foreach p in array array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'] loop
+      foreach p in array array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','MAINTAIN'] loop
         if has_table_privilege(reachable_role,'public.forms_pilot_approved_sites',p) then raise exception 'pilot_approval_privilege_drift'; end if;
       end loop;
       foreach c in array array['website_id','owner_id'] loop
