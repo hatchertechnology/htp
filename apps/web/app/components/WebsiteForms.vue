@@ -6,10 +6,24 @@ type Form = { id: string; form_key: string; name: string; fields: Field[]; activ
 type Recipient = { id:string; email:string; verified_at:string|null; enabled:boolean }
 type Delivery = { id:string; recipient_id:string; response_id:string|null; kind:string; state:string; attempts:number }
 type Submission = { id: string; received_at: string; status: string; values: Record<string,string> }
-const props = defineProps<{ websiteId: string; fqdn: string }>()
+const props = defineProps<{ websiteId: string; fqdn: string; mode?: 'legacy' | 'pilot' }>()
 const { $supabase } = useNuxtApp()
 const auth = useAuth()
 const config = useRuntimeConfig()
+const legacy = computed(() => props.mode === 'legacy')
+const eligible = ref(false)
+let eligibilityGeneration = 0
+watch(() => [auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId, props.mode] as const, async ([owner, anonymous, websiteId, mode]) => {
+  const generation = ++eligibilityGeneration
+  eligible.value = false
+  if (mode !== 'pilot' || !owner || anonymous === true) return
+  try {
+    const token = await auth.accessToken()
+    if (!token) return
+    const result = await $fetch<{ eligible: boolean }>('/api/forms/pilot-eligibility', { query: { website_id: websiteId }, headers: { Authorization: `Bearer ${token}` }, retry: 0 })
+    if (generation === eligibilityGeneration && auth.user.value?.id === owner && auth.user.value?.is_anonymous !== true && props.websiteId === websiteId && props.mode === 'pilot') eligible.value = result.eligible === true
+  } catch { /* Visibility fails closed on authentication and network failures. */ }
+}, { immediate: true })
 const expanded = ref(false), busy = ref(false), error = ref(''), notice = ref('')
 const hosts = ref<Host[]>([]), forms = ref<Form[]>([]), submissions = ref<Submission[]>([])
 const deleting = ref<string|null>(null)
@@ -72,6 +86,7 @@ async function inbox(form:Form, more = false) {
   const {data,error:err}=await $supabase.from('website_form_responses').select('id,received_at,status,values').eq('website_id',props.websiteId).eq('form_id',form.id).order('received_at',{ascending:false}).order('id').range(submissions.value.length,submissions.value.length + 99)
   if (!owner || auth.user.value?.id !== owner || selected.value?.id !== form.id) return
   if(err) { fail(err); return }; const rows=(data ?? []) as Submission[]; submissions.value.push(...rows); moreResponses.value=rows.length===100
+  if (!legacy.value) { recipients.value=[]; deliveries.value=[]; return }
   const result=await $supabase.from('website_form_recipients').select('id,email,verified_at,enabled').eq('website_id',props.websiteId).eq('form_id',form.id)
   if (auth.user.value?.id !== owner || selected.value?.id !== form.id) return
   if (result.error) { fail(result.error); return }
@@ -89,28 +104,28 @@ async function inbox(form:Form, more = false) {
   } else deliveries.value=[]
 }
 async function addRecipient() {
-  if (!selected.value) return
+  if (!legacy.value || !selected.value) return
   busy.value=true; error.value=''; notice.value=''
   try { const {error:err}=await $supabase.rpc('request_form_recipient',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_email:recipientEmail.value}); if (err) throw err; recipientEmail.value=''; notice.value='Verification email queued.'; await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
 }
 async function disableRecipient(recipient:Recipient) {
-  if (!selected.value) return
+  if (!legacy.value || !selected.value) return
   busy.value=true; error.value=''
   try { const {error:err}=await $supabase.rpc('disable_form_recipient',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_recipient_id:recipient.id}); if(err) throw err; await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
 }
 async function retryDelivery(job:Delivery) {
-  if (!selected.value) return
+  if (!legacy.value || !selected.value) return
   if (job.state === 'uncertain' && !window.confirm('The provider may already have delivered this notification. Resend and risk a duplicate email?')) return
   busy.value=true; error.value=''
   try { const {data,error:err}=await $supabase.rpc('retry_form_delivery',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_job_id:job.id}); if (err || !data) throw new Error('This delivery cannot be retried.'); await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
 }
 async function deleteResponse(row:Submission) {
-  if (!selected.value) return
+  if (!legacy.value || !selected.value) return
   busy.value=true; error.value=''
   try { const {error:err}=await $supabase.rpc('delete_website_form_response',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_response_id:row.id}); if(err) throw err; deleting.value=null; await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
 }
 async function status(row:Submission, next:string) {
-  if (!selected.value) return
+  if (!legacy.value || !selected.value) return
   busy.value=true; error.value=''
   try { const {error:err}=await $supabase.rpc('set_website_form_response_status',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_response_id:row.id,p_status:next}); if(err) throw err; await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
 }
@@ -136,7 +151,7 @@ watch(()=>auth.user.value?.id,()=>{ hosts.value=[]; forms.value=[]; submissions.
 </script>
 
 <template>
-  <section class="forms-section" :aria-label="`Forms for ${fqdn}`">
+  <section v-if="legacy || eligible" class="forms-section" :aria-label="`Forms for ${fqdn}`">
     <UButton color="neutral" variant="ghost" icon="i-lucide-messages-square" @click="expanded = !expanded; if (expanded) load()">{{ expanded ? 'Close forms' : 'Forms' }}</UButton>
     <div v-if="expanded" class="forms-content">
       <h3>Forms and responses</h3>
@@ -170,8 +185,8 @@ watch(()=>auth.user.value?.id,()=>{ hosts.value=[]; forms.value=[]; submissions.
         </form>
       </div>
       <div class="forms-block"><h4>Your forms</h4><p v-if="!forms.length">No forms yet.</p><ul><li v-for="form in forms" :key="form.id"><strong>{{ form.name }}</strong> — {{ form.active ? 'Active' : 'Paused' }} <UButton color="neutral" variant="ghost" @click="edit(form)">Edit</UButton><UButton color="neutral" variant="ghost" @click="inbox(form)">Responses</UButton><p>Submission endpoint: <code>{{ config.public.apiBaseUrl }}/public/forms/{{ form.id }}</code></p></li></ul></div>
-      <div v-if="selected" class="forms-block"><h4>Notification recipients</h4><p>Each recipient must confirm their address before inquiries are sent. Delivery status records whether the email provider accepted the message.</p><form @submit.prevent="addRecipient"><label>Email address <input v-model="recipientEmail" type="email" required maxlength="254"></label><UButton type="submit" :loading="busy">Send verification</UButton></form><ul><li v-for="recipient in recipients" :key="recipient.id">{{ recipient.email }} — {{ !recipient.enabled ? 'Disabled' : recipient.verified_at ? 'Verified' : 'Awaiting verification' }} <UButton v-if="recipient.enabled" color="neutral" variant="ghost" @click="disableRecipient(recipient)">Disable</UButton><ul><li v-for="job in deliveries.filter(item => item.recipient_id === recipient.id && item.kind === 'verification')" :key="job.id">Verification: {{ job.state }} <UButton v-if="job.state === 'failed'" color="neutral" variant="ghost" @click="retryDelivery(job)">Retry</UButton><span v-if="job.state === 'uncertain'"> Request verification again if needed.</span></li></ul></li></ul></div>
-      <div v-if="selected" class="forms-block"><h4>Responses: {{ selected.name }}</h4><p>Showing {{ submissions.length }} responses.</p><UButton :disabled="busy || !submissions.length" color="neutral" variant="outline" @click="exportCsv">Export all CSV</UButton><p v-if="!submissions.length">No responses to display.</p><UButton v-if="moreResponses" color="neutral" variant="outline" @click="inbox(selected, true)">Load more</UButton><ul><li v-for="row in submissions" :key="row.id"><p><time>{{ row.received_at }}</time> — {{ row.status }}</p><dl><template v-for="(value,key) in row.values" :key="key"><dt>{{ key }}</dt><dd>{{ value }}</dd></template></dl><ul><li v-for="job in deliveries.filter(item => item.response_id === row.id)" :key="job.id">Notification {{ recipients.find(item => item.id === job.recipient_id)?.email }}: {{ job.state }} <UButton v-if="job.state === 'failed' || job.state === 'uncertain'" color="neutral" variant="ghost" @click="retryDelivery(job)">Retry</UButton><span v-if="job.state === 'uncertain'"> Provider outcome unknown; check before resending.</span></li></ul><UButton color="neutral" variant="ghost" :disabled="busy" @click="status(row,'reviewed')">Mark reviewed</UButton><UButton color="neutral" variant="ghost" :disabled="busy" @click="status(row,'spam')">Mark spam</UButton><UButton color="neutral" variant="ghost" :disabled="busy" @click="deleting = row.id">Delete</UButton><div v-if="deleting === row.id"><p>Permanently delete this response and its notification history?</p><UButton color="error" :loading="busy" @click="deleteResponse(row)">Delete response</UButton><UButton color="neutral" variant="outline" @click="deleting = null">Cancel</UButton></div></li></ul></div>
+      <div v-if="selected && legacy" class="forms-block"><h4>Notification recipients</h4><p>Each recipient must confirm their address before inquiries are sent. Delivery status records whether the email provider accepted the message.</p><form @submit.prevent="addRecipient"><label>Email address <input v-model="recipientEmail" type="email" required maxlength="254"></label><UButton type="submit" :loading="busy">Send verification</UButton></form><ul><li v-for="recipient in recipients" :key="recipient.id">{{ recipient.email }} — {{ !recipient.enabled ? 'Disabled' : recipient.verified_at ? 'Verified' : 'Awaiting verification' }} <UButton v-if="recipient.enabled" color="neutral" variant="ghost" @click="disableRecipient(recipient)">Disable</UButton><ul><li v-for="job in deliveries.filter(item => item.recipient_id === recipient.id && item.kind === 'verification')" :key="job.id">Verification: {{ job.state }} <UButton v-if="job.state === 'failed'" color="neutral" variant="ghost" @click="retryDelivery(job)">Retry</UButton><span v-if="job.state === 'uncertain'"> Request verification again if needed.</span></li></ul></li></ul></div>
+      <div v-if="selected" class="forms-block"><h4>Responses: {{ selected.name }}</h4><p>Showing {{ submissions.length }} responses.</p><UButton :disabled="busy || !submissions.length" color="neutral" variant="outline" @click="exportCsv">Export all CSV</UButton><p v-if="!submissions.length">No responses to display.</p><UButton v-if="moreResponses" color="neutral" variant="outline" @click="inbox(selected, true)">Load more</UButton><ul><li v-for="row in submissions" :key="row.id"><p><time>{{ row.received_at }}</time> — {{ row.status }}</p><dl><template v-for="(value,key) in row.values" :key="key"><dt>{{ key }}</dt><dd>{{ value }}</dd></template></dl><ul v-if="legacy"><li v-for="job in deliveries.filter(item => item.response_id === row.id)" :key="job.id">Notification {{ recipients.find(item => item.id === job.recipient_id)?.email }}: {{ job.state }} <UButton v-if="job.state === 'failed' || job.state === 'uncertain'" color="neutral" variant="ghost" @click="retryDelivery(job)">Retry</UButton><span v-if="job.state === 'uncertain'"> Provider outcome unknown; check before resending.</span></li></ul><UButton v-if="legacy" color="neutral" variant="ghost" :disabled="busy" @click="status(row,'reviewed')">Mark reviewed</UButton><UButton v-if="legacy" color="neutral" variant="ghost" :disabled="busy" @click="status(row,'spam')">Mark spam</UButton><UButton v-if="legacy" color="neutral" variant="ghost" :disabled="busy" @click="deleting = row.id">Delete</UButton><div v-if="legacy && deleting === row.id"><p>Permanently delete this response and its notification history?</p><UButton color="error" :loading="busy" @click="deleteResponse(row)">Delete response</UButton><UButton color="neutral" variant="outline" @click="deleting = null">Cancel</UButton></div></li></ul></div>
     </div>
   </section>
 </template>

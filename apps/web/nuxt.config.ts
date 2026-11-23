@@ -17,9 +17,13 @@ export default defineNuxtConfig({
     bingClientSecret: '',
     bingCookieKey: '',
     supabaseServiceRoleKey: '',
+    formsPilotEnabled: false,
+    formsPilotWebsiteId: '',
+    formsPilotOwnerId: '',
     public: {
       pagePerformanceSamples: false,
       rolloutForms: false,
+      rolloutFormsPilot: false,
       rolloutSearchEvidence: false,
       rolloutComparisons: false,
       rolloutLifecycle: false,
