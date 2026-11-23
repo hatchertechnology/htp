@@ -66,7 +66,7 @@ async function choose(id: string) {
     const result = await supabase.rpc('independent_audit_history', { p_website_id: site, p_id: id })
     if (result.error) throw result.error
     if (gen === generation && selection === selectionGeneration) selected.value = result.data
-  } catch (cause) { if (gen === generation) error.value = failureMessage(cause) }
+  } catch (cause) { if (gen === generation && selection === selectionGeneration) error.value = failureMessage(cause) }
 }
 async function chooseRun() {
   const gen = generation, site = ws.selectedId.value, id = run.value; report.value = null; asserted.value = false; semantics.value = CURRENT_SEMANTICS
@@ -206,7 +206,7 @@ onBeforeUnmount(() => { generation++ })
           <label><input v-model="asserted" type="checkbox"> I verified this is the unmodified controlled SEOsmith 0.2.0 engine and 2026-11-01.1 ruleset. Version strings alone do not establish this.</label></template>
           <p v-else-if="report">Saved assertion: {{ asserted ? 'verified by the original author' : 'not asserted' }}.</p>
           <p>Only the two S15 metadata rules have a mapping. Other rules are unmapped; unavailable and partial evidence stays unknown. Differences may arise from scope, rendering, parsing, fetch results, thresholds or rule meaning.</p>
-          <p v-if="report && semantics !== CURRENT_SEMANTICS" role="alert">This comparison uses unsupported semantics {{ semantics }}. Its original CSV can still be downloaded.</p>
+          <p v-if="report && semantics !== CURRENT_SEMANTICS" role="alert">This comparison uses unsupported semantics {{ semantics }}. {{ readOnly ? 'Its original CSV can still be downloaded.' : 'Its original evidence can still be exported.' }}</p>
           <button v-if="canWrite && report && semantics === CURRENT_SEMANTICS" :disabled="busy" @click="saveComparison">Save comparison</button>
           <table v-if="report && semantics === CURRENT_SEMANTICS"><thead><tr><th>URL</th><th>Rule</th><th>Independent</th><th>SEOsmith</th><th>Result</th></tr></thead><tbody><tr v-for="(row, index) in comparison" :key="index"><td>{{ row.url }}</td><td>{{ row.rule }}</td><td>{{ row.state }}</td><td>{{ row.seosmith }}</td><td>{{ row.category }}</td></tr></tbody></table>
         </template>
