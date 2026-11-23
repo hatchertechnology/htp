@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { chromium } from 'playwright'
-const origin = 'http://127.0.0.1:3105'
+const origin = new URL('http://127.0.0.1:3105')
+if (process.env.NITRO_PORT) origin.port = process.env.NITRO_PORT
 const files = ['seosmith-expanded.json', 'contracts/v2-partial.json', 'contracts/v2-truncated.json']
 const reports = await Promise.all(files.map(async file =>
   JSON.parse(await readFile(new URL(`../../../../supabase/tests/fixtures/${file}`, import.meta.url)))
@@ -19,7 +20,7 @@ const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.str
 const coverage = [
   { coverage_complete: false, evaluation_coverage_complete: null, evidence_contract_version: null, evidence_state: 'legacy_unknown' },
   { coverage_complete: false, crawl_coverage_complete: false, evaluation_coverage_complete: false, evidence_contract_version: 1, evidence_state: 'versioned' },
-  { coverage_complete: false, crawl_coverage_complete: true, evaluation_coverage_complete: false, evidence_contract_version: 1, evidence_state: 'versioned' },
+  { coverage_complete: false, crawl_coverage_complete: false, evaluation_coverage_complete: false, evidence_contract_version: 1, evidence_state: 'versioned' },
   // Unsupported contracts cannot be persisted by the receiver; this tests the defensive UI gate.
   { coverage_complete: null, crawl_coverage_complete: null, evaluation_coverage_complete: null, evidence_contract_version: 99, evidence_state: 'unsupported' },
 ]
@@ -60,7 +61,7 @@ await page.route('**/*', async route => {
  return route.continue()
 })
 try {
- await page.goto(origin, {waitUntil:'domcontentloaded'})
+ await page.goto(origin.href, {waitUntil:'domcontentloaded'})
  const panel=page.getByRole('region',{name:'Evidence and coverage'})
  await panel.getByText(/unavailable or unsupported/).waitFor()
  assert.match(await panel.innerText(), /Evaluation coverage: Unknown/)
@@ -77,7 +78,10 @@ try {
  await page.getByLabel('Inspect a run', {exact:true}).selectOption(ids[2])
  await panel.getByText(/observations were omitted/).waitFor()
  assert.match(await panel.innerText(), /contract limit: 872/)
- assert.match(await panel.innerText(), /Crawl coverage: Complete · Evaluation coverage: Partial/)
+ // All saved page statuses are null, despite the producer's complete-crawl claim.
+ assert.equal(reports[2].coverage_complete, true)
+ assert.ok(reports[2].pages.every(page => page.status === null))
+ assert.match(await panel.innerText(), /Crawl coverage: Partial · Evaluation coverage: Partial/)
  await page.getByText(/This run has incomplete coverage/).waitFor()
  await page.getByText('Saved runs (4 loaded)').click()
  const savedRows = page.locator('details').filter({hasText: 'Saved runs'}).locator('tbody tr')
