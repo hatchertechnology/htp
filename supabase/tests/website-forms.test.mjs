@@ -187,8 +187,16 @@ test('verified recipients receive a single queued delivery and failed sends can 
     assert.equal((await db.query("select public.finish_form_delivery($1,$2,'sent') ok",[delivery.id,delivery.lease])).rows[0].ok,false)
     await identity(owner)
     await assert.rejects(()=>db.query('select public.delete_website_form_response($1,$2,$3)',[site,form,response]),/currently sending/)
-    await db.exec('reset role; set role service_role')
-    assert.equal((await db.query("select public.finish_form_delivery($1,$2,'uncertain') ok",[retry.id,retry.lease])).rows[0].ok,true)
+    // An expired lease is uncertain, never automatically resent or accepted
+    // as a successful finish from the stale worker.
+    await db.exec('reset role')
+    await db.query("update public.website_form_delivery_jobs set leased_until=now()-interval '1 second' where id=$1",[retry.id])
+    await db.exec('set role service_role')
+    assert.equal((await db.query("select public.finish_form_delivery($1,$2,'sent') ok",[retry.id,retry.lease])).rows[0].ok,false)
+    assert.equal((await db.query('select public.claim_form_delivery() job')).rows[0].job,null)
+    await db.exec('reset role')
+    assert.equal((await db.query('select state from public.website_form_delivery_jobs where id=$1',[retry.id])).rows[0].state,'uncertain')
+    assert.equal((await db.query("select count(*)::int n from public.website_form_delivery_jobs where kind='response'")).rows[0].n,1)
     await identity(other)
     await assert.rejects(()=>db.query('select public.retry_form_delivery($1,$2,$3)',[site,form,delivery.id]),/Delivery not found/)
     await identity(owner)

@@ -60,7 +60,11 @@ export async function run(deps: Dependencies) {
   } catch {
     state = "uncertain";
   }
-  await deps.finish(job.id, job.lease, state);
+  // A rejected or expired lease does not establish a recorded delivery state.
+  // Leave the job for lease recovery and surface the uncertainty to the caller.
+  if (!await deps.finish(job.id, job.lease, state)) {
+    throw new Error("delivery_state_unconfirmed");
+  }
   return { processed: true, state };
 }
 export async function handle(
