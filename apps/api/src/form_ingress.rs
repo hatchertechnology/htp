@@ -837,6 +837,18 @@ mod tests {
     async fn disposable_pilot_postgrest_browser_cors() {
         let base = std::env::var("FORMS_TEST_DB").expect("disposable database gateway");
         let key = std::env::var("FORMS_TEST_SERVICE_JWT").expect("disposable service JWT");
+        let fixture_url = reqwest::Url::parse(&base).expect("valid fixture URL");
+        assert!(
+            fixture_url.scheme() == "http"
+                && fixture_url.host_str() == Some("127.0.0.1")
+                && fixture_url.port().is_some_and(|port| port >= 1024)
+                && fixture_url.path() == "/"
+                && fixture_url.query().is_none()
+                && fixture_url.fragment().is_none()
+                && fixture_url.username().is_empty()
+                && fixture_url.password().is_none(),
+            "disposable loopback PostgREST URL required"
+        );
         // Bare PostgREST exposes /rpc; hosted Supabase prefixes /rest/v1.
         let gateway = Router::new().route(
             "/rest/v1/rpc/{name}",

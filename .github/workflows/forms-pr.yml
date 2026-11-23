@@ -29,7 +29,7 @@ jobs:
           changed=$(git diff --no-renames --name-only "$(git merge-base "$BASE_SHA" "$HEAD_SHA")" "$HEAD_SHA")
           complete=true
           required_changed=false
-          for required in supabase/functions/_shared/limited_body.ts apps/api/src/form_ingress.rs apps/web/app/components/WebsiteForms.vue apps/web/tests/fixtures/check-forms-api-cors.mjs apps/web/tests/fixtures/check-forms-pilot-api-cors.mjs supabase/tests/website-forms.test.mjs supabase/tests/forms-client-admission.test.mjs supabase/tests/forms-host-challenge-quota.test.mjs supabase/tests/forms-activation-fixture.test.mjs supabase/tests/fixtures/forms-activation/host-proof-regrant.sql supabase/tests/fixtures/forms-activation/host-proof-rollback.sql supabase/migrations/20261201000000_forms_pilot_scope.sql supabase/rollbacks/20261201000000_forms_pilot_scope_disable.sql supabase/tests/forms-pilot-scope.test.mjs; do
+          for required in supabase/functions/_shared/limited_body.ts apps/api/src/form_ingress.rs apps/web/app/components/WebsiteForms.vue apps/web/tests/fixtures/check-forms-api-cors.mjs apps/web/tests/fixtures/check-forms-pilot-api-cors.mjs scripts/test-forms-pilot-http.sh supabase/tests/fixtures/forms-pilot-scope/seed.sql supabase/tests/fixtures/forms-pilot-scope/postgrest-check.mjs supabase/tests/website-forms.test.mjs supabase/tests/forms-client-admission.test.mjs supabase/tests/forms-host-challenge-quota.test.mjs supabase/tests/forms-activation-fixture.test.mjs supabase/tests/fixtures/forms-activation/host-proof-regrant.sql supabase/tests/fixtures/forms-activation/host-proof-rollback.sql supabase/migrations/20261201000000_forms_pilot_scope.sql supabase/rollbacks/20261201000000_forms_pilot_scope_disable.sql supabase/tests/forms-pilot-scope.test.mjs; do
             if [[ ! -f "$required" ]]; then complete=false; fi
             if grep -Fxq "$required" <<< "$changed"; then required_changed=true; fi
           done
@@ -116,7 +116,7 @@ jobs:
     name: Web and forms browser fixtures
     # Playwright 1.56.1 does not support the moving ubuntu-latest 26.04 image.
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: apps/web
@@ -154,3 +154,6 @@ jobs:
       - name: Test actual API cross-origin behavior in Chromium
         working-directory: .
         run: cargo test --locked -p htp-api --lib form_ingress::tests::browser_cors_against_actual_api -- --ignored --nocapture
+      - name: Test pilot API through disposable PostgreSQL and PostgREST
+        working-directory: .
+        run: scripts/test-forms-pilot-http.sh
