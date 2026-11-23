@@ -425,6 +425,53 @@ Deno.test("segmented search is bounded and failure leaves the primary report ava
   );
 });
 
+Deno.test("segment deadline aborts promptly and preserves the primary report", async () => {
+  const originalTimeout = AbortSignal.timeout;
+  let aborted = false;
+  let completed = false;
+  // Shorten only the optional segment deadline; all fetches are synthetic.
+  AbortSignal.timeout = (ms: number) => originalTimeout(ms === 8_000 ? 10 : ms);
+  try {
+    const result = await fetchReport(
+      { ...job, kind: "search", property_id: "sc-domain:example.com" },
+      "token",
+      async (_url, options) => {
+        const body = JSON.parse(String(options?.body));
+        if (body.dimensions.join(",") === "query,page,device,country") {
+          await new Promise<void>((resolve, reject) => {
+            const signal = options?.signal;
+            const timer = setTimeout(() => {
+              completed = true;
+              resolve();
+            }, 200);
+            const abort = () => {
+              aborted = true;
+              clearTimeout(timer);
+              reject(new Error("segment aborted"));
+            };
+            if (signal?.aborted) abort();
+            else signal?.addEventListener("abort", abort, { once: true });
+          });
+        }
+        return Response.json({
+          rows: body.dimensions.length === 0
+            ? [{ clicks: 2, impressions: 10, ctr: 0.2, position: 1 }]
+            : [],
+        });
+      },
+    );
+    assert(aborted && !completed);
+    assert(result.summary.rows[0].clicks === 2);
+    assert(result.daily && result.queries);
+    assert(result.query_page_segments.unavailable === true);
+    assert(
+      result.query_page_segments.reason === "segment_collection_unavailable",
+    );
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+  }
+});
+
 Deno.test("held Search evidence omits optional provider requests and retains primary report", async () => {
   const calls: string[] = [];
   const result = await fetchReportRaw(
