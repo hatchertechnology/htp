@@ -9,6 +9,7 @@ select cron.schedule('htp-form-notifications', '* * * * *', $cron$
     headers := jsonb_build_object('Content-Type','application/json','x-htp-sync-secret',
       (select decrypted_secret from vault.decrypted_secrets where name='htp_forms_notification_secret')),
     body := '{}'::jsonb,
-    timeout_milliseconds := 30000
+    -- Claim (10s), provider (15s), and finish (10s), plus 15s for overhead.
+    timeout_milliseconds := 50000
   );
 $cron$);
