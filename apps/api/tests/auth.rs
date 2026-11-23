@@ -52,6 +52,7 @@ impl TestAuth {
             htp_api::RolloutCapabilities {
                 search_evidence: true,
                 lifecycle: true,
+                remediation: true,
             },
         );
         Self {
@@ -2420,6 +2421,16 @@ async fn held_rollout_routes_do_not_call_the_data_api_and_keep_authentication() 
         let path = format!("/websites/{id}/seo/audits/{suffix}");
         assert_eq!(
             website_request(&auth, "GET", &path, Value::Null)
+                .await
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+    let work = format!("/websites/{id}/seo/audits/{id}/work");
+    let attempt = format!("/websites/{id}/seo/work/{id}/attempts");
+    for (method, path) in [("GET", &work), ("POST", &work), ("POST", &attempt)] {
+        assert_eq!(
+            website_request(&auth, method, path, json!({}))
                 .await
                 .status(),
             StatusCode::SERVICE_UNAVAILABLE

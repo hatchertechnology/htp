@@ -7,7 +7,7 @@ trap 'podman rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
 podman run -d --rm --network none --name "$NAME" --tmpfs /var/lib/postgresql/data:rw,size=1g -e POSTGRES_PASSWORD=fixture "$IMAGE" >/dev/null
 psqlc() { podman exec -i "$NAME" psql -v ON_ERROR_STOP=1 -q -U supabase_admin -d postgres "$@"; }
 ready=false
-for _ in $(seq 1 60); do if psqlc -Atc 'select 1' >/dev/null 2>&1; then ready=true; break; fi; sleep 1; done
+for _ in $(seq 1 60); do if podman logs "$NAME" 2>&1 | grep -q 'PostgreSQL init process complete' && psqlc -Atc 'select 1' >/dev/null 2>&1; then ready=true; break; fi; sleep 1; done
 $ready || { echo 'PostgreSQL did not start' >&2; exit 1; }
 psqlc <<'SQL'
 create or replace function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
