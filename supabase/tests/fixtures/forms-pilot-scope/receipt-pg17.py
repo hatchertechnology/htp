@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Private restored PG17 rehearsal; never targets a network database."""
-import os, subprocess, time, uuid
+"""Synthetic PG17 regression; never targets a network database."""
+import subprocess, time, uuid
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[4]
-base = Path('/mnt/storage/projects/integration/private-rollout/w1-recovery-20261122')
 name = 'receipt-fixture-' + uuid.uuid4().hex[:12]
-pg = ['podman', 'exec', '-i', '-e', 'PGPASSWORD=synthetic-restore', name, 'psql', '-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-U', 'supabase_admin', '-h', '127.0.0.1', '-d', 'postgres']
+pg = ['docker', 'exec', '-i', '-e', 'PGPASSWORD=fixture-only', name, 'psql', '-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-U', 'supabase_admin', '-h', '127.0.0.1', '-d', 'postgres']
 def sql(s):
     p = subprocess.run(pg, input=s, text=True, capture_output=True)
     if p.returncode: raise RuntimeError('disposable SQL failed: ' + p.stderr[-1200:])
@@ -38,22 +37,18 @@ def finish(proc):
 
 created=False
 try:
-    subprocess.run(['podman','run','-d','--rm','--network=none','--name',name,'--memory','4g','--shm-size','512m','--tmpfs','/var/lib/postgresql/data:rw,size=3g','-e','POSTGRES_PASSWORD=synthetic-restore','public.ecr.aws/supabase/postgres:17.11.0.003'],check=True,stdout=subprocess.DEVNULL)
+    subprocess.run(['docker','run','-d','--rm','--network=none','--name',name,'--memory','4g','--shm-size','512m','--tmpfs','/var/lib/postgresql/data:rw,size=3g','-e','POSTGRES_PASSWORD=fixture-only','public.ecr.aws/supabase/postgres@sha256:e85bc10ac5b141223b289e1e8dc8d448cf3df92501917149db0366b9c5aaf053'],check=True,stdout=subprocess.DEVNULL)
     created=True
     for _ in range(90):
         try:
             if sql('select 1') == '1': break
         except RuntimeError: time.sleep(1)
     else: raise RuntimeError('database not ready')
-    decrypt=subprocess.Popen(['/tmp/w1-age','-d','-i',str(Path.home()/'.config/sops/age/keys.txt'),str(base/'database.dump.age')],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-    restore=subprocess.run(['podman','exec','-i','-e','PGPASSWORD=synthetic-restore',name,'pg_restore','--clean','--if-exists','--no-owner','--no-acl','--exit-on-error','-U','supabase_admin','-h','127.0.0.1','-d','postgres'],stdin=decrypt.stdout,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
-    decrypt.stdout.close(); decerr=decrypt.stderr.read(); rc=decrypt.wait()
-    if restore.returncode or rc: raise RuntimeError('restore failed')
-    check(sql('select count(*) from supabase_migrations.schema_migrations'), '29')
-    files = sorted((root/'supabase/migrations').glob('2026112200*.sql')) + [root/'supabase/migrations/20261128000000_forms_host_challenge_quota.sql']
-    for f in files: sql(f.read_text())
     sql("""create or replace function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
-create or replace function auth.uid() returns uuid language sql stable as $$select (auth.jwt()->>'sub')::uuid$$;""")
+create or replace function auth.uid() returns uuid language sql stable as $$select (auth.jwt()->>'sub')::uuid$$;
+grant execute on function auth.jwt(), auth.uid() to public;""")
+    files = [root/'supabase/migrations/20261028142440_create_websites.sql'] + sorted((root/'supabase/migrations').glob('2026112200*.sql')) + [root/'supabase/migrations/20261128000000_forms_host_challenge_quota.sql']
+    for f in files: sql(f.read_text())
     sql("select set_config('forms.pilot_fixture','disposable',false);\n"+(root/'supabase/migrations/20261201000000_forms_pilot_scope.sql').read_text())
     sql("select set_config('forms.pilot_fixture','disposable',false);\n"+(root/'supabase/tests/fixtures/forms-pilot-scope/seed.sql').read_text())
     check(receipt(), 'no_receipt_observed')
@@ -77,8 +72,8 @@ create or replace function auth.uid() returns uuid language sql stable as $$sele
     check(receipt(), 'ambiguous')
     sql(f"update public.websites set owner_id='{other}' where id='{site}'")
     check(receipt(), 'scope_unavailable')
-    print('PASS: restored PG17 receipt scope, gate removal, actual accept/delete and in-flight snapshots, ambiguous and ownership transfer')
+    print('PASS: synthetic PG17 receipt scope, gate removal, actual accept/delete and in-flight snapshots, ambiguous and ownership transfer')
 finally:
     if created:
-        subprocess.run(['podman','rm','-f',name],check=True,stdout=subprocess.DEVNULL)
+        subprocess.run(['docker','rm','-f',name],check=True,stdout=subprocess.DEVNULL)
         print('PASS: disposable container removed')
