@@ -278,7 +278,7 @@ compatibility requirement; disabling producer generation does not remove it.
 
 The optional remediation panel is disabled by default. Set Nuxt runtime
 `NUXT_PUBLIC_SEOSMITH_REMEDIATION=true` only after migration
-`20261129000000_seosmith_remediation.sql` and the matching API are installed and
+`20261202000000_seosmith_remediation.sql` and the matching API are installed and
 an authorized saved-audit read/write has been verified. The panel and its API
 use the signed-in website owner; the database independently checks the current
 hostname, audit, and original finding index. The work record is mutable and

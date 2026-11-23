@@ -7,7 +7,7 @@ test('work is owner-scoped, tied to an immutable finding, and verification does 
  const db=new PGlite()
  try {
   await db.exec(`create role anon; create role authenticated; create role service_role bypassrls; create schema auth; create table auth.users(id uuid primary key); create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$; create function auth.uid() returns uuid language sql stable as $$select (auth.jwt()->>'sub')::uuid$$; grant usage on schema auth,public to anon,authenticated,service_role;`)
-  for(const f of ['20261028142440_create_websites.sql','20261031053344_seosmith_audits.sql','20261129000000_seosmith_remediation.sql']) await db.exec(await readFile(new URL('../migrations/'+f,import.meta.url),'utf8'))
+  for(const f of ['20261028142440_create_websites.sql','20261031053344_seosmith_audits.sql','20261202000000_seosmith_remediation.sql']) await db.exec(await readFile(new URL('../migrations/'+f,import.meta.url),'utf8'))
   await db.query('insert into auth.users values($1),($2)',[owner,other]); await db.query("insert into public.websites(id,owner_id,fqdn) values($1,$2,'example.com')",[site,owner])
   const report={schema_version:1,findings:[{key:'finding-a',rule:'missing_title',severity:'warning',url:'https://example.com/',evidence:'missing'}]}
   await db.query("insert into public.seosmith_audits(delivery_id,website_id,fqdn,generation,sha256,report) values($1,$2,'example.com',1,$3,$4)",[run,site,'a'.repeat(64),report])
