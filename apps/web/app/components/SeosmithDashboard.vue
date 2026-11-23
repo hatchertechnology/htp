@@ -8,6 +8,7 @@ import { indexedTransitions, type IndexedHistoryRow } from '#shared/utils/seosmi
 import { urlHistoryDeltas, type UrlHistoryRow } from '#shared/utils/seosmith-url-history'
 const ws = useWorkspace()
 const indexedHistoryEnabled = useRuntimeConfig().public.rolloutLifecycle === true
+const remediationEnabled = useRuntimeConfig().public.rolloutRemediation === true
 const { runs, selected, busy, detailBusy, importing, error, notice, cursor, load, select, importFile } = useSeosmith()
 const urlPage = ref(1), urlSearch = ref(''), urlStatus = ref('all')
 const metric = ref<AuditMetric>('findings'), severity = ref('all'), rule = ref('all'), search = ref(''), page = ref(1)
@@ -118,6 +119,7 @@ function download() {
         <p v-else-if="summary.coverage_complete == null" class="form-notice" role="status">Coverage for this run is unknown. Missing findings do not mean issues were fixed.</p>
         <p class="report-caption">{{ stamp(selected.scan_at) }} · {{ summary.outcome }} · {{ summary.pages.html }} successful HTML pages · {{ summary.pages.images }} images · {{ summary.pages.fetch_errors }} fetch errors.<span>Engine {{ summary.engine_version || 'unknown' }} · Ruleset {{ summary.ruleset_version || 'unknown' }} · {{ selected.report.request.max_pages }}-URL cap · {{ selected.ingestion_source === 'import' ? 'Imported report' : 'Worker delivery' }} · Received {{ stamp(selected.received_at) }}.</span></p>
         <AuditCoverage :audit="selected" />
+        <SeosmithRemediation v-if="remediationEnabled" :audit="selected" />
         <div class="seo-actions"><button class="refresh-control" @click="download">Download run JSON</button><label v-if="baselineOptions.length">Baseline <select v-model="baselineId" aria-label="Comparison baseline" @change="changes = null; lifecycle = null; comparisonError = ''; comparisonGeneration++; comparisonBusy = false"><option value="">Previous run</option><option v-for="run in baselineOptions" :key="run.delivery_id" :value="run.delivery_id">{{ stamp(run.scan_at) }} · {{ run.delivery_id }}</option></select></label><button v-if="canCompare" class="refresh-control" :disabled="comparisonBusy" @click="compareRuns">{{ comparisonBusy ? 'Comparing…' : 'Compare findings with baseline' }}</button></div>
         <p v-if="previous && !canCompare" class="report-caption">Finding changes are unavailable against the selected baseline because coverage or crawl settings, engine, or ruleset differ. Both observations remain in the chart.</p>
         <p v-if="lifecycle" class="form-notice" role="status">Compared with baseline {{ lifecycle.baseline_id }}: {{ lifecycle.entries.filter(e => e.state === 'new').length }} new · {{ lifecycle.entries.filter(e => e.state === 'resolved').length }} resolved · {{ lifecycle.entries.filter(e => e.state === 'persisting').length }} persisting · {{ lifecycle.entries.filter(e => e.state === 'changed').length }} changed · {{ lifecycle.entries.filter(e => e.state === 'reopened').length }} reopened · {{ lifecycle.entries.filter(e => e.state === 'not_observed').length }} not observed. Only explicit comparable evaluations establish transitions; missing or unknown checks remain unverified.</p>

@@ -50,12 +50,14 @@ pub fn app_with_analytics(
 pub struct RolloutCapabilities {
     pub search_evidence: bool,
     pub lifecycle: bool,
+    pub remediation: bool,
 }
 impl RolloutCapabilities {
     fn from_env() -> Self {
         Self {
             search_evidence: std::env::var("HTP_ROLLOUT_SEARCH_EVIDENCE").as_deref() == Ok("true"),
             lifecycle: std::env::var("HTP_ROLLOUT_LIFECYCLE").as_deref() == Ok("true"),
+            remediation: std::env::var("HTP_ROLLOUT_REMEDIATION").as_deref() == Ok("true"),
         }
     }
 }
@@ -119,6 +121,8 @@ async fn rollout_gate(
             "audits",
             "lifecycle" | "url-lifecycle",
         ] => !capabilities.lifecycle,
+        ["", "websites", _, "seo", "audits", _, "work"]
+        | ["", "websites", _, "seo", "work", _, "attempts"] => !capabilities.remediation,
         _ => false,
     };
     if held {

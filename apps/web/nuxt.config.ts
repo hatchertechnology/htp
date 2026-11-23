@@ -28,6 +28,7 @@ export default defineNuxtConfig({
       rolloutComparisons: false,
       rolloutComparisonsReadOnly: false,
       rolloutLifecycle: false,
+      rolloutRemediation: false,
       apiBaseUrl,
       supabaseUrl: 'https://raxuvdbdfmmtpqjcafcq.supabase.co',
       // Publishable client key; never a service-role key or signing secret.

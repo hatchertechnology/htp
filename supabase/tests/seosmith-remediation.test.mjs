@@ -21,6 +21,16 @@ test('work is owner-scoped, tied to an immutable finding, and verification does 
   await identity(owner,true);await assert.rejects(()=>save(0,{}),/forbidden/)
   await identity(owner);await assert.rejects(()=>save(1,{}),/invalid_audit_or_finding/);await assert.rejects(()=>save(0,{status:'verified'}),/invalid_work/);await assert.rejects(()=>save(0,{segments:{locale:[]}}),/invalid_work/);await assert.rejects(()=>save(0,{segments:{invented:'x'}}),/invalid_work/)
   await db.exec('reset role'); await db.query("update public.seosmith_audits set report=$1 where delivery_id=$2",[{findings:[{key:'x'}]},run]); await identity(owner); await assert.rejects(()=>save(0,{}),/invalid_audit_or_finding/); await db.exec('reset role'); await db.query("update public.seosmith_audits set report=$1 where delivery_id=$2",[report,run]); await identity(owner)
+  // Save an actual schema 2 fixture in the same audit table and bind its original ordinal.
+  const v2=JSON.parse(await readFile(new URL('./fixtures/contracts/v2-partial.json',import.meta.url),'utf8'))
+  const run2='00000000-0000-0000-0000-000000000005'
+  await db.exec('reset role'); await db.query("insert into public.seosmith_audits(delivery_id,website_id,fqdn,generation,sha256,report) values($1,$2,'example.com',1,$3,$4)",[run2,site,'b'.repeat(64),v2]); await identity(owner)
+  assert.ok(v2.findings.length)
+  const bound=(await db.query('select public.seosmith_remediation_save($1,$2,0,$3) as work',[site,run2,{status:'open'}])).rows[0].work
+  assert.equal(bound.finding_key,v2.findings[0].key); assert.equal(bound.finding_index,0)
+  const edited=(await db.query('select public.seosmith_remediation_save($1,$2,0,$3) as work',[site,run2,{status:'in_progress',notes:'Owner edit'}])).rows[0].work
+  assert.equal(edited.id,bound.id); assert.equal(edited.notes,'Owner edit')
+  await identity(other); await assert.rejects(()=>db.query('select public.seosmith_remediation_save($1,$2,0,$3)',[site,run2,{status:'done'}]),/forbidden/); await identity(owner)
   const first=(await save(0,{status:'done',assignee:'Editor',segments:{locale:'en'},notes:'Changed title'})).rows[0].work
   assert.equal(first.finding_key,'finding-a');assert.equal(first.business_exposure,null)
   const attempt=(await db.query('select public.seosmith_remediation_attempt($1,$2,$3,$4,$5) as attempt',[site,first.id,run,'unverified','Awaiting another crawl'])).rows[0].attempt

@@ -36,6 +36,14 @@ pub(crate) fn read_router(store: WebsiteStore) -> Router {
             get(url_lifecycle),
         )
         .route("/websites/{id}/seo/audits/{run}", get(detail))
+        .route(
+            "/websites/{id}/seo/audits/{run}/work",
+            get(work_list).post(work_save),
+        )
+        .route(
+            "/websites/{id}/seo/work/{work}/attempts",
+            post(work_attempt),
+        )
         .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
         .with_state(store)
 }
@@ -83,6 +91,63 @@ async fn ingest(
     match response {
         Ok(value) => ([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response(),
         Err(e) => e.into_response(),
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkInput {
+    finding_index: i32,
+    work: serde_json::Value,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttemptInput {
+    delivery_id: Option<Uuid>,
+    result: String,
+    note: String,
+}
+#[derive(Deserialize)]
+struct WorkQuery {
+    finding_index: i32,
+    before: Option<String>,
+    before_id: Option<Uuid>,
+}
+async fn work_list(
+    State(store): State<WebsiteStore>,
+    headers: HeaderMap,
+    Path((id, run)): Path<(Uuid, Uuid)>,
+    Query(query): Query<WorkQuery>,
+) -> Response {
+    match store
+        .rpc(
+            &headers,
+            "seosmith_remediation_list",
+            json!({"p_website_id":id,"p_delivery_id":run,"p_finding_index":query.finding_index,"p_before":query.before,"p_before_id":query.before_id}),
+        )
+        .await
+    {
+        Ok(value) => ([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response(),
+        Err(e) => e.into_response(),
+    }
+}
+async fn work_save(
+    State(store): State<WebsiteStore>,
+    headers: HeaderMap,
+    Path((id, run)): Path<(Uuid, Uuid)>,
+    Json(body): Json<WorkInput>,
+) -> Response {
+    match store.rpc(&headers, "seosmith_remediation_save", json!({"p_website_id":id,"p_delivery_id":run,"p_finding_index":body.finding_index,"p_work":body.work})).await {
+        Ok(value) => ([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response(), Err(e) => e.into_response()
+    }
+}
+async fn work_attempt(
+    State(store): State<WebsiteStore>,
+    headers: HeaderMap,
+    Path((id, work)): Path<(Uuid, Uuid)>,
+    Json(body): Json<AttemptInput>,
+) -> Response {
+    match store.rpc(&headers, "seosmith_remediation_attempt", json!({"p_website_id":id,"p_work_id":work,"p_delivery_id":body.delivery_id,"p_result":body.result,"p_note":body.note})).await {
+        Ok(value) => ([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response(), Err(e) => e.into_response()
     }
 }
 #[derive(Deserialize)]
@@ -496,6 +561,89 @@ mod tests {
         );
         server.abort();
     }
+    #[tokio::test]
+    async fn remediation_routes_forward_user_and_never_claim_verification() {
+        let rpc = Router::new()
+            .route(
+                "/rest/v1/rpc/seosmith_remediation_save",
+                post(
+                    |headers: HeaderMap, Json(body): Json<serde_json::Value>| async move {
+                        assert_eq!(headers["authorization"], "Bearer user-token");
+                        assert_eq!(body["p_finding_index"], 0);
+                        assert_eq!(body["p_work"]["status"], "done");
+                        Json(json!({"status":"done"}))
+                    },
+                ),
+            )
+            .route(
+                "/rest/v1/rpc/seosmith_remediation_list",
+                post(
+                    |headers: HeaderMap, Json(body): Json<serde_json::Value>| async move {
+                        assert_eq!(headers["authorization"], "Bearer user-token");
+                        assert_eq!(body["p_finding_index"], 4);
+                        assert_eq!(body["p_before"], "2026-01-01T00:00:00Z");
+                        assert_eq!(body["p_before_id"], "00000000-0000-0000-0000-000000000003");
+                        Json(json!([]))
+                    },
+                ),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let store = WebsiteStore::new(
+            &format!("http://{}", listener.local_addr().unwrap()),
+            "publishable",
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, rpc).await.unwrap() });
+        let id = "00000000-0000-0000-0000-000000000001";
+        let run = "00000000-0000-0000-0000-000000000002";
+        let uri = format!("/websites/{id}/seo/audits/{run}/work");
+        let response = read_router(store.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&uri)
+                    .header("authorization", "Bearer user-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"finding_index":0,"work":{"status":"done"}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(body, json!({"status":"done"}));
+        let list_uri = format!(
+            "{uri}?finding_index=4&before=2026-01-01T00%3A00%3A00Z&before_id=00000000-0000-0000-0000-000000000003"
+        );
+        let listed = read_router(store.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(list_uri)
+                    .header("authorization", "Bearer user-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let denied = read_router(store)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"finding_index":0,"work":{}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+        server.abort();
+    }
+
     #[tokio::test]
     async fn capabilities_reflect_installed_database_and_fail_closed() {
         for available in [true, false] {
