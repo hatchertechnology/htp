@@ -106,3 +106,49 @@ Deno.test("DNS response limit counts streamed UTF-8 bytes before completion", as
   equal(cancelled, true);
   equal(pulls, 2);
 });
+
+Deno.test("CORS is scoped and does not bypass authentication", async () => {
+  let calls = 0;
+  const deps = {
+    challenge: () => {
+      calls++;
+      return Promise.resolve(null);
+    },
+    dns: () => Promise.resolve({}),
+    complete: () => Promise.resolve(false),
+  };
+  const origin = "https://htp.hatchtech.dev";
+  const preflight = await handle(
+    new Request("https://example.test", {
+      method: "OPTIONS",
+      headers: {
+        Origin: origin,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers":
+          "authorization,apikey,x-client-info,content-type",
+      },
+    }),
+    deps,
+  );
+  equal(preflight.status, 204);
+  equal(preflight.headers.get("access-control-allow-origin"), origin);
+  const unauth = await handle(
+    new Request("https://example.test", {
+      method: "POST",
+      headers: { Origin: origin },
+    }),
+    deps,
+  );
+  equal(unauth.status, 401);
+  equal(unauth.headers.get("access-control-allow-origin"), origin);
+  const foreign = await handle(
+    new Request("https://example.test", {
+      method: "OPTIONS",
+      headers: { Origin: "https://evil.test" },
+    }),
+    deps,
+  );
+  equal(foreign.status, 403);
+  equal(foreign.headers.get("access-control-allow-origin"), null);
+  equal(calls, 0);
+});

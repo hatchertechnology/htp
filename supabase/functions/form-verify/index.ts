@@ -6,6 +6,7 @@ type Dependencies = {
   ) => Promise<{ hostname: string; challenge_hash: string } | null>;
   dns: (name: string) => Promise<unknown>;
   complete: (id: string, hash: string) => Promise<boolean>;
+  dashboardOrigin?: string;
 };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function hash(token: string): Promise<string> {
@@ -22,8 +23,26 @@ export async function handle(
   request: Request,
   deps: Dependencies,
 ): Promise<Response> {
+  const origin = request.headers.get("origin");
+  const allowedOrigin = deps.dashboardOrigin ?? "https://htp.hatchtech.dev";
+  const cors: Record<string, string> = { "Vary": "Origin" };
+  if (origin === allowedOrigin) {
+    cors["Access-Control-Allow-Origin"] = origin;
+    cors["Access-Control-Allow-Methods"] = "POST, OPTIONS";
+    cors["Access-Control-Allow-Headers"] =
+      "authorization, apikey, x-client-info, content-type, x-retry-count, traceparent, tracestate, baggage";
+  }
   const reply = (body: unknown, status: number) =>
-    Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
+    Response.json(body, {
+      status,
+      headers: { "Cache-Control": "no-store", ...cors },
+    });
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: origin === allowedOrigin ? 204 : 403,
+      headers: cors,
+    });
+  }
   if (request.method !== "POST") {
     return reply({ error: "method_not_allowed" }, 405);
   }
@@ -123,6 +142,7 @@ if (import.meta.main) {
       challenge: (authorization, id) =>
         rpc("form_host_challenge", { p_host_id: id }, anon, authorization),
       dns: lookupTxt,
+      dashboardOrigin: Deno.env.get("NUXT_APP_ORIGIN") || undefined,
       complete: (id, challengeHash) =>
         rpc(
           "complete_form_host_verification",
