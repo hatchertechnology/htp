@@ -2,7 +2,20 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 pg="remediation-pg-$$"; rest="remediation-rest-$$"; tmp=$(mktemp -d "$PWD/.remediation-native.XXXXXXXX"); export FIXTURE_DIR="$tmp" TMPDIR="$tmp"
-cleanup() { local rc=$?; trap - EXIT; for p in ${webpid:-} ${apipid:-} ${issuerpid:-}; do kill "$p" 2>/dev/null || :; wait "$p" 2>/dev/null || :; done; podman rm -f "$rest" "$pg" >/dev/null 2>&1 || :; rm -rf "$tmp"; exit "$rc"; }; trap cleanup EXIT
+cleanup() {
+  local rc=$?
+  trap - EXIT
+  for pid in ${webpid:-} ${apipid:-} ${issuerpid:-}; do
+    kill "$pid" 2>/dev/null || :
+    wait "$pid" 2>/dev/null || :
+  done
+  # PostgREST shares the database container's network namespace.
+  podman rm --ignore --force --volumes "$rest" >/dev/null || rc=1
+  podman rm --ignore --force --volumes "$pg" >/dev/null || rc=1
+  rm -rf "$tmp"
+  exit "$rc"
+}
+trap cleanup EXIT
 free_port() { node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})'; }
 export ISSUER_PORT=$(free_port) API_PORT=$(free_port) WEB_PORT=$(free_port)
 podman run --pull=never -d --name "$pg" -e POSTGRES_PASSWORD=fixture-only -p 127.0.0.1::3000 public.ecr.aws/supabase/postgres@sha256:b15d862126dd2dac02da524696ccfde2dcce2ceaee0a58973b2727befe492706 postgres -D /var/lib/postgresql/data >/dev/null
