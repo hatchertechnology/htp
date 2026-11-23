@@ -6,6 +6,8 @@ import type { DashboardReport } from '../../shared/types/dashboard'
 import { metric, metricText, validDateRange } from '#shared/utils/analytics'
 useHead({ title: 'Hatch · Website overview' })
 const ws = useWorkspace()
+const comparisonConfig = useRuntimeConfig().public
+const comparisonEnabled = comparisonConfig.rolloutComparisons === true || comparisonConfig.rolloutComparisonsReadOnly === true
 const { start, end } = useReportRange()
 const report = ref<DashboardReport | null>(null)
 const searchSnapshot = ref<{ report: SearchReport | null; loading: boolean; error: string }>({ report: null, loading: false, error: '' })
@@ -89,6 +91,7 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); generation++; controller?.abort
     <ConversionDashboard />
     <SiteHealthDashboard />
     <SeosmithDashboard />
+    <p v-if="comparisonEnabled"><NuxtLink to="/independent-audits">Independent audit comparisons</NuxtLink></p>
     <RepositoryIssues />
     <RepositoryHistory />
     <BusinessDashboard v-if="businessProfileEnabled" />

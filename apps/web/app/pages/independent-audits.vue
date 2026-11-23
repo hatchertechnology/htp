@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { compareIndependent, parseControlledCsv, CURRENT_SEMANTICS } from '#shared/utils/independent-audit'
 useHead({ title: 'Hatch · Independent audit comparisons' })
-const comparisonEnabled = useRuntimeConfig().public.rolloutComparisons === true
+const config = useRuntimeConfig().public
+const readOnly = config.rolloutComparisonsReadOnly === true
+const canWrite = config.rolloutComparisons === true && !readOnly
+const comparisonEnabled = canWrite || readOnly
 const ws = useWorkspace(), supabase = useNuxtApp().$supabase
 const snapshots = ref<any[]>([]), imports = ref<any[]>([]), selected = ref<any>(null), runs = ref<any[]>([]), run = ref(''), report = ref<any>(null)
 const importCursor = ref<any>(null), snapshotCursor = ref<any>(null), runCursor = ref<any>(null)
@@ -27,7 +30,7 @@ async function load() {
   try {
     const [history, audits, comparisons] = await Promise.all([
       supabase.rpc('independent_audit_history', { p_website_id: site, p_id: null }),
-      ws.request<any>(`/api/websites/${site}/seo/audits`),
+      canWrite ? ws.request<any>(`/api/websites/${site}/seo/audits`) : Promise.resolve({ items: [], next_cursor: null }),
       supabase.rpc('independent_comparison_history', { p_website_id: site }),
     ])
     if (gen !== generation) return
@@ -74,7 +77,7 @@ async function chooseRun() {
   } catch (cause) { if (gen === generation) error.value = failureMessage(cause) }
 }
 async function saveComparison() {
-  if (!selected.value || !run.value || !report.value || busy.value) return
+  if (!canWrite || !selected.value || !run.value || !report.value || busy.value) return
   const gen = generation; busy.value = true
   try {
     const result = await supabase.rpc('save_independent_comparison', { p_website_id: ws.selectedId.value, p_import_id: selected.value.id, p_delivery_id: run.value, p_asserted: asserted.value })
@@ -130,7 +133,7 @@ async function exportEvidence() {
   finally { busy.value = false }
 }
 async function deleteEvidence() {
-  if (busy.value || !exportFingerprint.value || deleteConfirmation.value !== 'DELETE INDEPENDENT EVIDENCE') return
+  if (!canWrite || busy.value || !exportFingerprint.value || deleteConfirmation.value !== 'DELETE INDEPENDENT EVIDENCE') return
   if (!window.confirm('Permanently delete all independent imports and saved comparisons for this website, including prior hostnames? Export and verify them first. SEOsmith reports remain.')) return
   const gen = generation, site = ws.selectedId.value; busy.value = true; error.value = ''
   try {
@@ -153,7 +156,7 @@ async function fileChanged(event: Event) {
   } catch (cause) { if (gen === generation) { source.value = ''; error.value = failureMessage(cause) } }
 }
 async function save() {
-  if (!ws.selectedId.value || !source.value || busy.value) return
+  if (!canWrite || !ws.selectedId.value || !source.value || busy.value) return
   const site = ws.selectedId.value, gen = generation; busy.value = true; error.value = ''; notice.value = ''
   try {
     parseControlledCsv(source.value)
@@ -178,6 +181,8 @@ onBeforeUnmount(() => { generation++ })
       <label>Website <select v-model="ws.selectedId.value"><option v-for="site in ws.sites.value" :key="site.id" :value="site.id">{{ site.fqdn }}</option></select></label>
       <p v-if="!ws.selected.value">Choose or add a website first.</p>
       <template v-else>
+        <p v-if="readOnly" role="status">Read-only: showing saved independent evidence and comparisons.</p>
+        <template v-if="canWrite">
         <h2>Import controlled CSV</h2>
         <p>Use S15 controlled-csv-v1: <code>url,rule,state</code> with present, absent or unknown. Missing rows are unknown. Record tool version, configuration, scope, rendering, parser, thresholds, fetch outcomes and rule definitions below.</p>
         <label>UTF-8 CSV <input type="file" accept=".csv,text/csv" @change="fileChanged"></label>
@@ -189,17 +194,20 @@ onBeforeUnmount(() => { generation++ })
         <button :disabled="busy" @click="exportEvidence">Export all independent evidence</button>
         <label>Type DELETE INDEPENDENT EVIDENCE to enable removal <input v-model="deleteConfirmation" autocomplete="off"></label>
         <button :disabled="busy || !exportFingerprint || deleteConfirmation !== 'DELETE INDEPENDENT EVIDENCE'" @click="deleteEvidence">Delete independent evidence</button>
+        </template>
+        <p v-if="readOnly && error" role="alert">{{ error }}</p>
         <h2>Saved comparisons</h2><ul><li v-for="item in snapshots" :key="item.id"><button @click="openComparison(item)">{{ item.created_at }} · {{ item.fqdn }} · {{ item.semantics }}</button></li></ul><button v-if="snapshotCursor" @click="more('snapshots')">More comparisons</button>
         <h2>Saved evidence</h2>
         <p v-if="!imports.length">No independent imports found.</p>
         <ul><li v-for="item in imports" :key="item.id"><button @click="choose(item.id)">{{ item.metadata?.filename || 'CSV import' }} · {{ item.fqdn }} · {{ item.created_at }}</button> · SHA-256 {{ item.source_sha256 }}</li></ul><button v-if="importCursor" @click="more('imports')">More imports</button>
         <template v-if="selected">
           <p>Source: {{ selected.metadata?.provenance || 'Not provided' }}</p><button @click="download">Download original CSV</button>
-          <label>SEOsmith run <select v-model="run" @change="chooseRun"><option value="">Choose a run</option><option v-if="run && !runs.some(item => item.delivery_id === run)" :value="run">Saved run {{ run }}</option><option v-for="item in runs" :key="item.delivery_id" :value="item.delivery_id">{{ item.scan_at }} · {{ item.summary?.outcome }}</option></select></label><button v-if="runCursor" @click="more('runs')">More SEOsmith runs</button>
-          <label><input v-model="asserted" type="checkbox"> I verified this is the unmodified controlled SEOsmith 0.2.0 engine and 2026-11-01.1 ruleset. Version strings alone do not establish this.</label>
+          <template v-if="canWrite"><label>SEOsmith run <select v-model="run" @change="chooseRun"><option value="">Choose a run</option><option v-if="run && !runs.some(item => item.delivery_id === run)" :value="run">Saved run {{ run }}</option><option v-for="item in runs" :key="item.delivery_id" :value="item.delivery_id">{{ item.scan_at }} · {{ item.summary?.outcome }}</option></select></label><button v-if="runCursor" @click="more('runs')">More SEOsmith runs</button>
+          <label><input v-model="asserted" type="checkbox"> I verified this is the unmodified controlled SEOsmith 0.2.0 engine and 2026-11-01.1 ruleset. Version strings alone do not establish this.</label></template>
+          <p v-else-if="report">Saved assertion: {{ asserted ? 'verified by the original author' : 'not asserted' }}.</p>
           <p>Only the two S15 metadata rules have a mapping. Other rules are unmapped; unavailable and partial evidence stays unknown. Differences may arise from scope, rendering, parsing, fetch results, thresholds or rule meaning.</p>
-          <p v-if="report && semantics !== CURRENT_SEMANTICS" role="alert">This comparison uses unsupported semantics {{ semantics }}. Its original evidence can still be exported.</p>
-          <button v-if="report && semantics === CURRENT_SEMANTICS" :disabled="busy" @click="saveComparison">Save comparison</button>
+          <p v-if="report && semantics !== CURRENT_SEMANTICS" role="alert">This comparison uses unsupported semantics {{ semantics }}. Its original CSV can still be downloaded.</p>
+          <button v-if="canWrite && report && semantics === CURRENT_SEMANTICS" :disabled="busy" @click="saveComparison">Save comparison</button>
           <table v-if="report && semantics === CURRENT_SEMANTICS"><thead><tr><th>URL</th><th>Rule</th><th>Independent</th><th>SEOsmith</th><th>Result</th></tr></thead><tbody><tr v-for="(row, index) in comparison" :key="index"><td>{{ row.url }}</td><td>{{ row.rule }}</td><td>{{ row.state }}</td><td>{{ row.seosmith }}</td><td>{{ row.category }}</td></tr></tbody></table>
         </template>
       </template>
