@@ -1,4 +1,4 @@
-import { handle } from "./index.ts";
+import { handle, lookupTxt } from "./index.ts";
 function equal(a: unknown, b: unknown) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
     throw new Error(`${JSON.stringify(a)} != ${JSON.stringify(b)}`);
@@ -66,4 +66,43 @@ Deno.test("denies a host unavailable to the authenticated user", async () => {
   });
   equal(response.status, 404);
   equal(completed, 0);
+});
+
+Deno.test("DNS response limit counts streamed UTF-8 bytes before completion", async () => {
+  const limit = 16384;
+  // Each é occupies two bytes. The quotes supply the remaining two.
+  const value = "é".repeat((limit - 2) / 2);
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  equal(bytes.length, limit);
+  equal(
+    await lookupTxt("example.test", () => Promise.resolve(new Response(bytes))),
+    value,
+  );
+
+  let cancelled = false;
+  let pulls = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulls++;
+      if (pulls > 2) controller.close();
+      else controller.enqueue(pulls === 1 ? bytes : Uint8Array.of(32));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  }, { highWaterMark: 0 });
+  let completions = 0;
+  const result = await handle(request(), {
+    challenge: () =>
+      Promise.resolve({ hostname: "example.test", challenge_hash: digest }),
+    dns: (name) => lookupTxt(name, () => Promise.resolve(new Response(body))),
+    complete: () => {
+      completions++;
+      return Promise.resolve(true);
+    },
+  });
+  equal(result.status, 503);
+  equal(completions, 0);
+  equal(cancelled, true);
+  equal(pulls, 2);
 });
