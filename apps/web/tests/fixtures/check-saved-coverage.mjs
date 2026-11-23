@@ -64,6 +64,7 @@ try {
  await page.goto(origin.href, {waitUntil:'domcontentloaded'})
  const panel=page.getByRole('region',{name:'Evidence and coverage'})
  await panel.getByText(/unavailable or unsupported/).waitFor()
+ assert.equal(await page.getByRole('region',{name:'Remediation work'}).count(),0)
  assert.match(await panel.innerText(), /Evaluation coverage: Unknown/)
  assert.match(await panel.innerText(), /Imported report/)
  assert.equal(reports[0].coverage_complete, true)
