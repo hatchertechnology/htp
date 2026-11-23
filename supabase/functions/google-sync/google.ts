@@ -52,10 +52,13 @@ export async function google(
   timeout = 20_000,
   allowNotFound = false,
 ): Promise<Json> {
+  const deadline = AbortSignal.timeout(timeout);
   const response = await fetcher(url, {
     ...options,
     redirect: "error",
-    signal: AbortSignal.timeout(timeout),
+    signal: options.signal
+      ? AbortSignal.any([options.signal, deadline])
+      : deadline,
   });
   const value = await response.json();
   if (
