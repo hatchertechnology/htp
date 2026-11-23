@@ -4,5 +4,6 @@ insert into auth.users(id) values ('00000000-0000-0000-0000-000000000001'),('000
 insert into public.websites(id,owner_id,fqdn) values ('00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000001','example.com'),('00000000-0000-0000-0000-000000000004','00000000-0000-0000-0000-000000000001','other.example.com');
 insert into public.website_forms(id,website_id,form_key,name,fields,active) values ('00000000-0000-0000-0000-000000000005','00000000-0000-0000-0000-000000000003','quote','Quote','[{"key":"name","label":"Name","kind":"text","required":false,"max_length":100}]',true);
 insert into public.website_form_hosts(id,website_id,hostname,challenge_hash,verified_at) values ('00000000-0000-0000-0000-000000000006','00000000-0000-0000-0000-000000000003','example.com','hash',now());
+insert into public.website_form_hosts(id,website_id,hostname,challenge_hash) values ('00000000-0000-0000-0000-000000000009','00000000-0000-0000-0000-000000000004','other.example.com','hash');
 insert into public.website_form_origins values ('00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000005','00000000-0000-0000-0000-000000000006');
 insert into public.forms_pilot_approved_sites values ('00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000001');

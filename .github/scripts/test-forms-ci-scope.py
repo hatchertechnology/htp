@@ -12,12 +12,16 @@ required = [
     'apps/api/src/form_ingress.rs',
     'apps/web/app/components/WebsiteForms.vue',
     'apps/web/tests/fixtures/check-forms-api-cors.mjs',
+    'apps/web/tests/fixtures/check-forms-pilot-api-cors.mjs',
     'supabase/tests/website-forms.test.mjs',
     'supabase/tests/forms-client-admission.test.mjs',
     'supabase/tests/forms-host-challenge-quota.test.mjs',
     'supabase/tests/forms-activation-fixture.test.mjs',
     'supabase/tests/fixtures/forms-activation/host-proof-regrant.sql',
     'supabase/tests/fixtures/forms-activation/host-proof-rollback.sql',
+    'supabase/migrations/20261201000000_forms_pilot_scope.sql',
+    'supabase/rollbacks/20261201000000_forms_pilot_scope_disable.sql',
+    'supabase/tests/forms-pilot-scope.test.mjs',
 ]
 with tempfile.TemporaryDirectory(prefix='forms-ci-scope-') as temporary:
     root = Path(temporary)

@@ -1,7 +1,51 @@
--- LOCAL PROTOTYPE ONLY: not a migration, not authorized for hosted use.
--- Empty by default. No GRANT statements reopen held RPCs.
+-- Default-empty pilot gate. Does not insert approvals or reopen owner RPCs.
 begin;
-do $$ begin if current_setting('forms.pilot_fixture',true) is distinct from 'disposable' then raise exception 'fixture_only'; end if; end $$;
+-- Refuse source or security-configuration drift before replacing any function.
+do $guard$
+declare item record; func oid; r text; member_name text; signature text;
+begin
+  for item in select * from (values
+    ('public.begin_form_host_verification(uuid,text)','8d5b13cb58ed3eb658dbda9df73468591e3390e894b86fa54a9e8b7a1c9fca9e'),
+    ('public.form_host_challenge(uuid)','325f9f6e5d087ccb12bf3606900501e05185f7825e760b7080dd036dcee2d964'),
+    ('public.complete_form_host_verification(uuid,text)','0b0ef2413429d7a41b070aa66c80f68044e53442d845d4d34050f12304491eb2'),
+    ('public.save_website_form(uuid,uuid,text,text,jsonb,boolean,uuid[])','0f3060460c1c7002e3d574984c3c828b8dfc73ee36071d1563cf78a18ffbc573'),
+    ('public.set_website_form_response_status(uuid,uuid,uuid,text)','af5a3330909f6e17e020edf3d670ebd11797d5a8ef80c535417482b9c1b16f4c'),
+    ('public.request_form_recipient(uuid,uuid,text)','47f665cb070c33e90a5c842ae70424307e6386ca0f052d34b3fba3261dbc6157'),
+    ('public.disable_form_recipient(uuid,uuid,uuid)','45cf301e562e565820efa326a6fbfd45ba21cfea4ff96e4439d7eb18f6891fce'),
+    ('public.retry_form_delivery(uuid,uuid,uuid)','c9a90c60b51d9607cc0ddcf5030ccf963786345a83130635001905df5bbe1e96'),
+    ('public.delete_website_form_response(uuid,uuid,uuid)','9b7ed9ff17ddf7a21f38a5878e718c983045bd1bf3c819902dd2d2a6a0dff920'),
+    ('public.accept_website_form(uuid,uuid,text,jsonb)','123b52c0b7e71683673e5728698a9325a58b11eb841dff23376d9b17a6333c86'),
+    ('public.website_form_origin_allowed(uuid,text)','d4a89b7d921ffc9b1c522d326c60cef88f7007a7d09b3629c372476c48b5af90')) as expected(signature,source_sha256) loop
+    func := to_regprocedure(item.signature);
+    if func is null or not exists (select 1 from pg_proc p where p.oid=func and p.prosecdef and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')=item.source_sha256 and exists (select 1 from unnest(p.proconfig) c where c in ('search_path=', 'search_path=""'))) then
+      raise exception 'forms_pilot_function_drift: %', item.signature;
+    end if;
+    foreach r in array array['anon','authenticated','service_role'] loop
+      if exists (select 1 from pg_proc p where p.oid=func and pg_has_role(r,p.proowner,'MEMBER')) then raise exception 'forms_pilot_owner_membership_drift'; end if;
+    end loop;
+  end loop;
+  foreach signature in array array['public.accept_website_form(uuid,uuid,text,jsonb)','public.website_form_origin_allowed(uuid,text)','public.complete_form_host_verification(uuid,text)'] loop
+    if not has_function_privilege('service_role',signature,'EXECUTE') then raise exception 'forms_pilot_service_hold_drift'; end if;
+    foreach r in array array['anon','authenticated'] loop
+      for member_name in select rolname from pg_roles where pg_has_role(r,oid,'MEMBER') loop
+        if has_function_privilege(member_name,signature,'EXECUTE') then raise exception 'forms_pilot_service_acl_drift'; end if;
+      end loop;
+    end loop;
+  end loop;
+end $guard$;
+-- Held owner functions stay held; no public/owner grant is introduced.
+revoke execute on function public.begin_form_host_verification(uuid,text),public.form_host_challenge(uuid),public.save_website_form(uuid,uuid,text,text,jsonb,boolean,uuid[]),public.set_website_form_response_status(uuid,uuid,uuid,text),public.request_form_recipient(uuid,uuid,text),public.disable_form_recipient(uuid,uuid,uuid),public.retry_form_delivery(uuid,uuid,uuid),public.delete_website_form_response(uuid,uuid,uuid) from public,anon,authenticated;
+do $holds$
+declare r text; member_name text; signature text;
+begin
+  foreach r in array array['anon','authenticated'] loop
+    for member_name in select rolname from pg_roles where pg_has_role(r,oid,'MEMBER') loop
+      foreach signature in array array['public.begin_form_host_verification(uuid,text)','public.form_host_challenge(uuid)','public.save_website_form(uuid,uuid,text,text,jsonb,boolean,uuid[])','public.set_website_form_response_status(uuid,uuid,uuid,text)','public.request_form_recipient(uuid,uuid,text)','public.disable_form_recipient(uuid,uuid,uuid)','public.retry_form_delivery(uuid,uuid,uuid)','public.delete_website_form_response(uuid,uuid,uuid)'] loop
+        if has_function_privilege(member_name,signature,'EXECUTE') then raise exception 'forms_pilot_owner_hold_drift'; end if;
+      end loop;
+    end loop;
+  end loop;
+end $holds$;
 create table public.forms_pilot_approved_sites (
   website_id uuid primary key references public.websites(id) on delete cascade,
   owner_id uuid not null
@@ -71,12 +115,13 @@ begin
 
   perform 1 from auth.users where id=caller for key share;
   if not found then raise exception 'Website not found' using errcode='42501'; end if;
-  -- Preserve quota migration's user-before-website lock order: account
-  -- deletion takes the user row before cascading into websites.
-  if not public.forms_pilot_site_allowed(p_website_id) then raise exception 'Website not found' using errcode='42501'; end if;
   insert into public.website_form_host_challenge_windows(owner_id,started_at,count)
     values(caller,now(),0) on conflict(owner_id) do nothing;
   select * into window_row from public.website_form_host_challenge_windows where owner_id=caller for update;
+  -- Serialize the owner's challenge calls before taking the site share lock.
+  -- Otherwise two same-owner calls can each hold a site share lock while one
+  -- waits for the quota row and the other tries to upgrade the site lock.
+  if not public.forms_pilot_site_allowed(p_website_id) then raise exception 'Website not found' using errcode='42501'; end if;
   perform 1 from public.websites where id=p_website_id and owner_id=caller for update;
   if not found then raise exception 'Website not found' using errcode='42501'; end if;
 

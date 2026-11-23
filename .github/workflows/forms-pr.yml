@@ -29,13 +29,13 @@ jobs:
           changed=$(git diff --no-renames --name-only "$(git merge-base "$BASE_SHA" "$HEAD_SHA")" "$HEAD_SHA")
           complete=true
           required_changed=false
-          for required in supabase/functions/_shared/limited_body.ts apps/api/src/form_ingress.rs apps/web/app/components/WebsiteForms.vue apps/web/tests/fixtures/check-forms-api-cors.mjs supabase/tests/website-forms.test.mjs supabase/tests/forms-client-admission.test.mjs supabase/tests/forms-host-challenge-quota.test.mjs supabase/tests/forms-activation-fixture.test.mjs supabase/tests/fixtures/forms-activation/host-proof-regrant.sql supabase/tests/fixtures/forms-activation/host-proof-rollback.sql; do
+          for required in supabase/functions/_shared/limited_body.ts apps/api/src/form_ingress.rs apps/web/app/components/WebsiteForms.vue apps/web/tests/fixtures/check-forms-api-cors.mjs apps/web/tests/fixtures/check-forms-pilot-api-cors.mjs supabase/tests/website-forms.test.mjs supabase/tests/forms-client-admission.test.mjs supabase/tests/forms-host-challenge-quota.test.mjs supabase/tests/forms-activation-fixture.test.mjs supabase/tests/fixtures/forms-activation/host-proof-regrant.sql supabase/tests/fixtures/forms-activation/host-proof-rollback.sql supabase/migrations/20261201000000_forms_pilot_scope.sql supabase/rollbacks/20261201000000_forms_pilot_scope_disable.sql supabase/tests/forms-pilot-scope.test.mjs; do
             if [[ ! -f "$required" ]]; then complete=false; fi
             if grep -Fxq "$required" <<< "$changed"; then required_changed=true; fi
           done
           if [[ "$complete" == true ]]; then
             echo "run_forms=true" >> "$GITHUB_OUTPUT"
-          elif [[ "$required_changed" == true ]] || grep -Eq '^(docs/forms/|supabase/rollbacks/20261122|supabase/functions/form-(submit|verify|notifications|confirm-recipient)/|supabase/migrations/20261122|supabase/migrations/20261128000000_forms_host_challenge_quota\.sql$|supabase/tests/(website-forms|forms-client-admission|forms-host-challenge-quota|forms-activation-fixture)\.test\.mjs$|supabase/tests/fixtures/(forms-host-quota-concurrency\.|forms-activation/)|apps/api/src/form_ingress\.rs$|apps/web/app/(components/WebsiteForms\.vue|utils/forms-csv\.ts)$|apps/web/tests/(forms-csv\.test\.ts|fixtures/(forms|check-forms)))' <<< "$changed"; then
+          elif [[ "$required_changed" == true ]] || grep -Eq '^(docs/forms/|supabase/rollbacks/20261122|supabase/functions/form-(submit|verify|notifications|confirm-recipient)/|supabase/migrations/20261122|supabase/migrations/20261128000000_forms_host_challenge_quota\.sql$|supabase/migrations/20261201000000_forms_pilot_scope\.sql$|supabase/tests/(website-forms|forms-client-admission|forms-host-challenge-quota|forms-activation-fixture|forms-pilot-scope)\.test\.mjs$|supabase/tests/fixtures/(forms-host-quota-concurrency\.|forms-activation/|forms-pilot-scope/)|apps/api/src/form_ingress\.rs$|apps/web/app/(components/WebsiteForms\.vue|utils/forms-csv\.ts)$|apps/web/tests/(forms-csv\.test\.ts|fixtures/(forms|check-forms)))' <<< "$changed"; then
             echo 'Forms-specific files changed but the forms implementation is incomplete' >&2
             exit 1
           else
@@ -91,7 +91,7 @@ jobs:
           cache-dependency-path: supabase/package-lock.json
       - run: npm ci --ignore-scripts
       - name: Test forms migrations and admission
-        run: node --test tests/website-forms.test.mjs tests/forms-client-admission.test.mjs tests/forms-host-challenge-quota.test.mjs tests/forms-activation-fixture.test.mjs
+        run: node --test tests/website-forms.test.mjs tests/forms-client-admission.test.mjs tests/forms-host-challenge-quota.test.mjs tests/forms-activation-fixture.test.mjs tests/forms-pilot-scope.test.mjs
 
   api:
     needs: scope
