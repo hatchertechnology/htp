@@ -1,13 +1,13 @@
 const limit = 20_000;
 
 export async function limitedBody(
-  request: Request,
+  message: Request | Response,
   maxBytes = limit,
 ): Promise<string> {
-  if (Number(request.headers.get("content-length") ?? 0) > maxBytes) {
+  if (Number(message.headers.get("content-length") ?? 0) > maxBytes) {
     throw new Error("too_large");
   }
-  const reader = request.body?.getReader();
+  const reader = message.body?.getReader();
   if (!reader) return "";
   const chunks: Uint8Array[] = [];
   let size = 0;

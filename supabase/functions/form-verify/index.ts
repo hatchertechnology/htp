@@ -77,6 +77,21 @@ export async function handle(
     return reply({ error: "verification_unavailable" }, 503);
   }
 }
+export async function lookupTxt(
+  name: string,
+  fetcher = fetch,
+): Promise<unknown> {
+  const url = new URL("https://cloudflare-dns.com/dns-query");
+  url.searchParams.set("name", name);
+  url.searchParams.set("type", "TXT");
+  const response = await fetcher(url, {
+    headers: { Accept: "application/dns-json" },
+    redirect: "error",
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error("dns_unavailable");
+  return JSON.parse(await limitedBody(response, 16384));
+}
 if (import.meta.main) {
   const base = Deno.env.get("SUPABASE_URL") ?? "",
     service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
@@ -107,23 +122,7 @@ if (import.meta.main) {
     handle(request, {
       challenge: (authorization, id) =>
         rpc("form_host_challenge", { p_host_id: id }, anon, authorization),
-      dns: async (name) => {
-        const url = new URL("https://cloudflare-dns.com/dns-query");
-        url.searchParams.set("name", name);
-        url.searchParams.set("type", "TXT");
-        const response = await fetch(url, {
-          headers: { Accept: "application/dns-json" },
-          redirect: "error",
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (
-          !response.ok ||
-          Number(response.headers.get("content-length") ?? 0) > 16384
-        ) throw new Error("dns_unavailable");
-        const text = await response.text();
-        if (text.length > 16384) throw new Error("dns_unavailable");
-        return JSON.parse(text);
-      },
+      dns: lookupTxt,
       complete: (id, challengeHash) =>
         rpc(
           "complete_form_host_verification",
