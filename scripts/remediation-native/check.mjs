@@ -51,7 +51,30 @@ try {
    await panel.getByText('Verification attempt recorded; no finding was automatically resolved.').waitFor()
    assert.equal(await notesDraft.inputValue(),'work in progress')
    assert.equal(await attemptDraft.inputValue(),'')
-   console.log('History pagination, retry and recording preserve independent drafts')
+   const attemptsUrl = new URL('/api/websites/' + site + '/seo/work/' + work + '/attempts', web).href
+   const requestStarted = page.waitForRequest(attemptsUrl)
+   const finishRequest = Promise.withResolvers()
+   await page.route(attemptsUrl, async route => {
+    await finishRequest.promise
+    await route.continue()
+   })
+   await attemptDraft.fill('submitted observation')
+   await panel.getByRole('button',{name:'Record attempt'}).click()
+   await requestStarted
+   try {
+    await attemptDraft.fill('new note while saving')
+    await panel.getByRole('combobox',{name:'Result'}).selectOption('observed')
+    await panel.getByLabel('Related saved audit ID').fill(id)
+   } finally { finishRequest.resolve() }
+   await panel.getByText('Verification attempt recorded; no finding was automatically resolved.').waitFor()
+   await page.unroute(attemptsUrl)
+   assert.equal(await attemptDraft.inputValue(),'new note while saving')
+   assert.equal(await panel.getByRole('combobox',{name:'Result'}).inputValue(),'observed')
+   assert.equal(await panel.getByLabel('Related saved audit ID').inputValue(),id)
+   const afterAttempt = await call(api,`/websites/${site}/seo/audits/${id}/work?finding_index=0`,owner)
+   assert.equal(afterAttempt.body[0].attempts[0].note,'submitted observation')
+   assert.equal(afterAttempt.body[0].attempts[0].result,'unverified')
+   console.log('History pagination, retry and delayed recording preserve independent drafts')
    const findingPicker = panel.getByRole('combobox', {name:'Finding',exact:true})
    const workRead = new URL('/api/websites/' + site + '/seo/audits/' + id + '/work', web)
    const failRead = url => url.pathname === workRead.pathname && url.searchParams.get('finding_index') === '1'

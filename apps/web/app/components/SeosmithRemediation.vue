@@ -76,11 +76,16 @@ function olderAttempts() {
 async function addAttempt() {
   if (!loaded.value || busy.value || !current.value || !attemptNote.value.trim()) return
   const gen = generation
+  const note = attemptNote.value
+  const auditId = attemptAudit.value
+  const result = attemptResult.value
   busy.value = true; error.value = ''; message.value = ''
   try {
-    await ws.request(`/api/websites/${ws.selectedId.value}/seo/work/${current.value.id}/attempts`, { method: 'POST', body: { delivery_id: attemptAudit.value.trim() || null, result: attemptResult.value, note: attemptNote.value.trim() } })
+    await ws.request(`/api/websites/${ws.selectedId.value}/seo/work/${current.value.id}/attempts`, { method: 'POST', body: { delivery_id: auditId.trim() || null, result, note: note.trim() } })
     if (gen !== generation) return
-    attemptNote.value = ''; attemptAudit.value = ''; attemptResult.value = 'unverified'
+    if (attemptNote.value === note && attemptAudit.value === auditId && attemptResult.value === result) {
+      attemptNote.value = ''; attemptAudit.value = ''; attemptResult.value = 'unverified'
+    }
     if (await load(0)) message.value = 'Verification attempt recorded; no finding was automatically resolved.'
   } catch { if (gen === generation) error.value = 'The attempt could not be saved. Check the audit ID and try again.' }
   finally { if (gen === generation) busy.value = false }
