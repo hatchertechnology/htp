@@ -1,0 +1,11 @@
+<!doctype html><title>Form verification browser fixture</title>
+<script type="module">
+import { createClient } from '@supabase/supabase-js'
+const client = createClient('http://localhost:42581', 'fixture-key', { auth: { persistSession: false }, global: { headers: { Authorization: 'Bearer valid' } } })
+window.verify = async (token) => {
+  const { data, error } = await client.functions.invoke('form-verify', { body: { host_id: '00000000-0000-0000-0000-000000000001', token } })
+  if (!error) return { data }
+  if (typeof error.context?.json !== 'function') return { name: error.name }
+  return { name: error.name, status: error.context.status, body: await error.context.json() }
+}
+</script>
