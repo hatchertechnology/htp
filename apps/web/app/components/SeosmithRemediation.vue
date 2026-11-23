@@ -14,26 +14,26 @@ const current = computed(() => items.value.find(item => item.finding_index === i
 const evaluation = computed(() => findingEvaluation(props.audit.report, index.value))
 const endpoint = computed(() => `/api/websites/${ws.selectedId.value}/seo/audits/${props.audit.delivery_id}/work`)
 const loaded = ref(false)
+let retryPage = 0
 let generation = 0
 function populate() {
   const w = current.value
   Object.assign(form, { status: w?.status ?? 'open', assignee: w?.assignee ?? '', page: w?.segments.page ?? '', template: w?.segments.template ?? '', locale: w?.segments.locale ?? '', device: w?.segments.device ?? '', business: w?.segments.business ?? '', exception_note: w?.exception_note ?? '', notes: w?.notes ?? '', business_exposure: w?.business_exposure ?? '', estimated_effort: w?.estimated_effort ?? '', rationale: w?.rationale ?? '' })
   attemptNote.value = ''; attemptAudit.value = ''; attemptResult.value = 'unverified'
 }
-async function load() {
+async function load(targetPage = cursorPage.value) {
   const gen = ++generation
-  loaded.value = false
-  items.value = []
-  populate()
+  retryPage = targetPage
   busy.value = true
   error.value = ''
   message.value = ''
   try {
     if (!props.audit.report.findings.length) return false
-    const result = await ws.request<Work[]>(endpoint.value, { query: { finding_index: index.value, ...(cursors.value[cursorPage.value] ?? {}) } })
+    const result = await ws.request<Work[]>(endpoint.value, { query: { finding_index: index.value, ...(cursors.value[targetPage] ?? {}) } })
     if (gen !== generation) return false
     items.value = result
-    populate()
+    cursorPage.value = targetPage
+    if (!loaded.value) populate()
     loaded.value = true
     return true
   } catch {
@@ -43,8 +43,16 @@ async function load() {
     if (gen === generation) busy.value = false
   }
 }
-watch(() => [props.audit.delivery_id, ws.selectedId.value], () => { index.value = 0; cursors.value = [null]; cursorPage.value = 0; void load() }, { immediate: true })
-watch(index, () => { cursors.value = [null]; cursorPage.value = 0; void load() })
+function selectFinding() {
+  loaded.value = false
+  items.value = []
+  populate()
+  cursors.value = [null]
+  cursorPage.value = 0
+  void load(0)
+}
+watch(() => [props.audit.delivery_id, ws.selectedId.value], () => { index.value = 0; selectFinding() }, { immediate: true })
+watch(index, selectFinding)
 onBeforeUnmount(() => { generation++ })
 async function save() {
   if (!loaded.value || busy.value) return
@@ -58,12 +66,12 @@ async function save() {
   } catch { if (gen === generation) error.value = 'Work could not be saved. Check the fields and try again.' }
   finally { if (gen === generation) busy.value = false }
 }
-function newerAttempts() { if (cursorPage.value > 0) { cursorPage.value--; void load() } }
+function newerAttempts() { if (cursorPage.value > 0) void load(cursorPage.value - 1) }
 function olderAttempts() {
   const last = current.value?.attempts.at(-1)
   if (!last || !current.value?.attempts_more) return
   cursors.value = [...cursors.value.slice(0, cursorPage.value + 1), { before: last.created_at, before_id: last.id }]
-  cursorPage.value++; void load()
+  void load(cursorPage.value + 1)
 }
 async function addAttempt() {
   if (!loaded.value || busy.value || !current.value || !attemptNote.value.trim()) return
@@ -72,8 +80,8 @@ async function addAttempt() {
   try {
     await ws.request(`/api/websites/${ws.selectedId.value}/seo/work/${current.value.id}/attempts`, { method: 'POST', body: { delivery_id: attemptAudit.value.trim() || null, result: attemptResult.value, note: attemptNote.value.trim() } })
     if (gen !== generation) return
-    cursors.value = [null]; cursorPage.value = 0
-    if (await load()) message.value = 'Verification attempt recorded; no finding was automatically resolved.'
+    attemptNote.value = ''; attemptAudit.value = ''; attemptResult.value = 'unverified'
+    if (await load(0)) message.value = 'Verification attempt recorded; no finding was automatically resolved.'
   } catch { if (gen === generation) error.value = 'The attempt could not be saved. Check the audit ID and try again.' }
   finally { if (gen === generation) busy.value = false }
 }
@@ -82,7 +90,7 @@ async function addAttempt() {
   <section class="report-panel" aria-labelledby="remediation-title" :aria-busy="busy">
     <h3 id="remediation-title">Remediation work</h3>
     <p class="report-caption">Findings are ordered by technical severity. Plan against the saved evidence; work status and exceptions do not verify a fix.</p>
-    <p v-if="error" role="alert" class="form-error">{{ error }} <button class="refresh-control" @click="load">Retry</button></p>
+    <p v-if="error" role="alert" class="form-error">{{ error }} <button class="refresh-control" :disabled="busy" @click="load(retryPage)">Retry</button></p>
     <p v-if="message" role="status" class="form-notice">{{ message }}</p>
     <p v-if="!audit.report.findings.length" class="compact-empty">This audit has no findings to plan.</p>
     <template v-else>
