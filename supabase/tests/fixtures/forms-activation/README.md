@@ -1,0 +1,7 @@
+# Disposable Forms activation rehearsal
+
+These SQL files are test fixtures only, not production grant or rollback scripts. The session setting is caller-settable and provides no security boundary. The synthetic ledger test checks only that the fixtures leave its rows unchanged; it does not validate a hosted migration ledger, migration identity, role inheritance, concurrent actors, or an unknown commit outcome. Any live operation requires a separately reviewed, target-specific procedure.
+
+The regrant fixture grants exactly the two host-proof functions to `authenticated`. That role-wide grant permits calls by every qualifying authenticated website owner, not just a pilot; the quota does not provide pilot isolation. The rollback fixture revokes the same pair, checks the other six recorded owner RPCs remain held, and preserves host data. Do not use the general Forms restore while holds are in effect.
+
+Notification activation requires independent verification. The current worker's sequential claim, provider and finish timeouts total up to 35 seconds (10 + 15 + 10), whereas the documented scheduler HTTP timeout is 30 seconds. A timeout or 503 can leave delivery or finish status uncertain; a later claim performs lease recovery, and a human must reconcile an uncertain delivery before an explicit retry to avoid duplicate mail. The fixture tests use mocked mail and do not demonstrate hosted scheduler or provider behavior.
