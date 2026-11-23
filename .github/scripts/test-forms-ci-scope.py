@@ -20,6 +20,8 @@ required = [
     'apps/web/tests/fixtures/check-forms-api-cors.mjs',
     'apps/web/tests/fixtures/check-forms-pilot-api-cors.mjs',
     'scripts/test-forms-pilot-http.sh',
+    'supabase/operations/forms-pilot-receipt.sql',
+    'supabase/tests/fixtures/forms-pilot-scope/receipt-pg17.py',
     'supabase/tests/fixtures/forms-pilot-scope/seed.sql',
     'supabase/tests/fixtures/forms-pilot-scope/postgrest-check.mjs',
     'supabase/tests/website-forms.test.mjs',

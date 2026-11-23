@@ -13,7 +13,12 @@ WITH scope AS MATERIALIZED (
     EXISTS (SELECT 1 FROM scope s JOIN public.website_form_submission_tombstones t
       ON t.form_id = s.id WHERE t.submission_id = $4::uuid) AS deleted
 )
-SELECT CASE WHEN $1::uuid IS NULL OR $2::uuid IS NULL OR $3::uuid IS NULL OR $4::uuid IS NULL THEN 'scope_unavailable'
+SELECT CASE WHEN row_security_active('public.websites'::regclass)
+              OR row_security_active('public.website_forms'::regclass)
+              OR row_security_active('public.website_form_responses'::regclass)
+              OR row_security_active('public.website_form_submission_tombstones'::regclass)
+              THEN 'visibility_unavailable'
+            WHEN $1::uuid IS NULL OR $2::uuid IS NULL OR $3::uuid IS NULL OR $4::uuid IS NULL THEN 'scope_unavailable'
             WHEN NOT scoped THEN 'scope_unavailable'
             WHEN active AND deleted THEN 'ambiguous'
             WHEN active THEN 'active_receipt'

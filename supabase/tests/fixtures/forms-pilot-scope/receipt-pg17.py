@@ -16,7 +16,7 @@ query = (root/'supabase/operations/forms-pilot-receipt.sql').read_text()
 def receipt(submission=sub, who=owner, site_id=site, form_id=form):
     args = ','.join("'%s'" % x for x in [site_id, who, form_id, submission])
     out = sql('BEGIN READ ONLY; PREPARE receipt(uuid,uuid,uuid,uuid) AS\n'+query+'\nEXECUTE receipt('+args+'); COMMIT;')
-    assert out in {'scope_unavailable','active_receipt','deleted_receipt','ambiguous','no_receipt_observed'}, out
+    assert out in {'scope_unavailable','active_receipt','deleted_receipt','ambiguous','no_receipt_observed','visibility_unavailable'}, out
     return out
 def check(actual, expected):
     assert actual == expected, (actual, expected)
@@ -52,13 +52,21 @@ grant execute on function auth.jwt(), auth.uid() to public;""")
     sql("select set_config('forms.pilot_fixture','disposable',false);\n"+(root/'supabase/migrations/20261201000000_forms_pilot_scope.sql').read_text())
     sql("select set_config('forms.pilot_fixture','disposable',false);\n"+(root/'supabase/tests/fixtures/forms-pilot-scope/seed.sql').read_text())
     check(receipt(), 'no_receipt_observed')
-    check(sql('BEGIN READ ONLY; PREPARE receipt(uuid,uuid,uuid,uuid) AS\n'+query+f"\nEXECUTE receipt('{site}','{owner}','{form}',NULL); COMMIT;"), 'scope_unavailable')
+    for index in range(4):
+        args = [f"'{x}'" for x in (site, owner, form, sub)]
+        args[index] = 'NULL'
+        check(sql('BEGIN READ ONLY; PREPARE receipt(uuid,uuid,uuid,uuid) AS\n'+query+'\nEXECUTE receipt('+','.join(args)+'); COMMIT;'), 'scope_unavailable')
+    check(receipt(site_id=ident(4)), 'scope_unavailable')
     check(receipt(who=other), 'scope_unavailable')
     check(receipt(form_id=ident(11)), 'scope_unavailable')
     accept = f"select public.accept_website_form('{form}','{sub}','example.com','{{}}')"
     proc=concurrent(accept)
     check(receipt(), 'no_receipt_observed')
     finish(proc); check(receipt(), 'active_receipt')
+    sibling=ident(12)
+    sql(f"insert into public.website_forms(id,website_id,form_key,name,fields,active) select '{sibling}',website_id,'sibling','Sibling',fields,active from public.website_forms where id='{form}'; insert into public.website_form_submission_tombstones(form_id,submission_id,value_hash) values('{sibling}','{sub}','synthetic')")
+    check(receipt(), 'active_receipt')
+    check(receipt(form_id=sibling), 'deleted_receipt')
     sql(f"delete from public.forms_pilot_approved_sites where website_id='{site}'")
     check(receipt(), 'active_receipt')
     check(sql(accept), '{"error": "form_unavailable"}')
@@ -68,11 +76,25 @@ grant execute on function auth.jwt(), auth.uid() to public;""")
     proc=concurrent("select set_config('request.jwt.claims','"+claims+"',true); "+deletion)
     check(receipt(), 'active_receipt')
     finish(proc); check(receipt(), 'deleted_receipt')
+    # Synthetic role sees the scope and active table but its SELECT on tombstones
+    # is filtered by RLS. The prior query silently reported no receipt here.
+    sql("""create role receipt_filtered nologin;
+      grant usage on schema public to receipt_filtered;
+      grant select on public.websites, public.website_forms, public.website_form_responses,
+        public.website_form_submission_tombstones to receipt_filtered;
+      create policy receipt_fixture_site on public.websites for select to receipt_filtered using (true);
+      create policy receipt_fixture_form on public.website_forms for select to receipt_filtered using (true);
+      create policy receipt_fixture_response on public.website_form_responses for select to receipt_filtered using (true);""")
+    check(sql(f"set role receipt_filtered; select count(*) from public.websites w join public.website_forms f on f.website_id=w.id where w.id='{site}' and f.id='{form}'"), '1')
+    check(sql(f"set role receipt_filtered; select count(*) from public.website_form_submission_tombstones where form_id='{form}' and submission_id='{sub}'"), '0')
+    args=','.join("'%s'" % x for x in [site, owner, form, sub])
+    check(sql('BEGIN READ ONLY; SET LOCAL ROLE receipt_filtered; PREPARE receipt(uuid,uuid,uuid,uuid) AS\n'+query+'\nEXECUTE receipt('+args+'); COMMIT;'), 'visibility_unavailable')
+    check(receipt(), 'deleted_receipt')  # fully visible administrator still sees evidence
     sql(f"insert into public.website_form_responses(website_id,form_id,submission_id,values) values('{site}','{form}','{sub}','{{}}')")
     check(receipt(), 'ambiguous')
     sql(f"update public.websites set owner_id='{other}' where id='{site}'")
     check(receipt(), 'scope_unavailable')
-    print('PASS: synthetic PG17 receipt scope, gate removal, actual accept/delete and in-flight snapshots, ambiguous and ownership transfer')
+    print('PASS: synthetic PG17 receipt scope, gate removal, actual accept/delete and in-flight snapshots, ambiguous, filtered RLS, full visibility and ownership transfer')
 finally:
     if created:
         subprocess.run(['docker','rm','-f',name],check=True,stdout=subprocess.DEVNULL)
