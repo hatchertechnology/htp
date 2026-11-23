@@ -82,3 +82,81 @@ Deno.test("invalid visitor reply-to is omitted", async () => {
   });
   equal(message.ReplyTo, undefined);
 });
+
+Deno.test("unconfirmed completion is unavailable even after provider acceptance", async () => {
+  let sent = 0;
+  const response = await handle(
+    new Request("https://test/", {
+      method: "POST",
+      headers: { "x-htp-sync-secret": "fixture-secret" },
+    }),
+    "fixture-secret",
+    {
+      claim: () => Promise.resolve(job),
+      finish: () => Promise.resolve(false),
+      send: () => {
+        sent++;
+        return Promise.resolve("sent");
+      },
+      sender: "sender@example.com",
+      verifyUrl: "https://test/",
+    },
+  );
+  equal(response.status, 503);
+  equal(await response.json(), { error: "delivery_unavailable" });
+  equal(sent, 1);
+});
+Deno.test("verification contains a confirmation fragment and empty queue sends nothing", async () => {
+  let captured: Record<string, string> = {};
+  const verification = {
+    ...job,
+    kind: "verification" as const,
+    token: "a".repeat(64),
+    reply_to: null,
+  };
+  const deps = {
+    claim: () => Promise.resolve(verification),
+    finish: () => Promise.resolve(true),
+    send: (message: Record<string, string>) => {
+      captured = message;
+      return Promise.resolve("sent" as const);
+    },
+    sender: "sender@example.com",
+    verifyUrl: "https://htp.test/forms/confirm",
+  };
+  equal(await run(deps), { processed: true, state: "sent" });
+  equal(
+    captured.TextBody.includes(
+      `https://htp.test/forms/confirm#recipient:${verification.token}`,
+    ),
+    true,
+  );
+  let sends = 0;
+  equal(
+    await run({
+      ...deps,
+      claim: () => Promise.resolve(null),
+      send: () => {
+        sends++;
+        return Promise.resolve("sent" as const);
+      },
+    }),
+    { processed: false },
+  );
+  equal(sends, 0);
+});
+Deno.test("known rejection is recorded as failed for owner retry", async () => {
+  let saved = "";
+  const result = await run({
+    claim: () => Promise.resolve(job),
+    finish: (_id, _lease, state) => {
+      saved = state;
+      return Promise.resolve(true);
+    },
+    send: () => Promise.resolve("failed"),
+    sender: "sender@example.com",
+    verifyUrl: "https://test/",
+  });
+  equal(result, { processed: true, state: "failed" });
+  equal(saved, "failed");
+});

@@ -15,6 +15,9 @@ required = [
     'supabase/tests/website-forms.test.mjs',
     'supabase/tests/forms-client-admission.test.mjs',
     'supabase/tests/forms-host-challenge-quota.test.mjs',
+    'supabase/tests/forms-activation-fixture.test.mjs',
+    'supabase/tests/fixtures/forms-activation/host-proof-regrant.sql',
+    'supabase/tests/fixtures/forms-activation/host-proof-rollback.sql',
 ]
 with tempfile.TemporaryDirectory(prefix='forms-ci-scope-') as temporary:
     root = Path(temporary)
