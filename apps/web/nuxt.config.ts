@@ -26,6 +26,7 @@ export default defineNuxtConfig({
       rolloutFormsPilot: false,
       rolloutSearchEvidence: false,
       rolloutComparisons: false,
+      rolloutComparisonsReadOnly: false,
       rolloutLifecycle: false,
       apiBaseUrl,
       supabaseUrl: 'https://raxuvdbdfmmtpqjcafcq.supabase.co',
