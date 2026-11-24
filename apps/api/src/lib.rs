@@ -5,6 +5,7 @@ mod audit_export;
 pub mod auth;
 mod bing;
 mod form_ingress;
+mod form_verification;
 mod insights;
 mod mcp;
 mod oauth;
@@ -90,6 +91,12 @@ pub fn app_with_capabilities(
         .merge(bing::router(websites.clone()))
         .merge(seosmith::read_router(websites.clone()))
         .merge(repositories::router(websites.clone()))
+        .merge(form_verification::router(
+            form_verification::FormVerificationState {
+                verifier: websites.forms_verifier(),
+                enabled: form_verification::enabled_from_env(),
+            },
+        ))
         .merge(websites::router(websites))
         .layer(middleware::from_fn_with_state(capabilities, rollout_gate))
         .layer(middleware::from_fn_with_state(auth, auth::require_user));

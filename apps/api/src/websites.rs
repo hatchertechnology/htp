@@ -37,6 +37,15 @@ pub struct WebsiteStore {
 }
 
 impl WebsiteStore {
+    /// Forms verification uses the same project and publishable key as the store.
+    pub(crate) fn forms_verifier(&self) -> crate::form_verification::FormVerifier {
+        let project = self
+            .url
+            .strip_suffix("/rest/v1/websites")
+            .unwrap_or(&self.url);
+        crate::form_verification::FormVerifier::new(project, &self.publishable_key)
+    }
+
     pub(crate) async fn list_saved(
         &self,
         headers: &HeaderMap,
