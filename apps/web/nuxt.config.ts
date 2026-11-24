@@ -28,6 +28,7 @@ export default defineNuxtConfig({
       pagePerformanceSamples: false,
       rolloutForms: false,
       rolloutFormsPilot: false,
+      rolloutFormsResponses: false,
       rolloutSearchEvidence: false,
       rolloutComparisons: false,
       rolloutComparisonsReadOnly: false,

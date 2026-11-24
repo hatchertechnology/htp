@@ -2,6 +2,7 @@
 import { csvCell } from "../utils/forms-csv"
 import { FORMS_INBOX_PAGE_SIZE, formsInboxPath, formsInboxUrl, staticFormsInboxReads, type FormsInboxPage } from '#shared/utils/forms-inbox-client'
 import { beginBody, confirmBody, isSavedResult, isVerifiedResult, ownerMessage, ownerPath, ownerUrl, pageQuery, parseChallenge, saveBody, sessionEndedError, isUnknownOutcome, type OwnerChallenge, type OwnerPage, type OwnerStep } from '#shared/utils/forms-owner-client'
+import { responseUrl, responseBody, responseResult, responseUnknown, responseMessage, staticResponseEnabled } from '#shared/utils/forms-response-client'
 type Field = { key: string; label: string; kind: 'text'|'email'|'telephone'|'multiline'; required: boolean; max_length: number }
 type Host = { id: string; hostname: string; verified_at: string | null }
 type Form = { id: string; form_key: string; name: string; fields: Field[]; active: boolean }
@@ -13,11 +14,14 @@ const { $supabase } = useNuxtApp()
 const auth = useAuth()
 const config = useRuntimeConfig()
 // Optional local typing: the build lane owns the declaration and default of these settings.
-const runtime = config.public as { apiBaseUrl?: unknown; staticDashboard?: boolean; rolloutFormsPilot?: boolean }
+const runtime = config.public as { apiBaseUrl?: unknown; staticDashboard?: boolean; rolloutFormsPilot?: boolean; rolloutFormsResponses?: boolean }
 const legacy = computed(() => props.mode === 'legacy')
 const eligible = ref(false)
 // Static pilot reads go through the authenticated API. Nitro/SSR builds keep direct Supabase reads.
 const apiReads = computed(() => !legacy.value && eligible.value && staticFormsInboxReads(runtime.staticDashboard, runtime.rolloutFormsPilot))
+const apiResponses = computed(() => !legacy.value && eligible.value && staticResponseEnabled(runtime.staticDashboard, runtime.rolloutFormsPilot, runtime.rolloutFormsResponses))
+const responseControls = computed(() => legacy.value && runtime.staticDashboard !== true || apiResponses.value)
+const responseUnresolved = ref(false)
 // Static builds have no Nitro server, so eligibility is the API's boolean pilot-eligibility read (fails closed).
 async function staticEligible(websiteId: string, token: string) {
   const result = await $fetch<{ eligible?: unknown }>(ownerUrl(ownerPath.eligibility(websiteId), runtime.apiBaseUrl), { headers: { Authorization: `Bearer ${token}` }, retry: 0 })
@@ -197,8 +201,9 @@ async function save() {
   } finally { busy.value=false }
 }
 async function inbox(form:Form, more = false) {
+  const generation = eligibilityGeneration, site = props.websiteId
   const owner = auth.user.value?.id
-  if (!more) { selected.value=form; submissions.value=[] }; error.value=''
+  if (!more) { selected.value=form; submissions.value=[]; deleting.value=null }; error.value=''
   const offset = submissions.value.length
   let data: unknown, err: unknown, hasMore = false
   if (apiReads.value) {
@@ -207,7 +212,7 @@ async function inbox(form:Form, more = false) {
     const result = await $supabase.from('website_form_responses').select('id,received_at,status,values').eq('website_id',props.websiteId).eq('form_id',form.id).order('received_at',{ascending:false}).order('id').range(offset,offset + 99)
     data = result.data; err = result.error; hasMore = (result.data ?? []).length === 100
   }
-  if (!owner || auth.user.value?.id !== owner || selected.value?.id !== form.id) return
+  if (!owner || generation !== eligibilityGeneration || props.websiteId !== site || auth.user.value?.is_anonymous === true || auth.user.value?.id !== owner || selected.value?.id !== form.id) return
   if(err) { fail(err); return }; const rows=(data ?? []) as Submission[]; submissions.value.push(...rows); moreResponses.value=hasMore
   if (!legacy.value) { recipients.value=[]; deliveries.value=[]; return }
   const result=await $supabase.from('website_form_recipients').select('id,email,verified_at,enabled').eq('website_id',props.websiteId).eq('form_id',form.id)
@@ -242,12 +247,44 @@ async function retryDelivery(job:Delivery) {
   busy.value=true; error.value=''
   try { const {data,error:err}=await $supabase.rpc('retry_form_delivery',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_job_id:job.id}); if (err || !data) throw new Error('This delivery cannot be retried.'); await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
 }
+// Snapshot all affinity before obtaining a bearer; never fall back to RPC in static mode.
+async function manageResponse(row: Submission, next?: string) {
+  const form = selected.value, owner = auth.user.value?.id, site = props.websiteId, generation = eligibilityGeneration
+  if (!apiResponses.value || busy.value || responseUnresolved.value || !form || !owner || auth.user.value?.is_anonymous === true || !submissions.value.some(item => item.id === row.id) || (next === undefined && deleting.value !== row.id)) return
+  const current = () => generation === eligibilityGeneration && apiResponses.value && props.websiteId === site && auth.user.value?.id === owner && auth.user.value?.is_anonymous !== true && selected.value?.id === form.id
+  busy.value = true; error.value = ''; notice.value = ''
+  try {
+    const url = responseUrl(site, form.id, row.id, next !== undefined, runtime.apiBaseUrl)
+    const body = next === undefined ? undefined : responseBody(next)
+    const token = await ownerBearer()
+    if (!current()) return
+    let value: unknown
+    try {
+      value = await $fetch<unknown>(url, { method: next === undefined ? 'DELETE' : 'PATCH', headers: { Authorization: `Bearer ${token}` }, ...(body ? { body } : {}), retry: 0, redirect: 'error' })
+      if (!responseResult(value, row.id, next)) throw new Error('Mismatched response result.')
+    } catch (cause) {
+      if (!current()) return
+      if (responseUnknown(cause)) {
+        responseUnresolved.value = true; deleting.value = null
+        await inbox(form)
+      }
+      if (current()) error.value = responseMessage(cause, next === undefined)
+      return
+    }
+    if (!current()) return
+    deleting.value = null
+    await inbox(form)
+  } catch (cause) { if (current()) error.value = responseMessage(cause, next === undefined) }
+  finally { busy.value = false }
+}
 async function deleteResponse(row:Submission) {
+  if (runtime.staticDashboard === true) { await manageResponse(row); return }
   if (!legacy.value || !selected.value) return
   busy.value=true; error.value=''
   try { const {error:err}=await $supabase.rpc('delete_website_form_response',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_response_id:row.id}); if(err) throw err; deleting.value=null; await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
 }
 async function status(row:Submission, next:string) {
+  if (runtime.staticDashboard === true) { await manageResponse(row, next); return }
   if (!legacy.value || !selected.value) return
   busy.value=true; error.value=''
   try { const {error:err}=await $supabase.rpc('set_website_form_response_status',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_response_id:row.id,p_status:next}); if(err) throw err; await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
@@ -278,7 +315,7 @@ async function exportCsv() {
     const url=URL.createObjectURL(new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8'})); const link=document.createElement('a'); link.href=url; link.download=`${form.form_key}.csv`; link.click(); URL.revokeObjectURL(url)
   } catch(cause) { fail(cause) } finally { busy.value=false }
 }
-watch(()=>auth.user.value?.id,()=>{ hosts.value=[]; forms.value=[]; submissions.value=[]; recipients.value=[]; deliveries.value=[]; selected.value=null; deleting.value=null; challenge.value=null; verifyUnknown.value=false; moreResponses.value=false; error.value=''; notice.value=''; reset(); expanded.value=false })
+watch(()=>[auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId, props.mode],()=>{ responseUnresolved.value=false; hosts.value=[]; forms.value=[]; submissions.value=[]; recipients.value=[]; deliveries.value=[]; selected.value=null; deleting.value=null; challenge.value=null; verifyUnknown.value=false; moreResponses.value=false; error.value=''; notice.value=''; reset(); expanded.value=false })
 </script>
 
 <template>
@@ -315,9 +352,9 @@ watch(()=>auth.user.value?.id,()=>{ hosts.value=[]; forms.value=[]; submissions.
           <div><UButton type="submit" :loading="busy" :disabled="saveUnknown">Save form</UButton> <UButton v-if="editing" type="button" color="neutral" variant="outline" @click="reset">Cancel edit</UButton></div>
         </form>
       </div>
-      <div class="forms-block"><h4>Your forms</h4><p v-if="!forms.length">No forms yet.</p><ul><li v-for="form in forms" :key="form.id"><strong>{{ form.name }}</strong> — {{ form.active ? 'Active' : 'Paused' }} <UButton color="neutral" variant="ghost" @click="edit(form)">Edit</UButton><UButton color="neutral" variant="ghost" @click="inbox(form)">Responses</UButton><p>Submission endpoint: <code>{{ config.public.apiBaseUrl }}/public/forms/{{ form.id }}</code></p></li></ul></div>
+      <div class="forms-block"><h4>Your forms</h4><p v-if="!forms.length">No forms yet.</p><ul><li v-for="form in forms" :key="form.id"><strong>{{ form.name }}</strong> — {{ form.active ? 'Active' : 'Paused' }} <UButton color="neutral" variant="ghost" @click="edit(form)">Edit</UButton><UButton color="neutral" variant="ghost" @click="responseUnresolved = false; inbox(form)">Responses</UButton><p>Submission endpoint: <code>{{ config.public.apiBaseUrl }}/public/forms/{{ form.id }}</code></p></li></ul></div>
       <div v-if="selected && legacy" class="forms-block"><h4>Notification recipients</h4><p>Each recipient must confirm their address before inquiries are sent. Delivery status records whether the email provider accepted the message.</p><form @submit.prevent="addRecipient"><label>Email address <input v-model="recipientEmail" type="email" required maxlength="254"></label><UButton type="submit" :loading="busy">Send verification</UButton></form><ul><li v-for="recipient in recipients" :key="recipient.id">{{ recipient.email }} — {{ !recipient.enabled ? 'Disabled' : recipient.verified_at ? 'Verified' : 'Awaiting verification' }} <UButton v-if="recipient.enabled" color="neutral" variant="ghost" @click="disableRecipient(recipient)">Disable</UButton><ul><li v-for="job in deliveries.filter(item => item.recipient_id === recipient.id && item.kind === 'verification')" :key="job.id">Verification: {{ job.state }} <UButton v-if="job.state === 'failed'" color="neutral" variant="ghost" @click="retryDelivery(job)">Retry</UButton><span v-if="job.state === 'uncertain'"> Request verification again if needed.</span></li></ul></li></ul></div>
-      <div v-if="selected" class="forms-block"><h4>Responses: {{ selected.name }}</h4><p>Showing {{ submissions.length }} responses.</p><UButton :disabled="busy || !submissions.length" color="neutral" variant="outline" @click="exportCsv">Export all CSV</UButton><p v-if="!submissions.length">No responses to display.</p><UButton v-if="moreResponses" color="neutral" variant="outline" @click="inbox(selected, true)">Load more</UButton><ul><li v-for="row in submissions" :key="row.id"><p><time>{{ row.received_at }}</time> — {{ row.status }}</p><dl><template v-for="(value,key) in row.values" :key="key"><dt>{{ key }}</dt><dd>{{ value }}</dd></template></dl><ul v-if="legacy"><li v-for="job in deliveries.filter(item => item.response_id === row.id)" :key="job.id">Notification {{ recipients.find(item => item.id === job.recipient_id)?.email }}: {{ job.state }} <UButton v-if="job.state === 'failed' || job.state === 'uncertain'" color="neutral" variant="ghost" @click="retryDelivery(job)">Retry</UButton><span v-if="job.state === 'uncertain'"> Provider outcome unknown; check before resending.</span></li></ul><UButton v-if="legacy" color="neutral" variant="ghost" :disabled="busy" @click="status(row,'reviewed')">Mark reviewed</UButton><UButton v-if="legacy" color="neutral" variant="ghost" :disabled="busy" @click="status(row,'spam')">Mark spam</UButton><UButton v-if="legacy" color="neutral" variant="ghost" :disabled="busy" @click="deleting = row.id">Delete</UButton><div v-if="legacy && deleting === row.id"><p>Permanently delete this response and its notification history?</p><UButton color="error" :loading="busy" @click="deleteResponse(row)">Delete response</UButton><UButton color="neutral" variant="outline" @click="deleting = null">Cancel</UButton></div></li></ul></div>
+      <div v-if="selected" class="forms-block"><h4>Responses: {{ selected.name }}</h4><p>Showing {{ submissions.length }} responses.</p><UButton :disabled="busy || !submissions.length" color="neutral" variant="outline" @click="exportCsv">Export all CSV</UButton><p v-if="!submissions.length">No responses to display.</p><UButton v-if="moreResponses" color="neutral" variant="outline" @click="inbox(selected, true)">Load more</UButton><ul><li v-for="row in submissions" :key="row.id"><p><time>{{ row.received_at }}</time> — {{ row.status }}</p><dl><template v-for="(value,key) in row.values" :key="key"><dt>{{ key }}</dt><dd>{{ value }}</dd></template></dl><ul v-if="legacy"><li v-for="job in deliveries.filter(item => item.response_id === row.id)" :key="job.id">Notification {{ recipients.find(item => item.id === job.recipient_id)?.email }}: {{ job.state }} <UButton v-if="job.state === 'failed' || job.state === 'uncertain'" color="neutral" variant="ghost" @click="retryDelivery(job)">Retry</UButton><span v-if="job.state === 'uncertain'"> Provider outcome unknown; check before resending.</span></li></ul><UButton v-if="apiResponses" color="neutral" variant="ghost" :disabled="busy || responseUnresolved" @click="status(row,'new')">Mark new</UButton><UButton v-if="responseControls" color="neutral" variant="ghost" :disabled="busy || responseUnresolved" @click="status(row,'reviewed')">Mark reviewed</UButton><UButton v-if="responseControls" color="neutral" variant="ghost" :disabled="busy || responseUnresolved" @click="status(row,'spam')">Mark spam</UButton><UButton v-if="responseControls" color="neutral" variant="ghost" :disabled="busy || responseUnresolved" @click="deleting = row.id">Delete</UButton><div v-if="responseControls && deleting === row.id"><p>Permanently delete this response and its notification history?</p><UButton color="error" :loading="busy" @click="deleteResponse(row)">Delete response</UButton><UButton color="neutral" variant="outline" @click="deleting = null">Cancel</UButton></div></li></ul></div>
     </div>
   </section>
 </template>
