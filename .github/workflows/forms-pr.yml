@@ -152,6 +152,7 @@ jobs:
           done
           npm run fixture:forms:check
           node tests/fixtures/check-forms-pilot.mjs
+          node tests/fixtures/check-forms-static.mjs
       - name: Test actual API cross-origin behavior in Chromium
         working-directory: .
         run: cargo test --locked -p htp-api --lib form_ingress::tests::browser_cors_against_actual_api -- --ignored --nocapture
