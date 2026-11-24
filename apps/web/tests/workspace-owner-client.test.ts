@@ -4,12 +4,12 @@ import { useWorkspace } from '../app/composables/useWorkspace'
 import { resolveWorkspaceOwnerPath } from '../shared/utils/workspace-owner-client'
 const id = '00000000-0000-0000-0000-000000000001'
 const base = 'https://api.example.test'
-const reports = ['analytics/dashboard', 'bing/dashboard', 'insights/report', 'insights/history', 'business/location']
+const reports = ['analytics/dashboard', 'bing/dashboard', 'insights/report', 'insights/history', 'business/location', 'analytics/property']
 const repository = `/api/websites/${id}/repository`
 afterEach(() => vi.unstubAllGlobals())
 it('maps only implemented owner operations and preserves legacy paths', () => {
   for (const [path, method, target] of [
-    ...reports.map(resource => [`/api/websites/${id}/${resource}`, resource === 'business/location' ? 'PUT' : 'POST', `/websites/${id}/${resource}`]),
+    ...reports.map(resource => [`/api/websites/${id}/${resource}`, ['business/location', 'analytics/property'].includes(resource) ? 'PUT' : 'POST', `/websites/${id}/${resource}`]),
     ['/api/websites?limit=100', 'GET', '/websites?limit=100'],
     ['/api/websites?limit=50&offset=100', 'GET', '/websites?limit=50&offset=100'],
     [repository, 'GET', `/websites/${id}/repository`],
@@ -22,9 +22,8 @@ it('maps only implemented owner operations and preserves legacy paths', () => {
     expect(() => resolveWorkspaceOwnerPath(path!, method, true, 'https://api.test/path')).toThrow()
   }
   for (const [path, method] of [
-    ...reports.flatMap(resource => ['GET', 'DELETE', resource === 'business/location' ? 'POST' : 'PUT'].map(method => [`/api/websites/${id}/${resource}`, method])),
-    ...reports.flatMap(resource => [`/api/websites/invalid/${resource}`, `/api/websites/${id}/${resource}/`, `/api/websites/${id}/${resource}/extra`, `/api/websites/${id}/${resource}?x=1`].map(path => [path, resource === 'business/location' ? 'PUT' : 'POST'])),
-    [`/api/websites/${id}/analytics/property`, 'PUT'],
+    ...reports.flatMap(resource => ['GET', 'DELETE', ['business/location', 'analytics/property'].includes(resource) ? 'POST' : 'PUT'].map(method => [`/api/websites/${id}/${resource}`, method])),
+    ...reports.flatMap(resource => [`/api/websites/invalid/${resource}`, `/api/websites/${id.replaceAll('-', '')}/${resource}`, `/api/websites/${id}/${resource}/`, `/api/websites/${id}/${resource}/extra`, `/api/websites/${id}/${resource}?x=1`].map(path => [path, ['business/location', 'analytics/property'].includes(resource) ? 'PUT' : 'POST'])),
     [repository, 'POST'], [`${repository}/issues`, 'PUT'], [`${repository}/history`, 'PUT'],
     [`${repository}/other`, 'GET'], [`${repository}/issues/extra`, 'GET'],
     ['/api/websites/invalid/repository', 'GET'], ['/api/websites?target=https://evil.test', 'GET'],
@@ -48,13 +47,35 @@ it.each([true, false])('workspace forwards owner payloads, query, signal and res
     expect(ws.selectedId.value).toBe(id)
     const signal = new AbortController().signal
     for (const [path, options] of [
-      ...reports.map(resource => [`/api/websites/${id}/${resource}`, {method: resource === 'business/location' ? 'PUT' : 'POST', body: resource === 'business/location' ? {location_id: 'locations/123', linked: false} : {start_date: '2026-10-01', end_date: '2026-10-30', ...(resource.startsWith('bing/') ? {} : {property_id: '123'}), ...(resource.startsWith('insights/') ? {kind: 'conversions', before_id: 12} : {})}, signal}]),
+      ...reports.map(resource => [`/api/websites/${id}/${resource}`, {method: ['business/location', 'analytics/property'].includes(resource) ? 'PUT' : 'POST', body: resource === 'analytics/property' ? {property_id: '123'} : resource === 'business/location' ? {location_id: 'locations/123', linked: false} : {start_date: '2026-10-01', end_date: '2026-10-30', ...(resource.startsWith('bing/') ? {} : {property_id: '123'}), ...(resource.startsWith('insights/') ? {kind: 'conversions', before_id: 12} : {})}, signal}]),
       [repository, {query: {start_date: '2026-10-01', end_date: '2026-10-30', before_id: 12}, signal}],
       [`${repository}/issues`, {query: {state: 'closed', page: 2}, signal}],
       ...[true, false].map(enabled => [repository, {method: 'PUT', body: {repository_url: enabled ? 'https://github.com/example/site' : null, branch: null, enabled}}]),
     ] as [string, Record<string, unknown>][]) {
       expect(await ws.request(path, options)).toBe(payload)
       expect(fetch).toHaveBeenLastCalledWith(resolveWorkspaceOwnerPath(path, options.method ?? 'GET', staticDashboard, base), {...options, headers: {Authorization: 'Bearer owner-token'}, retry: 0})
+    }
+    const propertyPath = `/api/websites/${id}/analytics/property`
+    if (staticDashboard) {
+      fetch.mockClear()
+      await expect(ws.request(propertyPath, {method: 'PUT'})).rejects.toMatchObject({statusCode: 400})
+      expect(fetch).not.toHaveBeenCalled()
+    }
+    for (const property_id of ['1', '12345678901234567890']) {
+      const body = {property_id, extra: 'discard only in static mode'}
+      expect(await ws.request(propertyPath, {method: 'PUT', body, signal})).toBe(payload)
+      expect(fetch).toHaveBeenLastCalledWith(staticDashboard ? `${base}/websites/${id}/analytics/property` : propertyPath, {method: 'PUT', body: staticDashboard ? {property_id} : body, signal, headers: {Authorization: 'Bearer owner-token'}, retry: 0})
+    }
+    for (const body of [undefined, null, {}, {property_id: null}, ...['', '0', '01', ' 1', '1 ', '+1', '1.0', '1e2', '１２', '123456789012345678901', 123, true].map(property_id => ({property_id}))]) {
+      fetch.mockClear()
+      const result = ws.request(propertyPath, {method: 'PUT', body})
+      if (staticDashboard) {
+        await expect(result).rejects.toMatchObject({statusCode: 400, message: 'Enter a numeric GA4 property ID.'})
+        expect(fetch).not.toHaveBeenCalled()
+      } else {
+        await result
+        expect(fetch).toHaveBeenLastCalledWith(propertyPath, {method: 'PUT', body, headers: {Authorization: 'Bearer owner-token'}, retry: 0})
+      }
     }
     const failure = Object.assign(new Error('No access'), {statusCode: 403, data: {error: 'No access'}})
     fetch.mockRejectedValueOnce(failure)

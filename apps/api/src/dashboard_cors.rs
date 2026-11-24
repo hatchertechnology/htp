@@ -123,7 +123,7 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
         "analytics/dashboard" | "bing/dashboard" | "insights/report" | "insights/history" => {
             return (site.len() == 36).then_some("POST");
         }
-        "business/location" => return (site.len() == 36).then_some("PUT"),
+        "business/location" | "analytics/property" => return (site.len() == 36).then_some("PUT"),
         "repository" => return Some("GET, PUT"),
         "repository/history" | "repository/issues" => return Some("GET"),
         "forms" => return Some("GET, POST"),
@@ -595,6 +595,7 @@ mod tests {
             ("insights/report", "POST"),
             ("insights/history", "POST"),
             ("business/location", "PUT"),
+            ("analytics/property", "PUT"),
         ] {
             let path = format!("/websites/{site}/{resource}");
             assert_eq!(dashboard_methods(&path), Some(expected));
@@ -650,13 +651,7 @@ mod tests {
                 assert_eq!(dashboard_methods(&invalid), None);
             }
         }
-        for resource in [
-            "analytics",
-            "analytics/property",
-            "insights",
-            "business",
-            "bing",
-        ] {
+        for resource in ["analytics", "insights", "business", "bing"] {
             assert_eq!(
                 dashboard_methods(&format!("/websites/{site}/{resource}")),
                 None

@@ -1,4 +1,4 @@
-import { resolveWorkspaceOwnerPath } from '#shared/utils/workspace-owner-client'
+import { resolveWorkspaceOwnerPath, workspaceOwnerBody } from '#shared/utils/workspace-owner-client'
 import { resolveProviderConnectionPath } from '#shared/utils/provider-connection-client'
 import type { Website } from '../../shared/types/websites'
 
@@ -26,7 +26,9 @@ export function useWorkspace() {
     const method = options.method ?? 'GET'
     const ownerPath = resolveWorkspaceOwnerPath(url, method, runtime.staticDashboard === true, runtime.apiBaseUrl)
     const path = resolveProviderConnectionPath(ownerPath, method, runtime.staticDashboard === true, runtime.apiBaseUrl)
-    return $fetch<T>(path, { ...options, headers: { Authorization: `Bearer ${token}` }, retry: 0 })
+    const body = workspaceOwnerBody(url, method, runtime.staticDashboard === true, options.body)
+    const requestOptions: Record<string, unknown> = { ...options, ...('body' in options ? { body } : {}) }
+    return $fetch<T>(path, { ...requestOptions, headers: { Authorization: `Bearer ${token}` }, retry: 0 })
   }
   async function load() {
     if (!auth.user.value || loading.value) return
