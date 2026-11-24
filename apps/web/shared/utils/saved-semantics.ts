@@ -1,4 +1,4 @@
-import type { AuditRecordCounts, AuditRuleCoverage, AuditSummary } from '../types/seosmith'
+import type { AuditDetail, AuditRecordCounts, AuditRuleCoverage, AuditSummary } from '../types/seosmith'
 
 /** Saved-summary version emitted by the receiver for schema 4. */
 export const SCHEMA4_SUMMARY_VERSION = 5
@@ -73,4 +73,39 @@ export function ruleClaimTotals(ruleCoverage: Record<string, AuditRuleCoverage> 
 /** Complete verification means the retained population was reproduced, not that the site is clean. */
 export function auditCoverageLabel(audit: AuditSummary['audit_coverage']): string {
   return audit === 'complete_verified' ? 'Complete verified' : audit === 'unknown_partial' ? 'Partial or unknown' : 'Unavailable'
+}
+
+/**
+ * Canonical summary bytes: the receiver emits compact JSON in stable field
+ * order, so the parsed summary round-trips to the pinned canonical digest.
+ * Pretty-printing produces different bytes and can never match that digest.
+ */
+export function canonicalSummaryText(summary: AuditSummary): string {
+  return JSON.stringify(summary)
+}
+
+/**
+ * Report export bytes. When the detail retains the original raw report we
+ * return those exact bytes; otherwise we return a re-serialized export that is
+ * explicitly not byte-authoritative and must not be compared to a raw digest.
+ */
+export function reportExport(detail: Pick<AuditDetail, 'report' | 'report_json'>): { text: string; exact: boolean } {
+  return typeof detail.report_json === 'string'
+    ? { text: detail.report_json, exact: true }
+    : { text: JSON.stringify(detail.report, null, 2), exact: false }
+}
+
+/** Compare a computed lowercase hex digest with a stored `sha256:<hex>` binding. */
+export function sha256Matches(actualHex: string | null | undefined, expected: string | null | undefined): boolean | null {
+  if (!expected) return null
+  const normalized = (expected.startsWith('sha256:') ? expected.slice(7) : expected).toLowerCase()
+  return !!actualHex && actualHex.toLowerCase() === normalized
+}
+
+/** Lowercase hex SHA-256 of UTF-8 text, or null where Web Crypto is unavailable. */
+export async function sha256Hex(text: string): Promise<string | null> {
+  const subtle = globalThis.crypto?.subtle
+  if (!subtle) return null
+  const digest = await subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
 }

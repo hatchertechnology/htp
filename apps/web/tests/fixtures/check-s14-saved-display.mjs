@@ -1,11 +1,15 @@
 // Normal saved-audit dashboard check for receiver-generated schema-4 summaries.
 // Serves repository fixtures through browser interception only: no external
-// traffic, no writes, no collection. Run against a built Nitro server:
+// traffic, no writes, no collection. The retained report bytes are served as
+// the exact `report_json` an API detail returns, and the checker performs real
+// browser downloads and hashes the resulting bytes against the fixture pins.
+// Run against a built Nitro server:
 //   NITRO_PORT=3110 node .output/server/index.mjs
 //   node tests/fixtures/check-s14-saved-display.mjs proxy
 //   NUXT_PUBLIC_BOUNDED_SAVED_DETAIL=true NITRO_PORT=3111 node .output/server/index.mjs
 //   node tests/fixtures/check-s14-saved-display.mjs bounded
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { chromium } from 'playwright'
 
@@ -15,28 +19,42 @@ if (process.env.NITRO_PORT) origin.port = process.env.NITRO_PORT
 
 const dir = new URL('./s14-saved-display/', import.meta.url)
 const load = async name => JSON.parse(await readFile(new URL(name, dir), 'utf8'))
-const [completeSummary, partialSummary, omittedSummary, violationSummary, completeReport, partialReport, omittedReport, violationReport] = await Promise.all([
-  load('summary-complete-verified.json'), load('summary-partial-mixed.json'), load('summary-partial-omitted.json'), load('summary-violation.json'),
-  load('report-complete-verified.json'), load('report-partial-mixed.json'), load('report-partial-omitted.json'), load('report-violation.json'),
-])
+const read = async name => readFile(new URL(name, dir), 'utf8')
+const sha256 = text => createHash('sha256').update(text, 'utf8').digest('hex')
+
+const summaryNames = ['summary-complete-verified.json', 'summary-partial-mixed.json', 'summary-partial-omitted.json', 'summary-violation.json']
+const reportNames = ['report-complete-verified.json', 'report-partial-mixed.json', 'report-partial-omitted.json', 'report-violation.json']
+const [completeSummary, partialSummary, omittedSummary, violationSummary, completeReport, partialReport, omittedReport, violationReport] = await Promise.all([...summaryNames, ...reportNames].map(load))
+// The exact retained report bytes, not a re-serialization of the parsed report.
+const rawReports = await Promise.all(reportNames.map(read))
+const sourceShas = rawReports.map(report => sha256(report))
+// The receiver emits canonical compact summary bytes; we hash the same text the UI hashes.
+const canonicalSummaries = [completeSummary, partialSummary, omittedSummary, violationSummary].map(summary => JSON.stringify(summary))
+const summaryShas = canonicalSummaries.map(summary => sha256(summary))
+for (const [i, summary] of canonicalSummaries.entries()) assert.equal(summary, JSON.stringify(JSON.parse(summary)), summaryNames[i])
 
 const site = '00000000-0000-0000-0000-000000000003'
 const user = '00000000-0000-0000-0000-000000000001'
-const ids = ['00000000-0000-4000-8000-00000000000a', '00000000-0000-4000-8000-00000000000b', '00000000-0000-4000-8000-00000000000c', '00000000-0000-4000-8000-00000000000d', '00000000-0000-4000-8000-00000000000e']
+const ids = ['00000000-0000-4000-8000-00000000000a', '00000000-0000-4000-8000-00000000000b', '00000000-0000-4000-8000-00000000000c', '00000000-0000-4000-8000-00000000000d', '00000000-0000-4000-8000-00000000000e', '00000000-0000-4000-8000-00000000000f']
 const time = '2026-11-16T12:02:00Z'
 const exp = Math.floor(Date.now() / 1000) + 3600
 const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: user, exp })).toString('base64url')}.fake`
 
-// The last run is a real schema-4 report with a future summary version; the
-// dashboard must say it is unsupported rather than showing any claim.
+// Each of the first four runs pairs the receiver summary with the exact bytes
+// of its retained source report and the true stored source binding. Run E is a
+// real schema-4 report with a future summary version; the dashboard must say it
+// is unsupported rather than showing any claim. Run F is a supported summary
+// whose retained raw bytes are absent, so its export must be labeled
+// reconstructed and must never be offered for digest comparison.
 const details = [
-  { delivery_id: ids[0], scan_at: '2026-11-16T12:01:00Z', received_at: time, ingestion_source: 'worker', summary: completeSummary, report: completeReport, source_sha256: 'sha256:2443936d93da699595bdb135995e3d1d1503b96d973f5be4f3b82d9f243f4342', source_bytes: 26567 },
-  { delivery_id: ids[1], scan_at: '2026-11-16T12:00:00Z', received_at: time, ingestion_source: 'worker', summary: partialSummary, report: partialReport, source_sha256: 'sha256:e95085661f1cbddc165e3acf47fb05a69e47bbe6c4be4dbffe480b385f15902e', source_bytes: 26829 },
-  { delivery_id: ids[2], scan_at: '2026-11-16T11:59:00Z', received_at: time, ingestion_source: 'import', summary: omittedSummary, report: omittedReport, source_sha256: 'sha256:9cd361d79c93e40ddb57b0043c201fea0090836c500dd726849d055ec6b5efe9', source_bytes: 425640 },
-  { delivery_id: ids[3], scan_at: '2026-11-16T11:58:00Z', received_at: time, ingestion_source: 'worker', summary: violationSummary, report: violationReport, source_sha256: 'sha256:530c1c822d56ad151a8d9c17bc39b6c9a8c5ad6d103699af01917319e8e54139', source_bytes: 44834 },
+  { delivery_id: ids[0], scan_at: '2026-11-16T12:01:00Z', received_at: time, ingestion_source: 'worker', summary: completeSummary, report: completeReport, report_json: rawReports[0], source_sha256: `sha256:${sourceShas[0]}`, source_bytes: Buffer.byteLength(rawReports[0]) },
+  { delivery_id: ids[1], scan_at: '2026-11-16T12:00:00Z', received_at: time, ingestion_source: 'worker', summary: partialSummary, report: partialReport, report_json: rawReports[1], source_sha256: `sha256:${sourceShas[1]}`, source_bytes: Buffer.byteLength(rawReports[1]) },
+  { delivery_id: ids[2], scan_at: '2026-11-16T11:59:00Z', received_at: time, ingestion_source: 'import', summary: omittedSummary, report: omittedReport, report_json: rawReports[2], source_sha256: `sha256:${sourceShas[2]}`, source_bytes: Buffer.byteLength(rawReports[2]) },
+  { delivery_id: ids[3], scan_at: '2026-11-16T11:58:00Z', received_at: time, ingestion_source: 'worker', summary: violationSummary, report: violationReport, report_json: rawReports[3], source_sha256: `sha256:${sourceShas[3]}`, source_bytes: Buffer.byteLength(rawReports[3]) },
   { delivery_id: ids[4], scan_at: '2026-11-16T11:57:00Z', received_at: time, ingestion_source: 'worker', summary: { ...completeSummary, summary_version: 6 }, report: completeReport },
+  { delivery_id: ids[5], scan_at: '2026-11-16T11:56:00Z', received_at: time, ingestion_source: 'worker', summary: completeSummary, report: completeReport, source_sha256: `sha256:${sourceShas[0]}`, source_bytes: Buffer.byteLength(rawReports[0]) },
 ]
-const runs = details.map(({ report, ...run }) => run)
+const runs = details.map(({ report, report_json, ...run }) => run)
 const ruleTotals = coverage => {
   const claims = Object.values(coverage ?? {}).map(rule => rule.coverage !== 'complete_verified' ? 'unverified' : rule.reported_findings > 0 ? 'findings' : 'clean')
   return { clean: claims.filter(claim => claim === 'clean').length, findings: claims.filter(claim => claim === 'findings').length, unknown: claims.filter(claim => claim === 'unverified').length }
@@ -67,6 +85,13 @@ await page.route('**/*', async route => {
   return route.continue()
 })
 
+// Download a named button and return the exact bytes the browser saved.
+async function downloadBytes(name) {
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name, exact: true }).click()])
+  const bytes = await readFile(await download.path())
+  return { bytes, text: bytes.toString('utf8'), sha: createHash('sha256').update(bytes).digest('hex') }
+}
+
 try {
   await page.goto(origin.href, { waitUntil: 'domcontentloaded' })
   const panel = page.getByRole('region', { name: 'Receiver-verified semantics' })
@@ -80,15 +105,32 @@ try {
   await panel.getByRole('button', { name: `Show ${completeTotals.clean} verified-clean rules` }).waitFor()
   assert.ok(await panel.locator('table').last().getByRole('row', { name: /missing h1/ }).count() >= 1)
   // The retained source binding is stored beside, not inside, the summary.
-  assert.ok(await panel.getByText(/2443936d93da699595bdb135995e3d1d1503b96d973f5be4f3b82d9f243f4342/).count() >= 1)
-  assert.ok(await panel.getByText(/26567 bytes/).count() >= 1)
+  assert.ok(await panel.getByText(new RegExp(sourceShas[0])).count() >= 1)
+  assert.ok(await panel.getByText(new RegExp(String(details[0].source_bytes) + ' bytes')).count() >= 1)
   assert.ok(await panel.getByText(/stored separately from the canonical summary/).count() >= 1)
+  assert.ok(await panel.getByText(/byte-identical/).count() >= 1)
+  // The canonical summary digest, not the source digest, is what the summary download hashes.
+  assert.ok(await panel.getByText(new RegExp(summaryShas[0].slice(0, 16))).count() >= 1)
+  const summaryDownload = await downloadBytes('Download receiver summary')
+  assert.equal(summaryDownload.text, canonicalSummaries[0])
+  assert.equal(summaryDownload.sha, summaryShas[0])
+  assert.notEqual(summaryDownload.sha, sourceShas[0])
+  assert.equal(summaryDownload.bytes.length, Buffer.byteLength(canonicalSummaries[0]))
+
+  // Run A download: exact retained report bytes, verified by SHA-256, not a label.
+  const completeDownload = await downloadBytes('Download run JSON')
+  assert.equal(completeDownload.text, rawReports[0])
+  assert.equal(completeDownload.sha, sourceShas[0])
+  assert.equal(completeDownload.bytes.length, details[0].source_bytes)
 
   // Run B: mixed per-rule coverage stays partial; unknown rules are listed.
   await page.getByLabel('Inspect a run', { exact: true }).selectOption(ids[1])
   await panel.getByText(/Partial or unknown/).waitFor()
   assert.match(await panel.innerText(), new RegExp(`${partialTotals.clean} verified clean within retained scope · ${partialTotals.findings} with a finding · ${partialTotals.unknown} unknown`))
   assert.match(await panel.innerText(), /Unknown — absence is not a pass/)
+  const mixedDownload = await downloadBytes('Download run JSON')
+  assert.equal(mixedDownload.text, rawReports[1])
+  assert.equal(mixedDownload.sha, sourceShas[1])
 
   // Run C: omitted records stay explicit and every rule remains unknown.
   await page.getByLabel('Inspect a run', { exact: true }).selectOption(ids[2])
@@ -96,6 +138,9 @@ try {
   assert.match(await panel.innerText(), new RegExp(`${omittedTotals.unknown} unknown`))
   assert.equal(omittedTotals.clean, 0)
   assert.equal(await panel.locator('[data-record-count="unknown"]').innerText(), String(omittedSummary.record_counts.unknown))
+  const omittedDownload = await downloadBytes('Download run JSON')
+  assert.equal(omittedDownload.text, rawReports[2])
+  assert.equal(omittedDownload.sha, sourceShas[2])
 
   // Run D: receiver-reported policy violations are distinct from advisories.
   await page.getByLabel('Inspect a run', { exact: true }).selectOption(ids[3])
@@ -103,6 +148,9 @@ try {
   assert.equal(await panel.locator('[data-record-count="violation"]').innerText(), String(violationSummary.record_counts.violation))
   assert.equal(await panel.locator('[data-record-count="advisory_triggered"]').innerText(), String(violationSummary.record_counts.advisory_triggered))
   assert.equal(violationTotals.clean, 0)
+  const violationDownload = await downloadBytes('Download run JSON')
+  assert.equal(violationDownload.text, rawReports[3])
+  assert.equal(violationDownload.sha, sourceShas[3])
 
   // Run E: a future summary version is explicitly unsupported, with no claims.
   await page.getByLabel('Inspect a run', { exact: true }).selectOption(ids[4])
@@ -110,6 +158,19 @@ try {
   assert.equal(await panel.locator('table').count(), 0)
   // Schema 4 never shows the legacy evidence-contract panel, which would read as unknown.
   assert.equal(await page.getByRole('region', { name: 'Evidence and coverage' }).count(), 0)
+
+  // Run F: supported summary, raw report bytes absent. The export is labeled
+  // reconstructed and the panel drops any instruction to compare it to the digest.
+  await page.getByLabel('Inspect a run', { exact: true }).selectOption(ids[5])
+  await panel.getByText(/Complete verified/).waitFor()
+  assert.ok(await panel.getByText(/reconstructed export from the parsed report/).count() >= 1)
+  assert.ok(await panel.getByText(/does not match this source digest/).count() >= 1)
+  assert.equal(await panel.getByText(/compare the downloaded raw report by this retained digest/i).count(), 0)
+  const reconstructed = JSON.stringify(completeReport, null, 2)
+  const reconstructedDownload = await downloadBytes('Download run JSON')
+  assert.equal(reconstructedDownload.text, reconstructed)
+  assert.notEqual(reconstructedDownload.text, rawReports[0])
+  assert.notEqual(reconstructedDownload.sha, sourceShas[0])
 
   await page.getByLabel('Inspect a run', { exact: true }).selectOption(ids[0])
   await panel.getByText(/Complete verified/).waitFor()
@@ -126,8 +187,13 @@ try {
   assert.ok(!calls.some(call => call.startsWith('BLOCKED')), calls.join('\n'))
   assert.ok(calls.filter(call => /^(POST|PUT|PATCH|DELETE) /.test(call)).every(call => calls.includes(`ABORTED ${call}`)))
   assert.ok(!calls.some(call => /^(POST|PUT|PATCH|DELETE) .*\/seo\/audits/.test(call)))
-  console.log(`PASS: schema-4 receiver semantics in the normal dashboard (${mode} saved-read transport); complete, mixed partial, omitted and violation runs; future summary explicitly unsupported; reads only, no external traffic`)
+  console.log(`PASS: schema-4 receiver semantics in the normal dashboard (${mode} saved-read transport); complete, mixed partial, omitted and violation runs; future summary explicitly unsupported; exact retained report and canonical summary downloads verified by SHA-256; reconstructed export labeled when bytes are absent; reads only, no external traffic`)
   console.log(calls.join('\n'))
+} catch (error) {
+  console.error('page errors:', errors)
+  console.error('calls:', calls.join('\n'))
+  console.error('body:', (await page.locator('body').innerText().catch(() => '')).slice(0, 4000))
+  throw error
 } finally {
   await browser.close()
 }
