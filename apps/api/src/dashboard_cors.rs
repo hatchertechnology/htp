@@ -103,14 +103,21 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
     if path == "/websites" {
         return Some("GET, POST, PATCH, DELETE");
     }
+    if let Some(confirmation) = path.strip_prefix("/forms/host-verifications/") {
+        let host = confirmation.strip_suffix("/confirm")?;
+        return uuid::Uuid::parse_str(host).ok().map(|_| "POST");
+    }
     let rest = path.strip_prefix("/websites/")?;
     if !rest.is_empty() && !rest.contains('/') {
         return Some("GET, POST, PATCH, DELETE");
     }
     let (site, resource) = rest.split_once('/')?;
     uuid::Uuid::parse_str(site).ok()?;
-    if resource == "forms" {
-        return Some("GET");
+    match resource {
+        "forms" => return Some("GET, POST"),
+        "forms/pilot-eligibility" | "forms/hosts" | "forms/origins" => return Some("GET"),
+        "forms/host-verifications" => return Some("POST"),
+        _ => {}
     }
     if let Some(inbox) = resource.strip_prefix("forms/") {
         let (form, responses) = inbox.split_once('/')?;
@@ -379,7 +386,7 @@ mod tests {
         let response = "00000000-0000-0000-0000-000000000003";
         let forms = format!("/websites/{site}/forms");
         let responses = format!("{forms}/{form}/responses");
-        for path in [&forms, &responses, &format!("{responses}/{response}")] {
+        for path in [&responses, &format!("{responses}/{response}")] {
             for (method, allowed) in [("GET", Some("GET")), ("POST", None)] {
                 let result = app(Arc::new(AtomicUsize::new(0)), cors())
                     .oneshot(preflight(path, ORIGIN, method))
@@ -393,11 +400,56 @@ mod tests {
             }
         }
         for path in [
-            format!("{forms}/host-verifications"),
+            format!("{forms}/host-verifications/{response}"),
             format!("{forms}/invalid/responses"),
             format!("{responses}/{response}/extra"),
         ] {
             assert!(dashboard_methods(&path).is_none(), "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn forms_setup_preflights_match_the_owner_api_methods() {
+        let site = "00000000-0000-0000-0000-000000000001";
+        let host = "00000000-0000-0000-0000-000000000002";
+        let forms = format!("/websites/{site}/forms");
+        let cases = [
+            (forms.clone(), "GET", "GET, POST"),
+            (forms.clone(), "POST", "GET, POST"),
+            (format!("{forms}/pilot-eligibility"), "GET", "GET"),
+            (format!("{forms}/hosts"), "GET", "GET"),
+            (format!("{forms}/origins"), "GET", "GET"),
+            (format!("{forms}/host-verifications"), "POST", "POST"),
+            (
+                format!("/forms/host-verifications/{host}/confirm"),
+                "POST",
+                "POST",
+            ),
+        ];
+        for (path, method, methods) in cases {
+            let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                .oneshot(preflight(&path, ORIGIN, method))
+                .await
+                .unwrap();
+            assert_eq!(
+                header_value(&response, header::ACCESS_CONTROL_ALLOW_METHODS),
+                Some(methods)
+            );
+        }
+        for (path, method) in [
+            (format!("{forms}/hosts"), "POST"),
+            (format!("{forms}/host-verifications"), "GET"),
+            (
+                format!("/forms/host-verifications/{host}/confirm/extra"),
+                "POST",
+            ),
+            (format!("/public/forms/{site}"), "POST"),
+        ] {
+            let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                .oneshot(preflight(&path, ORIGIN, method))
+                .await
+                .unwrap();
+            assert!(header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
         }
     }
 
