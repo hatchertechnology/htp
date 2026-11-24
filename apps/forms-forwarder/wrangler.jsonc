@@ -1,0 +1,31 @@
+{
+  // HTP Forms forwarder. Default disabled; see README.md and docs/forms/forwarder.md.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "htp-forms-forwarder",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-06",
+  "compatibility_flags": ["nodejs_compat"],
+  // Keep the Worker off the public workers.dev hostname. Attach the intended
+  // browser-facing route (for example a custom domain or `forms.example.com/*`)
+  // only during an authorized deployment, never by editing DNS from this file.
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.05
+  },
+  "vars": {
+    // The Worker returns an opaque 503 until an operator flips this to "true".
+    "FORMS_FORWARDER_ENABLED": "false",
+    // Non-resolvable placeholder. Replace with the fixed HTTPS HTP API origin
+    // (scheme and host only) before enabling the forwarder.
+    "FORMS_UPSTREAM_ORIGIN": "https://forms-upstream.invalid"
+  },
+  "secrets": {
+    // Supplied with `wrangler secret put FORMS_EDGE_KEY`. The name must match
+    // the API's `FORMS_EDGE_KEY_CURRENT` value exactly (64 lowercase hex).
+    "required": ["FORMS_EDGE_KEY"]
+  }
+  // Example authorized route (leave commented until a separate deployment):
+  // "routes": [{ "pattern": "forms.example.com/*", "zone_name": "example.com" }]
+}
