@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import assert from 'node:assert/strict'
 const id = '00000000-0000-4000-8000-000000000001',
   run = '00000000-0000-4000-8000-000000000002'
+const webPort = process.env.H15_DEADLINE_PORT || '38294'
 let closed = false, authClosed = 0, authStarted = 0
 const mock = http.createServer((req, res) => {
   if (req.url.startsWith('/auth/') && req.headers.authorization === 'Bearer invalid') {
@@ -30,7 +31,7 @@ const child = spawn(process.execPath, ['.output/server/index.mjs'], {
   env: {
     ...process.env,
     HOST: '127.0.0.1',
-    PORT: '38294',
+    PORT: webPort,
     NUXT_PUBLIC_BOUNDED_SAVED_DETAIL: 'true',
     NUXT_API_BASE_URL: `http://127.0.0.1:${mock.address().port}`,
     NUXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${mock.address().port}`,
@@ -41,7 +42,7 @@ const child = spawn(process.execPath, ['.output/server/index.mjs'], {
 try {
   for (let i = 0;; i++) {
     try {
-      await fetch('http://127.0.0.1:38294/')
+      await fetch(`http://127.0.0.1:${webPort}/`)
       break
     } catch {
       if (i > 100) throw Error('startup')
@@ -49,7 +50,7 @@ try {
     }
   }
   const url =
-    `http://127.0.0.1:38294/api/websites/${id}/seo/audits/${run}/dashboard`
+    `http://127.0.0.1:${webPort}/api/websites/${id}/seo/audits/${run}/dashboard`
   const unauthorized = await fetch(url)
   assert.equal(unauthorized.status, 401)
   assert.match(unauthorized.headers.get('cache-control'), /no-store/)

@@ -136,6 +136,17 @@ const mock = http.createServer((req, res) => {
     })
     if (mode === 'nonjson') return res.end(JSON.stringify(d))
     if (mode === 'empty') return res.end()
+    if (mode === 'unsupported') {
+      d = structuredClone(d)
+      d.report.evidence_contract.version = 99
+      return res.end(JSON.stringify(d))
+    }
+    if (mode === 'truncated') {
+      d = structuredClone(d)
+      d.report.evidence_contract.truncated = true
+      d.report.evidence_contract.omitted_observations = 5
+      return res.end(JSON.stringify(d))
+    }
     if (mode === 'wrong-shape') return res.end(JSON.stringify({ ...d, summary: { ...d.summary, pages: null } }))
     if (mode === 'cut') {
       res.write('{"delivery_id":')
@@ -285,6 +296,22 @@ try {
     assert.equal(await page.getByRole('alert').filter({ hasText: /Seosmith|fetch|JSON/i }).count(), 0)
     assert.match(await page.locator('.seo-summary').innerText(), new RegExp(String(details[1].summary.pages.checked)))
   }
+  for (const mode of ['unsupported', 'truncated']) {
+    modes[ids[1]] = mode
+    modes[ids[0]] = 'normal'
+    await select.selectOption(ids[0])
+    await panel.waitFor()
+    await select.selectOption(ids[1])
+    await panel.waitFor()
+    if (mode === 'unsupported') {
+      await panel.getByText(/unavailable or unsupported/).waitFor()
+    } else {
+      await panel.getByText(/Evidence was truncated/).waitFor()
+    }
+    assert.equal(await page.getByRole('alert').filter({ hasText: /Seosmith|fetch|JSON/i }).count(), 0)
+    console.log(mode, 'evidence panel passed')
+  }
+  modes[ids[1]] = 'normal'
   modes[ids[0]] = 'delay'
   await select.selectOption(ids[0])
   await page.getByText('Loading this run’s findings…').waitFor()
