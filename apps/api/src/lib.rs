@@ -5,6 +5,7 @@ mod audit_export;
 pub mod auth;
 mod bing;
 mod dashboard_cors;
+mod form_inbox;
 mod form_ingress;
 mod form_verification;
 mod insights;
@@ -98,6 +99,11 @@ pub fn app_with_capabilities(
                 enabled: form_verification::enabled_from_env(),
             },
         ))
+        .merge(form_inbox::router(form_inbox::FormInboxState {
+            reader: websites.forms_reader(),
+            enabled: form_inbox::enabled_from_env(),
+            pilot: form_inbox::pilot_from_env(),
+        }))
         .merge(websites::router(websites))
         .layer(middleware::from_fn_with_state(capabilities, rollout_gate))
         .layer(middleware::from_fn_with_state(auth, auth::require_user));
