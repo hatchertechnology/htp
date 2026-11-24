@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { csvCell } from "../utils/forms-csv"
 import { FORMS_INBOX_PAGE_SIZE, formsInboxPath, formsInboxUrl, staticFormsInboxReads, type FormsInboxPage } from '#shared/utils/forms-inbox-client'
+import { beginBody, confirmBody, isSavedResult, isVerifiedResult, ownerMessage, ownerPath, ownerUrl, pageQuery, parseChallenge, saveBody, sessionEndedError, isUnknownOutcome, type OwnerChallenge, type OwnerPage, type OwnerStep } from '#shared/utils/forms-owner-client'
 type Field = { key: string; label: string; kind: 'text'|'email'|'telephone'|'multiline'; required: boolean; max_length: number }
 type Host = { id: string; hostname: string; verified_at: string | null }
 type Form = { id: string; form_key: string; name: string; fields: Field[]; active: boolean }
@@ -17,10 +18,10 @@ const legacy = computed(() => props.mode === 'legacy')
 const eligible = ref(false)
 // Static pilot reads go through the authenticated API. Nitro/SSR builds keep direct Supabase reads.
 const apiReads = computed(() => !legacy.value && eligible.value && staticFormsInboxReads(runtime.staticDashboard, runtime.rolloutFormsPilot))
-// Static builds have no Nitro server, so eligibility is a read of the pilot-scoped API inbox (fails closed).
+// Static builds have no Nitro server, so eligibility is the API's boolean pilot-eligibility read (fails closed).
 async function staticEligible(websiteId: string, token: string) {
-  const page = await $fetch<FormsInboxPage<unknown>>(formsInboxUrl(formsInboxPath(websiteId), { limit: 1, offset: 0 }, runtime.apiBaseUrl), { headers: { Authorization: `Bearer ${token}` }, retry: 0 })
-  return Array.isArray(page?.items)
+  const result = await $fetch<{ eligible?: unknown }>(ownerUrl(ownerPath.eligibility(websiteId), runtime.apiBaseUrl), { headers: { Authorization: `Bearer ${token}` }, retry: 0 })
+  return result?.eligible === true
 }
 let eligibilityGeneration = 0
 watch(() => [auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId, props.mode] as const, async ([owner, anonymous, websiteId, mode]) => {
@@ -42,16 +43,60 @@ const hosts = ref<Host[]>([]), forms = ref<Form[]>([]), submissions = ref<Submis
 const deleting = ref<string|null>(null)
 const recipients = ref<Recipient[]>([]), deliveries = ref<Delivery[]>([]), recipientEmail = ref('')
 const selected = ref<Form | null>(null), editing = ref<string | null>(null), moreResponses = ref(false)
-const hostname = ref(props.fqdn), challenge = ref<{host_id:string;txt_name:string;txt_value:string}|null>(null)
+const hostname = ref(props.fqdn), challenge = ref<OwnerChallenge|null>(null)
+// Set after an ambiguous DNS confirm or form save. Verify (or save) stays off until the owner reloads and checks the state.
+const verifyUnknown = ref(false), saveUnknown = ref(false)
 const name = ref(''), formKey = ref(''), enabled = ref(false), chosenHosts = ref<string[]>([])
 const fields = ref<Field[]>([{key:'name',label:'Name',kind:'text',required:true,max_length:100},{key:'email',label:'Email',kind:'email',required:true,max_length:254}])
 function fail(cause: unknown) { error.value = cause instanceof Error ? cause.message : 'The request failed. Please try again.' }
-function reset() { editing.value=null; name.value=''; formKey.value=''; enabled.value=false; chosenHosts.value=[]; fields.value=[{key:'name',label:'Name',kind:'text',required:true,max_length:100},{key:'email',label:'Email',kind:'email',required:true,max_length:254}] }
+function reset() { editing.value=null; name.value=''; formKey.value=''; enabled.value=false; chosenHosts.value=[]; saveUnknown.value=false; fields.value=[{key:'name',label:'Name',kind:'text',required:true,max_length:100},{key:'email',label:'Email',kind:'email',required:true,max_length:254}] }
 // One authenticated page of the owner inbox API (static pilot reads only).
 async function inboxPage<T>(path: string, offset: number): Promise<FormsInboxPage<T>> {
   const token = await auth.accessToken()
-  if (!token) throw new Error('Your session has ended. Sign in again.')
+  if (!token) throw sessionEndedError()
   return $fetch<FormsInboxPage<T>>(formsInboxUrl(path, { limit: FORMS_INBOX_PAGE_SIZE, offset }, runtime.apiBaseUrl), { headers: { Authorization: `Bearer ${token}` }, retry: 0 })
+}
+// Static pilot owner calls (hosts, origins, verification, save). Only the closed owner routes are reachable here.
+async function ownerBearer(): Promise<string> {
+  const token = await auth.accessToken()
+  if (!token) throw sessionEndedError()
+  return token
+}
+async function ownerPage<T>(path: string, offset: number, extra: Record<string, string> = {}): Promise<OwnerPage<T>> {
+  const token = await ownerBearer()
+  const query = extra.form_id ? { form_id: extra.form_id, ...pageQuery(offset) } : pageQuery(offset)
+  return $fetch<OwnerPage<T>>(ownerUrl(path, runtime.apiBaseUrl, query), { headers: { Authorization: `Bearer ${token}` }, retry: 0 })
+}
+async function ownerAll<T>(path: string, extra: Record<string, string> = {}): Promise<T[]> {
+  const all: T[] = []
+  for (let offset = 0; ;) {
+    const page = await ownerPage<T>(path, offset, extra)
+    if (!Array.isArray(page?.items)) throw new Error(ownerMessage('list', null))
+    all.push(...page.items)
+    if (!page.has_more || !page.items.length) return all
+    offset += page.items.length
+  }
+}
+// One owner write. The URL and body are built before the call. A success body that does not match the request is unknown, not a success.
+async function ownerWrite(step: OwnerStep, path: string, body: Record<string, unknown>, accept: (value: unknown) => boolean): Promise<unknown> {
+  const token = await ownerBearer()
+  const url = ownerUrl(path, runtime.apiBaseUrl)
+  let value: unknown
+  try {
+    value = await $fetch<unknown>(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body, retry: 0 })
+  } catch (cause) {
+    if (isUnknownOutcome(step, cause)) await reconcile(step)
+    throw cause
+  }
+  if (!accept(value)) { await reconcile(step); throw new Error('The response did not match the request.') }
+  return value
+}
+function failOwner(step: OwnerStep, cause: unknown) { error.value = ownerMessage(step, cause) }
+// After an ambiguous outcome, reload the owner state before the user can act on it again.
+async function reconcile(step: OwnerStep) {
+  if (step === 'save-create' || step === 'save-update') saveUnknown.value = true
+  if (step === 'confirm') verifyUnknown.value = true
+  try { await load() } catch { /* The unknown-outcome message below still applies. */ }
 }
 async function apiForms(): Promise<{ data: Form[] | null; error: unknown }> {
   try {
@@ -65,12 +110,17 @@ async function apiForms(): Promise<{ data: Form[] | null; error: unknown }> {
     return { data: all, error: null }
   } catch (cause) { return { data: null, error: cause } }
 }
+// Static pilot hosts and origins come from the owner API. Every other path keeps the existing Supabase reads.
+async function apiHosts(): Promise<{ data: Host[] | null; error: unknown }> {
+  try { return { data: await ownerAll<Host>(ownerPath.hosts(props.websiteId)), error: null } } catch (cause) { return { data: null, error: cause } }
+}
 async function load() {
   const owner = auth.user.value?.id
   error.value=''
+  const api = apiReads.value
   const [hostResult, formResult] = await Promise.all([
-    $supabase.from('website_form_hosts').select('id,hostname,verified_at').eq('website_id',props.websiteId).order('hostname'),
-    apiReads.value ? apiForms() : $supabase.from('website_forms').select('id,form_key,name,fields,active').eq('website_id',props.websiteId).order('name'),
+    api ? apiHosts() : $supabase.from('website_form_hosts').select('id,hostname,verified_at').eq('website_id',props.websiteId).order('hostname'),
+    api ? apiForms() : $supabase.from('website_forms').select('id,form_key,name,fields,active').eq('website_id',props.websiteId).order('name'),
   ])
   if (!owner || auth.user.value?.id !== owner) return
   if (hostResult.error || formResult.error) { error.value='Could not load forms. Please try again.'; return }
@@ -79,37 +129,72 @@ async function load() {
 async function begin() {
   busy.value=true; error.value=''; notice.value=''
   try {
-    const {data,error:err}=await $supabase.rpc('begin_form_host_verification',{p_website_id:props.websiteId,p_hostname:hostname.value.trim().toLowerCase()})
-    if (err?.message === 'form_host_rate_limited') throw new Error('Too many verification requests. Try again in 10 minutes.')
-    if (err?.message === 'form_host_limit') throw new Error('This website has reached its limit of 64 hosts.')
-    if (err?.message === 'form_host_account_limit') throw new Error('This account has reached its limit of 256 hosts.')
-    if (err) throw err
-    challenge.value=data
+    if (apiReads.value) {
+      const value = await ownerWrite('begin', ownerPath.begin(props.websiteId), beginBody(hostname.value), value => parseChallenge(value) !== null)
+      challenge.value = parseChallenge(value)
+      verifyUnknown.value = false
+    } else {
+      const {data,error:err}=await $supabase.rpc('begin_form_host_verification',{p_website_id:props.websiteId,p_hostname:hostname.value.trim().toLowerCase()})
+      if (err?.message === 'form_host_rate_limited') throw new Error('Too many verification requests. Try again in 10 minutes.')
+      if (err?.message === 'form_host_limit') throw new Error('This website has reached its limit of 64 hosts.')
+      if (err?.message === 'form_host_account_limit') throw new Error('This account has reached its limit of 256 hosts.')
+      if (err) throw err
+      challenge.value=data
+    }
     await load()
-  } catch(cause) { fail(cause) } finally { busy.value=false }
+  } catch(cause) { if (apiReads.value) failOwner('begin', cause); else fail(cause) } finally { busy.value=false }
 }
 async function verify() {
   if (!challenge.value) return
+  const current = challenge.value
   busy.value=true; error.value=''; notice.value=''
   try {
-    const token=challenge.value.txt_value.slice('htp-verification='.length)
-    const {data,error:err}=await $supabase.functions.invoke('form-verify',{body:{host_id:challenge.value.host_id,token}})
+    if (apiReads.value) {
+      await ownerWrite('confirm', ownerPath.confirm(current.host_id), confirmBody(current.txt_value), value => isVerifiedResult(value, current.host_id))
+      challenge.value=null; verifyUnknown.value=false; notice.value='Host verified.'; await load()
+      return
+    }
+    const token=current.txt_value.slice('htp-verification='.length)
+    const {data,error:err}=await $supabase.functions.invoke('form-verify',{body:{host_id:current.host_id,token}})
     if (err || !data?.ok) throw new Error('Could not verify the DNS record yet. Check the value and try again.')
     challenge.value=null; notice.value='Host verified.'; await load()
-  } catch(cause) { fail(cause) } finally { busy.value=false }
+  } catch(cause) {
+    if (!apiReads.value) { fail(cause); return }
+    // An unknown confirm is reconciled by the host list. If the host now shows as verified, the challenge is closed.
+    if (isUnknownOutcome('confirm', cause) && hosts.value.some(host => host.id === current.host_id && host.verified_at)) {
+      challenge.value=null; verifyUnknown.value=false; notice.value='Host verified.'; return
+    }
+    failOwner('confirm', cause)
+  } finally { busy.value=false }
 }
 async function edit(form:Form) {
-  editing.value=form.id; name.value=form.name; formKey.value=form.form_key; enabled.value=form.active; fields.value=structuredClone(form.fields)
+  editing.value=form.id; name.value=form.name; formKey.value=form.form_key; enabled.value=form.active; fields.value=form.fields.map(field=>({...field})); saveUnknown.value=false
+  if (apiReads.value) {
+    try {
+      const origins = await ownerAll<{ form_id: string; host_id: string }>(ownerPath.origins(props.websiteId), { form_id: form.id })
+      if (editing.value === form.id) chosenHosts.value = origins.map(row => row.host_id)
+    } catch (cause) { if (editing.value === form.id) error.value = ownerMessage('list', cause) }
+    return
+  }
   const {data,error:err}=await $supabase.from('website_form_origins').select('host_id').eq('website_id',props.websiteId).eq('form_id',form.id)
   if (err) { fail(err); return }; chosenHosts.value=(data ?? []).map((row: {host_id:string})=>row.host_id)
 }
 async function save() {
   busy.value=true; error.value=''; notice.value=''
   try {
+    if (apiReads.value) {
+      const formId = editing.value
+      const body = saveBody({ formId, formKey: formKey.value, name: name.value, fields: fields.value, active: enabled.value, hostIds: chosenHosts.value })
+      await ownerWrite(formId === null ? 'save-create' : 'save-update', ownerPath.forms(props.websiteId), body, value => isSavedResult(value, formKey.value))
+      reset(); await load(); notice.value='Form saved.'
+      return
+    }
     const {error:err}=await $supabase.rpc('save_website_form',{p_website_id:props.websiteId,p_form_id:editing.value,p_form_key:formKey.value,p_name:name.value,p_fields:fields.value,p_active:enabled.value,p_host_ids:chosenHosts.value})
     if (err) throw err
     reset(); await load(); notice.value='Form saved.'
-  } catch(cause) { fail(cause) } finally { busy.value=false }
+  } catch(cause) {
+    if (apiReads.value) failOwner(editing.value === null ? 'save-create' : 'save-update', cause); else fail(cause)
+  } finally { busy.value=false }
 }
 async function inbox(form:Form, more = false) {
   const owner = auth.user.value?.id
@@ -193,7 +278,7 @@ async function exportCsv() {
     const url=URL.createObjectURL(new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8'})); const link=document.createElement('a'); link.href=url; link.download=`${form.form_key}.csv`; link.click(); URL.revokeObjectURL(url)
   } catch(cause) { fail(cause) } finally { busy.value=false }
 }
-watch(()=>auth.user.value?.id,()=>{ hosts.value=[]; forms.value=[]; submissions.value=[]; recipients.value=[]; deliveries.value=[]; selected.value=null; deleting.value=null; challenge.value=null; reset(); expanded.value=false })
+watch(()=>auth.user.value?.id,()=>{ hosts.value=[]; forms.value=[]; submissions.value=[]; recipients.value=[]; deliveries.value=[]; selected.value=null; deleting.value=null; challenge.value=null; verifyUnknown.value=false; moreResponses.value=false; error.value=''; notice.value=''; reset(); expanded.value=false })
 </script>
 
 <template>
@@ -205,8 +290,8 @@ watch(()=>auth.user.value?.id,()=>{ hosts.value=[]; forms.value=[]; submissions.
       <p v-if="error" class="form-error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
       <div class="forms-block">
         <h4>Verify a website host</h4>
-        <form @submit.prevent="begin"><label>Hostname <input v-model="hostname" required maxlength="253" placeholder="www.example.com"></label> <UButton type="submit" :loading="busy">Create DNS challenge</UButton></form>
-        <div v-if="challenge"><p>Add this TXT record to your DNS, then verify it. The challenge expires after 24 hours.</p><p>Name: <code>{{ challenge.txt_name }}</code></p><p>Value: <code>{{ challenge.txt_value }}</code></p><UButton :loading="busy" @click="verify">Verify DNS record</UButton></div>
+        <form @submit.prevent="begin"><label>Hostname <input v-model="hostname" required maxlength="253" placeholder="www.example.com"></label> <UButton type="submit" :loading="busy" :disabled="verifyUnknown">Create DNS challenge</UButton></form>
+        <div v-if="challenge"><p>Add this TXT record to your DNS, then verify it. The challenge expires after 24 hours.</p><p>Name: <code>{{ challenge.txt_name }}</code></p><p>Value: <code>{{ challenge.txt_value }}</code></p><UButton :loading="busy" :disabled="verifyUnknown" @click="verify">Verify DNS record</UButton></div>
         <ul><li v-for="host in hosts" :key="host.id">{{ host.hostname }} — {{ host.verified_at ? 'Verified' : 'Not verified' }}</li></ul>
       </div>
       <div class="forms-block">
@@ -227,7 +312,7 @@ watch(()=>auth.user.value?.id,()=>{ hosts.value=[]; forms.value=[]; submissions.
           </fieldset>
           <fieldset><legend>Permitted verified hosts</legend><label v-for="host in hosts.filter(h=>h.verified_at)" :key="host.id"><input v-model="chosenHosts" type="checkbox" :value="host.id"> {{ host.hostname }} </label><p v-if="!hosts.some(h=>h.verified_at)">Verify a host before activating a form.</p></fieldset>
           <label><input v-model="enabled" type="checkbox"> Accept submissions</label>
-          <div><UButton type="submit" :loading="busy">Save form</UButton> <UButton v-if="editing" type="button" color="neutral" variant="outline" @click="reset">Cancel edit</UButton></div>
+          <div><UButton type="submit" :loading="busy" :disabled="saveUnknown">Save form</UButton> <UButton v-if="editing" type="button" color="neutral" variant="outline" @click="reset">Cancel edit</UButton></div>
         </form>
       </div>
       <div class="forms-block"><h4>Your forms</h4><p v-if="!forms.length">No forms yet.</p><ul><li v-for="form in forms" :key="form.id"><strong>{{ form.name }}</strong> — {{ form.active ? 'Active' : 'Paused' }} <UButton color="neutral" variant="ghost" @click="edit(form)">Edit</UButton><UButton color="neutral" variant="ghost" @click="inbox(form)">Responses</UButton><p>Submission endpoint: <code>{{ config.public.apiBaseUrl }}/public/forms/{{ form.id }}</code></p></li></ul></div>
