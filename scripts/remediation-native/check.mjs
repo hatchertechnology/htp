@@ -4,20 +4,38 @@ import { chromium } from '../../apps/web/node_modules/playwright/index.mjs'
 const web=`http://127.0.0.1:${process.env.WEB_PORT}`, api=`http://127.0.0.1:${process.env.API_PORT}`, issuer=`http://127.0.0.1:${process.env.ISSUER_PORT}`, site='00000000-0000-0000-0000-000000000003'
 const owner=await readFile(`${process.env.FIXTURE_DIR}/owner.token`,'utf8'), other=await readFile(`${process.env.FIXTURE_DIR}/other.token`,'utf8')
 async function call(base,path,token,method='GET',body) { const r=await fetch(base+path,{method,headers:{authorization:`Bearer ${token}`,...(body?{'content-type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});const text=await r.text();return {status:r.status,body:text?JSON.parse(text):null} }
+async function importReport(report,reach) {
+ const raw=JSON.stringify(report)
+ const imported=await call(api,`/websites/${site}/seo/audits/import`,owner,'POST',{report_json:raw})
+ assert.equal(imported.status,200,JSON.stringify(imported)); assert.equal(imported.body.accepted,true); assert.ok(report.findings.length)
+ return {report,id:imported.body.delivery_id,reach}
+}
 const reports=[]
 for(const file of ['supabase/tests/fixtures/seosmith-expanded.json','supabase/tests/fixtures/contracts/v2-partial.json']) {
- const raw=await readFile(file,'utf8'), report=JSON.parse(raw)
- const imported=await call(api,`/websites/${site}/seo/audits/import`,owner,'POST',{report_json:raw})
- assert.equal(imported.status,200,JSON.stringify(imported)); assert.equal(imported.body.accepted,true);assert.ok(report.findings.length);reports.push({report,id:imported.body.delivery_id})
+ const report=JSON.parse(await readFile(file,'utf8'))
+ reports.push(await importReport(report,report.schema_version===2?'unknown':'1'))
 }
+// PR75 accepted mismatch: the raw legacy producer claims completeness while
+// the receiver derives incomplete crawl coverage from resource_limit.
+const legacyMismatch=structuredClone(reports[0].report)
+legacyMismatch.request.request_id='00000000-0000-0000-0000-000000000011'
+legacyMismatch.stop_reason='resource_limit'
+assert.equal(legacyMismatch.coverage_complete,true)
+reports.push(await importReport(legacyMismatch,'unknown'))
 const browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1280,height:900}}),errors=[]
 page.on('pageerror',e=>errors.push(e.message))
 await page.addInitScript(({token})=>localStorage.setItem('sb-127-auth-token',JSON.stringify({access_token:token,refresh_token:'fixture',token_type:'bearer',expires_in:3600,expires_at:Math.floor(Date.now()/1000)+3600,user:{id:'00000000-0000-0000-0000-000000000001',aud:'authenticated',role:'authenticated'}})),{token:owner})
 await page.route('**/*',async route=>{const u=new URL(route.request().url());if(!['127.0.0.1','localhost'].includes(u.hostname))return route.abort();if(u.origin===web && (u.pathname.startsWith('/api/google/')||u.pathname.startsWith('/api/bing/')||u.pathname.includes('/insights/')||u.pathname.includes('/search/')||u.pathname.includes('/repository')))return route.fulfill({json:{connected:false,configured:false}});return route.continue()})
 try {
  await page.goto(web,{waitUntil:'domcontentloaded'});const picker=page.getByLabel('Inspect a run',{exact:true}); await picker.waitFor({timeout:15000}).catch(async e=>{console.error('dashboard:',(await page.locator('body').innerText()).slice(0,3000),'errors:',errors);throw e})
- for(const {report,id} of reports) {
+ for(const {report,id,reach} of reports) {
   await picker.selectOption(id); const panel=page.getByRole('region',{name:'Remediation work'});await panel.locator('label').filter({hasText:'Finding'}).locator('select').waitFor();await panel.locator('label').filter({hasText:'Finding'}).locator('select').selectOption('0')
+  const priority = panel.locator('dl[aria-label="Priority inputs"] > div')
+  assert.match(await priority.filter({hasText:'Evidence confidence'}).first().innerText(), report.schema_version === 2 ? /high/ : /unknown/)
+  const reachText=await priority.filter({hasText:'Affected reach'}).first().innerText()
+  assert.match(reachText, reach === 'unknown' ? /unknown/ : new RegExp(`\\b${reach}\\b`))
+  if (report.schema_version === 1) assert.match(reachText, reach === 'unknown' ? /crawl coverage incomplete/ : /complete crawl coverage/)
+  assert.match(await priority.filter({hasText:'Intended policy'}).first().innerText(), /unavailable/)
   await panel.locator('label').filter({hasText:'Status'}).locator('select').selectOption('done');await panel.locator('label').filter({hasText:'Notes'}).locator('input').fill(`owner schema ${report.schema_version}`);await panel.getByRole('button',{name:'Save work'}).click();await panel.getByText('Work saved. Status does not verify a fix.').waitFor()
   let listed=await call(api,`/websites/${site}/seo/audits/${id}/work?finding_index=0`,owner);assert.equal(listed.status,200);assert.equal(listed.body[0].finding_key,report.findings[0].key);assert.equal(listed.body[0].status,'done');assert.equal(listed.body[0].notes,`owner schema ${report.schema_version}`)
   await panel.locator('label').filter({hasText:'Notes'}).locator('input').fill('edited by owner');await panel.getByRole('button',{name:'Save work'}).click();await panel.getByText('Work saved. Status does not verify a fix.').waitFor()
