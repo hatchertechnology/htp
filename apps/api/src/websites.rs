@@ -46,6 +46,15 @@ impl WebsiteStore {
         crate::form_verification::FormVerifier::new(project, &self.publishable_key)
     }
 
+    /// Owner Forms create/update uses the same project and publishable key as the store.
+    pub(crate) fn forms_saver(&self) -> crate::form_save::FormSaver {
+        let project = self
+            .url
+            .strip_suffix("/rest/v1/websites")
+            .unwrap_or(&self.url);
+        crate::form_save::FormSaver::new(project, &self.publishable_key)
+    }
+
     /// Owner Forms inbox reads use the same project and publishable key as the store.
     pub(crate) fn forms_reader(&self) -> crate::form_inbox::FormInboxReader {
         let project = self
