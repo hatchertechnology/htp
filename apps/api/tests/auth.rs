@@ -2574,3 +2574,100 @@ async fn owner_inspection_authenticates_before_validation_and_rejects_unbounded_
         }
     }
 }
+
+#[tokio::test]
+async fn playground_secured_uses_existing_auth_and_matches_mcp() {
+    let auth = TestAuth::new().await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let rest = auth
+        .app
+        .clone()
+        .oneshot(
+            Request::post("/playground/secured")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(r#"{"transport":"rest"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rest.status(), StatusCode::OK);
+    let rest: Value =
+        serde_json::from_slice(&to_bytes(rest.into_body(), 1024).await.unwrap()).unwrap();
+    assert_eq!(rest, json!({"message": "hello world secured"}));
+    let mut anonymous = auth.claims();
+    anonymous["is_anonymous"] = json!(true);
+    let anonymous = TestAuth::token(&anonymous, "test-key");
+    let rejected = auth
+        .app
+        .clone()
+        .oneshot(
+            Request::post("/playground/secured")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {anonymous}"))
+                .body(Body::from(r#"{"transport":"rest"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+    for operation in ["call", "list"] {
+        let demo = auth
+            .app
+            .clone()
+            .oneshot(
+                Request::post("/playground/secured")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::from(
+                        json!({"transport": "mcp", "operation": operation}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(demo.status(), StatusCode::OK);
+        let demo: Value =
+            serde_json::from_slice(&to_bytes(demo.into_body(), 1024 * 1024).await.unwrap())
+                .unwrap();
+        let rpc = if operation == "list" {
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        } else {
+            json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "hello_world_secured", "arguments": {}}})
+        };
+        let real = auth
+            .app
+            .clone()
+            .oneshot(
+                Request::post("/mcp/secured")
+                    .header("host", "localhost")
+                    .header("content-type", "application/json")
+                    .header("accept", "application/json, text/event-stream")
+                    .header("mcp-protocol-version", "2025-11-25")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::from(rpc.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(real.status(), StatusCode::OK);
+        let real: Value =
+            serde_json::from_slice(&to_bytes(real.into_body(), 1024 * 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(demo, real);
+        assert!(!demo.to_string().contains(&token));
+    }
+    let response = auth
+        .app
+        .clone()
+        .oneshot(
+            Request::post("/playground/secured")
+                .header("authorization", "Bearer invalid")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"transport":"rest"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}

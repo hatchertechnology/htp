@@ -25,3 +25,21 @@ describe('playground request boundary', () => {
     expect(toolRequest({ transport: 'mcp', access: 'secured', operation: 'list' })).toMatchObject({ method: 'tools/list' })
   })
 })
+
+import { playgroundTarget } from '../shared/utils/playground-client'
+
+describe('static playground routing', () => {
+  it('keeps the legacy request intact', () => {
+    const request = { transport: 'mcp', access: 'secured', operation: 'list' } as const
+    expect(playgroundTarget(request, false, 'invalid')).toEqual({ url: '/api/playground', body: request })
+  })
+  it.each(['public', 'secured'] as const)('maps only fixed %s demo operations', (access) => {
+    expect(playgroundTarget({ transport: 'mcp', access, operation: 'list' }, true, 'https://api.example')).toEqual({
+      url: `https://api.example/playground/${access}`, body: { transport: 'mcp', operation: 'list' },
+    })
+  })
+  it('rejects unsafe origins and invalid access', () => {
+    expect(() => playgroundTarget({ transport: 'rest', access: 'public' }, true, 'https://api.example/path')).toThrow()
+    expect(() => playgroundTarget({ transport: 'rest', access: '../mcp' } as never, true, 'https://api.example')).toThrow()
+  })
+})

@@ -12,6 +12,7 @@ mod form_verification;
 mod insights;
 mod mcp;
 mod oauth;
+mod playground;
 mod providers;
 mod repositories;
 mod s14_worker;
@@ -85,6 +86,10 @@ pub fn app_with_capabilities(
         ));
     let protected = Router::new()
         .route("/secured", get(async || Json(secured_message())))
+        .route(
+            "/playground/secured",
+            axum::routing::post(playground::secured),
+        )
         .merge(mcp_routes)
         .merge(providers::router())
         .merge(analytics::router(websites.clone(), analytics))
@@ -116,6 +121,10 @@ pub fn app_with_capabilities(
 
     let root = Router::new()
         .route("/", get(async || Json(message())))
+        .route(
+            "/playground/public",
+            axum::routing::post(playground::public),
+        )
         .nest_service("/mcp", mcp::service())
         .merge(oauth_routes)
         .merge(seosmith_ingest)

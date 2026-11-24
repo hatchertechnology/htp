@@ -135,3 +135,66 @@ async fn rejects_untrusted_hosts_and_origins() {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }
+
+#[tokio::test]
+async fn playground_public_matches_real_rest_and_mcp_responses() {
+    for (transport, operation) in [("rest", "call"), ("mcp", "call"), ("mcp", "list")] {
+        let response = htp_api::app()
+            .oneshot(
+                Request::post("/playground/public")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"transport": transport, "operation": operation}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let demo: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+                .unwrap();
+        let expected = if transport == "rest" {
+            json!({"message": "hello world"})
+        } else if operation == "list" {
+            rpc(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).await
+        } else {
+            rpc(json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "hello_world", "arguments": {}}})).await
+        };
+        assert_eq!(demo, expected);
+    }
+}
+
+#[tokio::test]
+async fn playground_rejects_forwarding_and_arbitrary_rpc_inputs() {
+    for body in [
+        json!({"transport": "https://evil.example"}),
+        json!({"transport": "mcp", "operation": "delete"}),
+        json!({"transport": "mcp", "name": "delete_website"}),
+        json!({"transport": "mcp", "arguments": {}}),
+        json!({"transport": "rest", "access": "secured"}),
+        json!({"transport": "rest", "url": "https://evil.example"}),
+    ] {
+        let response = htp_api::app()
+            .oneshot(
+                Request::post("/playground/public")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    let response = htp_api::app()
+        .oneshot(
+            Request::post("/playground/secured")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"transport":"rest"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
