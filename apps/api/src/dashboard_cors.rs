@@ -123,6 +123,10 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
     let (site, resource) = rest.split_once('/')?;
     uuid::Uuid::parse_str(site).ok()?;
     match resource {
+        "search/dataset" | "search/crawl-evidence" => return (site.len() == 36).then_some("POST"),
+        "seo/audits/lifecycle" | "seo/audits/url-lifecycle" => {
+            return (site.len() == 36).then_some("GET");
+        }
         "search/owner-inspect" => return (site.len() == 36).then_some("POST"),
         "search/properties" | "search/dashboard" | "search/inspection-history" => {
             return Some("POST");
@@ -137,6 +141,22 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
         "forms/pilot-eligibility" | "forms/hosts" | "forms/origins" => return Some("GET"),
         "forms/host-verifications" => return Some("POST"),
         _ => {}
+    }
+    if site.len() == 36 {
+        let parts: Vec<_> = resource.split('/').collect();
+        match parts.as_slice() {
+            ["seo", "audits", run, "work"]
+                if run.len() == 36 && uuid::Uuid::parse_str(run).is_ok() =>
+            {
+                return Some("GET, POST");
+            }
+            ["seo", "work", work, "attempts"]
+                if work.len() == 36 && uuid::Uuid::parse_str(work).is_ok() =>
+            {
+                return Some("POST");
+            }
+            _ => {}
+        }
     }
     if let Some(inbox) = resource.strip_prefix("forms/") {
         let (form, responses) = inbox.split_once('/')?;
@@ -413,7 +433,6 @@ mod tests {
             "/forms/submit",
             "/websites-extra",
             &format!("{audits}/import/"),
-            &format!("{audits}/{run}/work"),
         ] {
             assert!(dashboard_methods(path).is_none(), "{path}");
         }
@@ -496,10 +515,59 @@ mod tests {
                 assert!(dashboard_methods(&format!("{path}{suffix}")).is_none());
             }
         }
-        for action in ["inspect", "dataset", "crawl-evidence", "other"] {
+        for action in ["inspect", "other"] {
             assert!(dashboard_methods(&format!("/websites/{site}/search/{action}")).is_none());
         }
         assert!(dashboard_methods("/websites/invalid/search/dashboard").is_none());
+    }
+
+    #[tokio::test]
+    async fn gated_evidence_cors_is_exact() {
+        let id = "00000000-0000-0000-0000-000000000001";
+        for (resource, methods) in [
+            ("search/dataset".to_owned(), "POST"),
+            ("search/crawl-evidence".to_owned(), "POST"),
+            ("seo/audits/lifecycle".to_owned(), "GET"),
+            ("seo/audits/url-lifecycle".to_owned(), "GET"),
+            (format!("seo/audits/{id}/work"), "GET, POST"),
+            (format!("seo/work/{id}/attempts"), "POST"),
+        ] {
+            let path = format!("/websites/{id}/{resource}");
+            assert_eq!(dashboard_methods(&path), Some(methods));
+            for method in ["GET", "POST", "PUT", "PATCH", "DELETE"] {
+                for origin in [ORIGIN, "https://evil.example"] {
+                    let allowed = origin == ORIGIN && methods.split(", ").any(|m| m == method);
+                    let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                        .oneshot(preflight(&path, origin, method))
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_METHODS),
+                        allowed.then_some(methods)
+                    );
+                    let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                        .oneshot(actual(method, &path, Some(origin), false))
+                        .await
+                        .unwrap();
+                    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+                    assert_eq!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                        allowed.then_some(ORIGIN)
+                    );
+                    assert!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none()
+                    );
+                }
+            }
+            for bad in [
+                format!("{path}/"),
+                format!("{path}/extra"),
+                path.replace(id, "invalid"),
+                path.replace(id, &id.replace('-', "")),
+            ] {
+                assert_eq!(dashboard_methods(&bad), None, "{bad}");
+            }
+        }
     }
 
     #[tokio::test]

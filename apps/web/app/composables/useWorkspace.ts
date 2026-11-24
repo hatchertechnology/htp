@@ -1,10 +1,11 @@
 import { resolveWorkspaceOwnerPath, workspaceOwnerBody } from '#shared/utils/workspace-owner-client'
 import { resolveProviderConnectionPath } from '#shared/utils/provider-connection-client'
+import { gatedEvidenceTransport } from '#shared/utils/gated-evidence-client'
 import type { Website } from '../../shared/types/websites'
 
 export function useWorkspace() {
   const auth = useAuth()
-  const runtime = useRuntimeConfig().public as { staticDashboard?: boolean; apiBaseUrl?: unknown }
+  const runtime = useRuntimeConfig().public as { staticDashboard?: boolean; apiBaseUrl?: unknown; rolloutSearchEvidence?: boolean; rolloutLifecycle?: boolean; rolloutRemediation?: boolean }
   const sessionGeneration = useState('workspace:session-generation', () => 0)
   const sites = useState<Website[]>('workspace:sites', () => [])
   const selectedId = useState('workspace:selected', () => '')
@@ -24,10 +25,11 @@ export function useWorkspace() {
     const token = await auth.accessToken()
     if (!user || !token || generation !== sessionGeneration.value || auth.user.value?.id !== user) throw new Error('Your session has ended. Sign in again.')
     const method = options.method ?? 'GET'
-    const ownerPath = resolveWorkspaceOwnerPath(url, method, runtime.staticDashboard === true, runtime.apiBaseUrl)
+    const evidence = gatedEvidenceTransport(url, options, runtime)
+    const ownerPath = resolveWorkspaceOwnerPath(evidence.path, method, runtime.staticDashboard === true, runtime.apiBaseUrl)
     const path = resolveProviderConnectionPath(ownerPath, method, runtime.staticDashboard === true, runtime.apiBaseUrl)
     const body = workspaceOwnerBody(url, method, runtime.staticDashboard === true, options.body)
-    const requestOptions: Record<string, unknown> = { ...options, ...('body' in options ? { body } : {}) }
+    const requestOptions: Record<string, unknown> = { ...evidence.options, ...('body' in options ? { body } : {}) }
     return $fetch<T>(path, { ...requestOptions, headers: { Authorization: `Bearer ${token}` }, retry: 0 })
   }
   async function load() {
