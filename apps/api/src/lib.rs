@@ -7,6 +7,7 @@ mod bing;
 mod dashboard_cors;
 mod form_inbox;
 mod form_ingress;
+mod form_responses;
 mod form_save;
 mod form_verification;
 mod independent_audit;
@@ -121,6 +122,9 @@ pub fn app_with_capabilities(
         }))
         .merge(form_save::router(form_save::state_from_env(
             websites.forms_saver(),
+        )))
+        .merge(form_responses::router(form_responses::state_from_env(
+            websites.forms_response_writer(),
         )))
         .merge(websites::router(websites))
         .layer(middleware::from_fn_with_state(capabilities, rollout_gate))

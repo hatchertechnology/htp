@@ -177,11 +177,25 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
     if let Some(inbox) = resource.strip_prefix("forms/") {
         let (form, responses) = inbox.split_once('/')?;
         uuid::Uuid::parse_str(form).ok()?;
-        return match responses.strip_prefix("responses")? {
-            "" => Some("GET"),
-            response => uuid::Uuid::parse_str(response.strip_prefix('/')?)
-                .ok()
-                .map(|_| "GET"),
+        return match responses.split('/').collect::<Vec<_>>().as_slice() {
+            ["responses"] => Some("GET"),
+            ["responses", response]
+                if response.len() == 36
+                    && uuid::Uuid::parse_str(response).is_ok()
+                    && form.len() == 36
+                    && site.len() == 36 =>
+            {
+                Some("GET, DELETE")
+            }
+            ["responses", response, "status"]
+                if response.len() == 36
+                    && uuid::Uuid::parse_str(response).is_ok()
+                    && form.len() == 36
+                    && site.len() == 36 =>
+            {
+                Some("PATCH")
+            }
+            _ => None,
         };
     }
     match resource.strip_prefix("seo/audits")? {
@@ -602,14 +616,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forms_inbox_preflight_allows_only_exact_get_routes() {
+    async fn forms_inbox_preflight_preserves_reads_with_exact_detail_delete() {
         let site = "00000000-0000-0000-0000-000000000001";
         let form = "00000000-0000-0000-0000-000000000002";
         let response = "00000000-0000-0000-0000-000000000003";
         let forms = format!("/websites/{site}/forms");
         let responses = format!("{forms}/{form}/responses");
-        for path in [&responses, &format!("{responses}/{response}")] {
-            for (method, allowed) in [("GET", Some("GET")), ("POST", None)] {
+        for (path, methods) in [
+            (&responses, "GET"),
+            (&format!("{responses}/{response}"), "GET, DELETE"),
+        ] {
+            for (method, allowed) in [("GET", Some(methods)), ("POST", None)] {
                 let result = app(Arc::new(AtomicUsize::new(0)), cors())
                     .oneshot(preflight(path, ORIGIN, method))
                     .await
@@ -627,6 +644,61 @@ mod tests {
             format!("{responses}/{response}/extra"),
         ] {
             assert!(dashboard_methods(&path).is_none(), "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn response_management_cors_is_exact_in_method_path_origin_and_headers() {
+        let site = "00000000-0000-0000-0000-000000000001";
+        let form = "00000000-0000-0000-0000-000000000002";
+        let response = "00000000-0000-0000-0000-000000000003";
+        let collection = format!("/websites/{site}/forms/{form}/responses");
+        let detail = format!("{collection}/{response}");
+        for (path, method, expected) in [
+            (detail.clone(), "DELETE", Some("GET, DELETE")),
+            (format!("{detail}/status"), "PATCH", Some("PATCH")),
+            (detail.clone(), "PATCH", None),
+            (format!("{detail}/status"), "DELETE", None),
+            (format!("{detail}/status"), "GET", None),
+            (collection, "DELETE", None),
+            (format!("{detail}/retry"), "POST", None),
+            (format!("{detail}/status/"), "PATCH", None),
+            (detail.replace(response, "invalid"), "DELETE", None),
+            (detail.replace(form, "invalid"), "DELETE", None),
+            (detail.replace(site, "invalid"), "DELETE", None),
+        ] {
+            let result = app(Arc::new(AtomicUsize::new(0)), cors())
+                .oneshot(preflight(&path, ORIGIN, method))
+                .await
+                .unwrap();
+            assert_eq!(
+                header_value(&result, header::ACCESS_CONTROL_ALLOW_METHODS),
+                expected,
+                "{method} {path}"
+            );
+        }
+        for (origin, headers) in [
+            ("https://evil.example", "authorization, content-type"),
+            (
+                "https://dashboard.example.evil",
+                "authorization, content-type",
+            ),
+            (ORIGIN, "authorization, x-rpc"),
+        ] {
+            let mut request = preflight(&detail, origin, "DELETE");
+            request.headers_mut().insert(
+                header::ACCESS_CONTROL_REQUEST_HEADERS,
+                headers.parse().unwrap(),
+            );
+            let result = app(Arc::new(AtomicUsize::new(0)), cors())
+                .oneshot(request)
+                .await
+                .unwrap();
+            assert!(
+                !result
+                    .headers()
+                    .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            );
         }
     }
 
