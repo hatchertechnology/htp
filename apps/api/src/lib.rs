@@ -4,6 +4,7 @@ pub mod analytics;
 mod audit_export;
 pub mod auth;
 mod bing;
+mod dashboard_cors;
 mod form_inbox;
 mod form_ingress;
 mod form_verification;
@@ -107,14 +108,24 @@ pub fn app_with_capabilities(
         .layer(middleware::from_fn_with_state(capabilities, rollout_gate))
         .layer(middleware::from_fn_with_state(auth, auth::require_user));
 
-    Router::new()
+    let root = Router::new()
         .route("/", get(async || Json(message())))
         .nest_service("/mcp", mcp::service())
         .merge(oauth_routes)
         .merge(seosmith_ingest)
         .merge(s14_worker::router())
         .merge(form_ingress::router())
-        .merge(protected)
+        .merge(protected);
+
+    // Opt-in exact-origin CORS for the static dashboard's website routes only.
+    // Mounted outside the auth layer so preflights are answered without credentials.
+    // An invalid configured origin stops startup rather than widening access.
+    let dashboard_origin = std::env::var(dashboard_cors::ORIGIN_ENV).ok();
+    match dashboard_cors::DashboardCors::from_setting(dashboard_origin.as_deref()) {
+        Ok(Some(cors)) => root.layer(middleware::from_fn_with_state(cors, dashboard_cors::layer)),
+        Ok(None) => root,
+        Err(error) => panic!("{}: {error}", dashboard_cors::ORIGIN_ENV),
+    }
 }
 
 async fn rollout_gate(
