@@ -32,7 +32,7 @@ Read-only, same gate, same caller bearer, same pilot pair. Added for the static 
 
 - Paging is the same as the other lists: `limit` 1 to 100 (default 50), `offset` default 0, `has_more` from one probe row.
 - Non-pilot website or caller on hosts/origins: 404 `not_found`, no upstream call. Disabled gate: 404 `forms_inbox_disabled`. Missing caller: 401. Malformed input: 400 `invalid_request`. All carry `no-store`.
-- Eligibility is a UI gate, not a grant. Database grants, owner RLS and the `forms_pilot_approved_sites` gate still decide every write and every row read.
+- Eligibility is a UI gate, not a grant. Database grants and owner RLS govern row visibility. The API enforces the configured pilot pair for reads, and the database pilot approval gate applies to the guarded write and verification RPCs.
 - Responses never include the pilot IDs, the bearer, the publishable key, challenge hashes or any private runtime binding.
 - Not covered here: CORS for a static browser origin. `dashboard_cors.rs` allowlists only the `/websites` paths, so the static build cannot call these routes from a browser until that allowlist is extended in its own reviewed change.
 - The static build still reads `website_form_hosts`/`website_form_origins` directly until the static client moves to these routes; that client change is separate.
