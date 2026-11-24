@@ -433,7 +433,7 @@ impl crate::mcp::WebsiteMcp {
         annotations(
             read_only_hint = false,
             destructive_hint = false,
-            idempotent_hint = true
+            idempotent_hint = false
         )
     )]
     async fn confirm_form_host_verification(
@@ -743,21 +743,24 @@ mod tests {
 
     #[tokio::test]
     async fn redirects_are_not_followed_with_the_bearer() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let target_calls = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::clone(&target_calls);
         let target = Router::new().route(
             "/{*path}",
-            any(|headers: HeaderMap| async move {
-                // A leaked bearer would reach this handler.
-                assert!(
-                    !headers.contains_key("authorization"),
-                    "bearer followed redirect"
-                );
-                (StatusCode::OK, Json(json!({"host_id": HOST})))
+            any(move || {
+                calls.fetch_add(1, Ordering::Relaxed);
+                async { StatusCode::NO_CONTENT }
             }),
         );
         let target_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let target_origin = format!("http://{}", target_listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(target_listener, target).await.unwrap() });
-        let location = format!("{target_origin}/leak");
+        let location = format!("{target_origin}/redirect-target");
         let redirect = Router::new().route(
             "/{*path}",
             any(move || {
@@ -780,6 +783,7 @@ mod tests {
                 .await,
             Err(CONFIRM_UNKNOWN)
         );
+        assert_eq!(target_calls.load(Ordering::Relaxed), 0);
     }
 
     fn rest_app(enabled: bool, base: &str) -> Router {
