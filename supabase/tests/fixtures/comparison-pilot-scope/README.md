@@ -8,16 +8,20 @@ directory, applies the website, SEOsmith audit, comparison and pilot
 migrations, and removes the container on exit. It never pulls an image, reads
 hosted credentials or connects to a hosted service.
 
-The fixture proves three normal cooperative cases:
+The fixture proves four normal cooperative cases:
 
 - **Gate removal serialization.** An in-flight `import_independent_audit` holds
-  the approval/website share lock. A concurrent `DELETE` of the approval waits
-  for it, then invalidates the pair; the committed import remains and the next
-  owner read is denied.
+  the helper's exclusive approval/website locks. A concurrent `DELETE` of the
+  approval waits for it, then invalidates the pair; the committed import remains
+  and the next owner read is denied.
 - **Scoped cleanup serialization.** An in-flight
-  `delete_comparison_pilot_evidence` holds the website row exclusively. A
-  concurrent ownership transfer waits, then observes the committed post-cleanup
-  rows.
+  `delete_comparison_pilot_evidence` holds the helper's exclusive
+  approval/website locks. A concurrent ownership transfer waits, then observes
+  the committed post-cleanup rows.
+- **Owner-transfer lifecycle.** After an ordinary ownership transfer, both the
+  previous owner and the new owner are denied by all seven guarded RPCs and the
+  scoped cleanup, because the approval still names the previous owner. Transferring
+  the site back to the approved owner restores access.
 - **Rollback preservation.** A scoped cleanup whose expected identities or
   fingerprint do not match rejects before deleting anything, releases its lock,
   and a later approval removal is not blocked.

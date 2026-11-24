@@ -1,7 +1,8 @@
 -- Default-empty comparison pilot gate. Does not insert an approval or reopen any
--- held comparison RPC. The gate is an empty (website_id, owner_id) allowlist that
--- is checked after the existing nonanonymous owner check in all seven comparison
--- RPCs. Applying this migration preserves the held public ACLs: the seven RPCs are
+-- held comparison RPC. The gate is an empty (website_id, owner_id) allowlist. A
+-- single locked helper binds the approved owner to the actual requesting auth.uid()
+-- and returns the stable website row used by all seven comparison RPCs and the
+-- pilot cleanup. Applying this migration preserves the held public ACLs: the RPCs are
 -- revoked from PUBLIC, anon and authenticated, never granted. A later, separately
 -- reviewed release may provision an approval and grant access; nothing here does.
 begin;
@@ -64,18 +65,22 @@ begin
   end loop;
 end $$;
 
--- Hold the approval row and the website row until transaction end. Approval
--- removal and ownership transfer wait for any guarded in-flight transaction, so
--- authorization, the ownership join and the scoped cleanup all observe one state.
--- The join reuses the approval's owner_id against the current website owner; a
--- transfer invalidates the stale pair without a separate check.
+-- Authorize and lock in one statement, and return the stable website row that
+-- every caller must use. The join requires both the approved owner and the actual
+-- requesting auth.uid(), so a stale approval, an ownership change or a different
+-- caller cannot authorize the site. The approval and website rows stay locked
+-- until transaction end, so approval removal and ownership transfer wait for any
+-- guarded in-flight transaction. Returning the row prevents a caller from
+-- re-resolving the website through a separate unlocked owner lookup.
 create function public.comparison_pilot_site_allowed(p_website_id uuid)
-returns boolean language plpgsql volatile security definer set search_path='' as $$
+returns public.websites language plpgsql volatile security definer set search_path='' as $$
+declare w public.websites;
 begin
-  perform 1 from public.comparison_pilot_approved_sites a
-    join public.websites w on w.id=a.website_id and w.owner_id=a.owner_id
-    where a.website_id=p_website_id for share of a,w;
-  return found;
+  select site.* into w
+    from public.comparison_pilot_approved_sites a
+    join public.websites site on site.id=a.website_id and site.owner_id=a.owner_id and site.owner_id=auth.uid()
+    where a.website_id=p_website_id for update of a,site;
+  return w;
 end $$;
 revoke all on function public.comparison_pilot_site_allowed(uuid) from public,anon,authenticated,service_role;
 do $$
@@ -88,15 +93,16 @@ begin
   end loop;
 end $$;
 
--- The seven existing RPCs keep their signatures, return shapes and nonanonymous
--- owner checks. Each adds one fail-closed gate check after the owner check.
+-- The seven existing RPCs keep their signatures and return shapes. Each keeps its
+-- nonanonymous check, then authorizes through the locked helper and uses only the
+-- website row the helper returned.
 create or replace function public.import_independent_audit(p_website_id uuid, p_format text, p_source text, p_metadata jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare w public.websites; item public.independent_audit_imports;
 begin
-  select * into w from public.websites where id = p_website_id and owner_id = auth.uid() for share;
-  if not found or coalesce(auth.jwt()->>'is_anonymous','true') <> 'false' then raise exception 'forbidden' using errcode='42501'; end if;
-  if not public.comparison_pilot_site_allowed(p_website_id) then raise exception 'forbidden' using errcode='42501'; end if;
+  if coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
+  w := public.comparison_pilot_site_allowed(p_website_id);
+  if w.id is null then raise exception 'forbidden' using errcode='42501'; end if;
   if p_format is distinct from 'controlled-csv-v1' or p_source is null or octet_length(p_source) not between 1 and 4194304 or jsonb_typeof(p_metadata) is distinct from 'object' or octet_length(p_metadata::text)>65536 then
     raise exception 'invalid_import' using errcode='22023';
   end if;
@@ -110,9 +116,9 @@ create or replace function public.independent_audit_history(p_website_id uuid, p
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare w public.websites; result jsonb; more boolean; last_row jsonb;
 begin
-  select * into w from public.websites where id = p_website_id and owner_id = auth.uid();
-  if not found or coalesce(auth.jwt()->>'is_anonymous','true') <> 'false' then raise exception 'forbidden' using errcode='42501'; end if;
-  if not public.comparison_pilot_site_allowed(p_website_id) then raise exception 'forbidden' using errcode='42501'; end if;
+  if coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
+  w := public.comparison_pilot_site_allowed(p_website_id);
+  if w.id is null then raise exception 'forbidden' using errcode='42501'; end if;
   if (p_before is null)<>(p_before_id is null) or (p_id is not null and p_before is not null) then raise exception 'invalid_cursor' using errcode='22023'; end if;
   if p_id is null then
     select coalesce(jsonb_agg(to_jsonb(a) order by a.created_at desc,a.id desc),'[]'::jsonb) into result from
@@ -131,9 +137,9 @@ create or replace function public.save_independent_comparison(p_website_id uuid,
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare w public.websites; item public.independent_audit_comparisons;
 begin
-  select * into w from public.websites where id=p_website_id and owner_id=auth.uid() for share;
-  if not found or coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
-  if not public.comparison_pilot_site_allowed(p_website_id) then raise exception 'forbidden' using errcode='42501'; end if;
+  if coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
+  w := public.comparison_pilot_site_allowed(p_website_id);
+  if w.id is null then raise exception 'forbidden' using errcode='42501'; end if;
   if p_asserted is null or not exists(select 1 from public.independent_audit_imports i join public.seosmith_audits a on a.website_id=i.website_id and a.fqdn=i.fqdn where i.id=p_import_id and i.website_id=w.id and a.delivery_id=p_delivery_id) then
     raise exception 'invalid_comparison' using errcode='22023';
   end if;
@@ -146,9 +152,9 @@ create or replace function public.independent_comparison_history(p_website_id uu
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare w public.websites; result jsonb; more boolean; last_row jsonb;
 begin
-  select * into w from public.websites where id=p_website_id and owner_id=auth.uid();
-  if not found or coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
-  if not public.comparison_pilot_site_allowed(p_website_id) then raise exception 'forbidden' using errcode='42501'; end if;
+  if coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
+  w := public.comparison_pilot_site_allowed(p_website_id);
+  if w.id is null then raise exception 'forbidden' using errcode='42501'; end if;
   if (p_before is null)<>(p_before_id is null) then raise exception 'invalid_cursor' using errcode='22023'; end if;
   select coalesce(jsonb_agg(to_jsonb(a) order by a.created_at desc,a.id desc),'[]'::jsonb) into result from
     (select id,fqdn,import_id,delivery_id,semantics,unmodified_v1_asserted,created_at from public.independent_audit_comparisons where website_id=w.id and (p_before is null or (created_at,id)<(p_before,p_before_id)) order by created_at desc,id desc limit 101) a;
@@ -162,9 +168,9 @@ create or replace function public.independent_comparison_detail(p_website_id uui
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare w public.websites; result jsonb;
 begin
-  select * into w from public.websites where id=p_website_id and owner_id=auth.uid();
-  if not found or coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
-  if not public.comparison_pilot_site_allowed(p_website_id) then raise exception 'forbidden' using errcode='42501'; end if;
+  if coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
+  w := public.comparison_pilot_site_allowed(p_website_id);
+  if w.id is null then raise exception 'forbidden' using errcode='42501'; end if;
   select jsonb_build_object('comparison',to_jsonb(c),'source',to_jsonb(i)-'website_id',
     'seosmith',jsonb_build_object('delivery_id',a.delivery_id,'fqdn',a.fqdn,'sha256',a.sha256,
       'report',a.report,'report_json',to_jsonb(a)->>'raw_report_json')) into result
@@ -179,9 +185,9 @@ create or replace function public.independent_evidence_fingerprint(p_website_id 
 returns text language plpgsql security definer set search_path='' as $$
 declare w public.websites; result text;
 begin
-  select * into w from public.websites where id=p_website_id and owner_id=auth.uid();
-  if not found or coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
-  if not public.comparison_pilot_site_allowed(p_website_id) then raise exception 'forbidden' using errcode='42501'; end if;
+  if coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
+  w := public.comparison_pilot_site_allowed(p_website_id);
+  if w.id is null then raise exception 'forbidden' using errcode='42501'; end if;
   select encode(sha256(convert_to(coalesce(string_agg(v,',' order by v),''),'UTF8')),'hex') into result from (
     select 'i:'||id::text v from public.independent_audit_imports where website_id=w.id
     union all select 'c:'||id::text v from public.independent_audit_comparisons where website_id=w.id
@@ -193,9 +199,9 @@ create or replace function public.delete_independent_audit_evidence(p_website_id
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare w public.websites; comparisons_deleted integer; imports_deleted integer;
 begin
-  select * into w from public.websites where id=p_website_id and owner_id=auth.uid() for update;
-  if not found or coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
-  if not public.comparison_pilot_site_allowed(p_website_id) then raise exception 'forbidden' using errcode='42501'; end if;
+  if coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
+  w := public.comparison_pilot_site_allowed(p_website_id);
+  if w.id is null then raise exception 'forbidden' using errcode='42501'; end if;
   if p_confirmation is distinct from 'DELETE INDEPENDENT EVIDENCE' then raise exception 'confirmation_required' using errcode='22023'; end if;
   if p_export_fingerprint is null or p_export_fingerprint is distinct from public.independent_evidence_fingerprint(w.id) then raise exception 'evidence_changed_export_again' using errcode='22023'; end if;
   delete from public.independent_audit_comparisons where website_id=w.id;
@@ -208,15 +214,15 @@ end $$;
 -- Pilot-only bounded cleanup. Unlike the site-wide delete RPC, this refuses to run
 -- unless the supplied import and comparison identities exactly equal the site's
 -- current evidence and the supplied fingerprint matches. A mismatch changes
--- nothing. It takes the website row exclusively, so it serializes with imports,
--- saves, approval removal and ownership transfer.
+-- nothing. The shared helper locks the approval and website rows exclusively, so
+-- it serializes with imports, saves, approval removal and ownership transfer.
 create function public.delete_comparison_pilot_evidence(p_website_id uuid,p_import_ids uuid[],p_comparison_ids uuid[],p_export_fingerprint text)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare w public.websites; actual_imports uuid[]; actual_comparisons uuid[]; expected_imports uuid[]; expected_comparisons uuid[]; comparisons_deleted integer; imports_deleted integer;
 begin
-  select * into w from public.websites where id=p_website_id and owner_id=auth.uid() for update;
-  if not found or coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
-  if not public.comparison_pilot_site_allowed(p_website_id) then raise exception 'forbidden' using errcode='42501'; end if;
+  if coalesce(auth.jwt()->>'is_anonymous','true')<>'false' then raise exception 'forbidden' using errcode='42501'; end if;
+  w := public.comparison_pilot_site_allowed(p_website_id);
+  if w.id is null then raise exception 'forbidden' using errcode='42501'; end if;
   if p_import_ids is null or p_comparison_ids is null or exists(select 1 from unnest(p_import_ids) x where x is null) or exists(select 1 from unnest(p_comparison_ids) x where x is null) then
     raise exception 'invalid_scope' using errcode='22023';
   end if;
@@ -239,6 +245,35 @@ begin
   get diagnostics imports_deleted = row_count;
   return jsonb_build_object('comparisons_deleted',comparisons_deleted,'imports_deleted',imports_deleted);
 end $$;
+
+-- Prove at installation time that the helper is caller-bound and that every
+-- guarded caller uses it instead of re-resolving websites with a separate lookup.
+do $verify$
+declare signature text; func oid;
+begin
+  func := to_regprocedure('public.comparison_pilot_site_allowed(uuid)');
+  if func is null or not exists (select 1 from pg_proc p where p.oid=func
+    and p.prosrc like '%site.owner_id=a.owner_id and site.owner_id=auth.uid()%'
+    and p.prosrc like '%for update of a,site%') then
+    raise exception 'comparison_pilot_helper_binding_drift';
+  end if;
+  foreach signature in array array[
+    'public.import_independent_audit(uuid,text,text,jsonb)',
+    'public.independent_audit_history(uuid,uuid,timestamptz,uuid)',
+    'public.save_independent_comparison(uuid,uuid,uuid,boolean)',
+    'public.independent_comparison_history(uuid,timestamptz,uuid)',
+    'public.independent_comparison_detail(uuid,uuid)',
+    'public.independent_evidence_fingerprint(uuid)',
+    'public.delete_independent_audit_evidence(uuid,text,text)',
+    'public.delete_comparison_pilot_evidence(uuid,uuid[],uuid[],text)'] loop
+    func := to_regprocedure(signature);
+    if func is null or not exists (select 1 from pg_proc p where p.oid=func
+      and p.prosrc like '%public.comparison_pilot_site_allowed(p_website_id)%'
+      and p.prosrc not like '%from public.websites%') then
+      raise exception 'comparison_pilot_site_binding_drift: %', signature;
+    end if;
+  end loop;
+end $verify$;
 
 -- Preserve the held public ACLs. No grant to anon, authenticated or service_role
 -- is introduced by this migration.

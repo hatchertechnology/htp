@@ -15,6 +15,7 @@ owner, other, site, delivery = '00000000-0000-0000-0000-000000000001', '00000000
 site2 = '00000000-0000-0000-0000-000000000005'
 source = "url,rule,state\nhttps://example.com/,missing_title,present"
 claims = '{"sub":"%s","is_anonymous":false}' % owner
+other_claims = '{"sub":"%s","is_anonymous":false}' % other
 
 
 def sql(statement):
@@ -121,16 +122,35 @@ grant execute on function auth.jwt(), auth.uid() to public;""")
     expect(sql(f"select owner_id from public.websites where id='{site}'"), other)
     expect(sql(f"select count(*) from public.comparison_pilot_approved_sites where website_id='{site}'"), '1')
 
-    # 3. Rollback: a mismatched scoped cleanup changes nothing, releases the lock,
+    # 3. Ordinary ownership transfer leaves the approval stale. Both the previous
+    #    owner and the new owner are denied by every guarded call until the site is
+    #    transferred back to the approved owner.
+    calls = [
+        f"select public.import_independent_audit('{site}','controlled-csv-v1',E'{source}','{{}}')",
+        f"select public.independent_audit_history('{site}')",
+        f"select public.save_independent_comparison('{site}','{first_import}','{delivery}',true)",
+        f"select public.independent_comparison_history('{site}')",
+        f"select public.independent_comparison_detail('{site}','{uuid.uuid4()}')",
+        f"select public.independent_evidence_fingerprint('{site}')",
+        f"select public.delete_independent_audit_evidence('{site}','NOT THE CONFIRMATION','wrong')",
+        f"select public.delete_comparison_pilot_evidence('{site}',ARRAY[]::uuid[],ARRAY[]::uuid[],'wrong')",
+    ]
+    for identity_claims in [claims, other_claims]:
+        for call in calls:
+            denied = subprocess.run(pg, input=f"SET ROLE authenticated; select set_config('request.jwt.claims','{identity_claims}',false); {call}", text=True, capture_output=True)
+            assert denied.returncode != 0 and 'forbidden' in denied.stderr, (identity_claims, call, denied.stderr[-400:])
+    sql(f"update public.websites set owner_id='{owner}' where id='{site}'")
+
+    # 4. Rollback: a mismatched scoped cleanup changes nothing, releases the lock,
     #    and a later approval removal is not blocked by it.
-    sql(f"update public.websites set owner_id='{owner}' where id='{site}'; select set_config('request.jwt.claims','{claims}',false); select public.import_independent_audit('{site}','controlled-csv-v1',E'{source}','{{}}')")
+    sql(f"select set_config('request.jwt.claims','{claims}',false); select public.import_independent_audit('{site}','controlled-csv-v1',E'{source}','{{}}')")
     bad = subprocess.run(pg, input=f"SET ROLE authenticated; select set_config('request.jwt.claims','{claims}',false); select public.delete_comparison_pilot_evidence('{site}',ARRAY[{imports_sql}]::uuid[],ARRAY[]::uuid[],'wrong')", text=True, capture_output=True)
     assert bad.returncode != 0 and 'evidence_scope_mismatch' in bad.stderr, (bad.returncode, bad.stderr[-400:])
     expect(sql(f"select count(*) from public.independent_audit_imports where website_id='{site}'"), '1')
     sql(f"DELETE FROM public.comparison_pilot_approved_sites WHERE website_id='{site}'")
     expect(sql(f"select count(*) from public.comparison_pilot_approved_sites where website_id='{site}'"), '0')
     expect(sql(f"select count(*) from public.independent_audit_imports where website_id='{site}'"), '1')
-    print('PASS: synthetic PG17 gate-removal and scoped-cleanup serialization, ownership transfer, and rollback preservation')
+    print('PASS: synthetic PG17 gate-removal and scoped-cleanup serialization, owner-transfer denial lifecycle, and rollback preservation')
 finally:
     if created:
         subprocess.run(['docker', 'rm', '-f', name], check=True, stdout=subprocess.DEVNULL)

@@ -138,3 +138,73 @@ test('comparison pilot gate is default-empty, owner/site scoped and bounded', as
     assert.equal((await db.query("select has_function_privilege('authenticated',$1,'execute') allowed", [`public.${cleanup}`])).rows[0].allowed, false)
   } finally { await db.close() }
 })
+
+
+test('comparison pilot authorizes the locked caller and rejects unlocked owner lookups', async () => {
+  const pilot = await read('../migrations/20261205000000_comparison_pilot_scope.sql')
+  const helper = pilot.slice(pilot.indexOf('create function public.comparison_pilot_site_allowed'), pilot.indexOf('revoke all on function public.comparison_pilot_site_allowed'))
+  assert.match(helper, /returns public\.websites/)
+  assert.match(helper, /site\.id=a\.website_id and site\.owner_id=a\.owner_id and site\.owner_id=auth\.uid\(\)/)
+  assert.match(helper, /for update of a,site/)
+  const bodies = pilot.slice(pilot.indexOf('create or replace function public.import_independent_audit'), pilot.indexOf('-- Prove at installation time'))
+  assert.equal((bodies.match(/w := public\.comparison_pilot_site_allowed\(p_website_id\);/g) ?? []).length, 8)
+  assert.equal((bodies.match(/if w\.id is null then raise exception 'forbidden'/g) ?? []).length, 8)
+  assert.doesNotMatch(bodies, /from public\.websites\b/)
+  assert.doesNotMatch(bodies, /owner_id\s*=\s*auth\.uid\(\)/)
+  assert.match(pilot, /comparison_pilot_site_binding_drift/)
+
+  const db = new PGlite()
+  const owner = '00000000-0000-0000-0000-000000000001'
+  const other = '00000000-0000-0000-0000-000000000002'
+  const site = '00000000-0000-0000-0000-000000000003'
+  const delivery = '00000000-0000-0000-0000-000000000008'
+  const source = 'url,rule,state\r\nhttps://example.com/,missing_title,present\r\n'
+  try {
+    await db.exec(`create role anon; create role authenticated; create role service_role bypassrls; create schema auth; create table auth.users(id uuid primary key); create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$; create function auth.uid() returns uuid language sql stable as $$select (auth.jwt()->>'sub')::uuid$$; grant usage on schema auth,public to authenticated,anon,service_role;`)
+    for (const file of ['20261028142440_create_websites.sql', '20261031053344_seosmith_audits.sql', '20261124000000_independent_audit_comparisons.sql', '20261205000000_comparison_pilot_scope.sql']) await db.exec(await read(`../migrations/${file}`))
+    for (const name of [...held, cleanup]) await db.exec(`grant execute on function public.${name} to authenticated`)
+    await db.query('insert into auth.users values($1),($2)', [owner, other])
+    await db.query("insert into public.websites(id,owner_id,fqdn) values($1,$2,'example.com')", [site, owner])
+    await db.query("insert into public.seosmith_audits(delivery_id,website_id,fqdn,generation,sha256,report) values($1,$2,'example.com',1,repeat('a',64),'{}')", [delivery, site])
+    await db.query('insert into public.comparison_pilot_approved_sites values($1,$2)', [site, owner])
+    const identity = async (id) => { await db.exec('reset role; set role authenticated'); await db.query("select set_config('request.jwt.claims',$1,false)", [JSON.stringify({ sub: id, is_anonymous: false })]) }
+
+    await identity(owner)
+    const receipt = (await db.query('select public.import_independent_audit($1,$2,$3,$4) r', [site, 'controlled-csv-v1', source, {}])).rows[0].r
+    const comparison = (await db.query('select public.save_independent_comparison($1,$2,$3,true) c', [site, receipt.id, delivery])).rows[0].c
+    const fingerprint = (await db.query('select public.independent_evidence_fingerprint($1) f', [site])).rows[0].f
+    const probes = {
+      import: () => db.query('select public.import_independent_audit($1,$2,$3,$4)', [site, 'not-a-format', source, {}]),
+      auditHistory: () => db.query('select public.independent_audit_history($1)', [site]),
+      save: () => db.query('select public.save_independent_comparison($1,$2,$3,$4)', [site, receipt.id, delivery, null]),
+      comparisonHistory: () => db.query('select public.independent_comparison_history($1)', [site]),
+      comparisonDetail: () => db.query('select public.independent_comparison_detail($1,$2)', [site, comparison.id]),
+      fingerprint: () => db.query('select public.independent_evidence_fingerprint($1)', [site]),
+      delete: () => db.query('select public.delete_independent_audit_evidence($1,$2,$3)', [site, 'NOT THE CONFIRMATION', fingerprint]),
+      cleanup: () => db.query('select public.delete_comparison_pilot_evidence($1,$2,$3,$4)', [site, [], [], fingerprint]),
+    }
+    const allowed = [
+      [probes.import, /invalid_import/], [probes.auditHistory], [probes.save, /invalid_comparison/],
+      [probes.comparisonHistory], [probes.comparisonDetail], [probes.fingerprint],
+      [probes.delete, /confirmation_required/], [probes.cleanup, /evidence_scope_mismatch/],
+    ]
+    const assertAllowed = async () => { for (const [call, error] of allowed) error ? await assert.rejects(call, error) : await call() }
+    const assertDenied = async () => { for (const call of Object.values(probes)) await assert.rejects(call, /forbidden/) }
+
+    await assertAllowed()
+    await identity(other)
+    await assertDenied()
+    await db.exec('reset role')
+    await db.query('update public.websites set owner_id=$1 where id=$2', [other, site])
+    await identity(owner)
+    await assertDenied()
+    await identity(other)
+    await assertDenied()
+    await db.exec('reset role')
+    await db.query('update public.websites set owner_id=$1 where id=$2', [owner, site])
+    await identity(owner)
+    await assertAllowed()
+    await identity(other)
+    await assertDenied()
+  } finally { await db.close() }
+})
