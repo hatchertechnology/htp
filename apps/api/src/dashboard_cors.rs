@@ -120,6 +120,13 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
     let (site, resource) = rest.split_once('/')?;
     uuid::Uuid::parse_str(site).ok()?;
     match resource {
+        "search/properties" | "search/dashboard" | "search/inspection-history" => {
+            return Some("POST");
+        }
+        "analytics/dashboard" | "bing/dashboard" | "insights/report" | "insights/history" => {
+            return (site.len() == 36).then_some("POST");
+        }
+        "business/location" | "analytics/property" => return (site.len() == 36).then_some("PUT"),
         "repository" => return Some("GET, PUT"),
         "repository/history" | "repository/issues" => return Some("GET"),
         "forms" => return Some("GET, POST"),
@@ -266,6 +273,26 @@ mod tests {
             )
             .route("/websites/{id}/repository/history", get(handler.clone()))
             .route("/websites/{id}/repository/issues", get(handler.clone()))
+            .route(
+                "/websites/{id}/analytics/dashboard",
+                axum::routing::post(handler.clone()),
+            )
+            .route(
+                "/websites/{id}/bing/dashboard",
+                axum::routing::post(handler.clone()),
+            )
+            .route(
+                "/websites/{id}/insights/report",
+                axum::routing::post(handler.clone()),
+            )
+            .route(
+                "/websites/{id}/insights/history",
+                axum::routing::post(handler.clone()),
+            )
+            .route(
+                "/websites/{id}/business/location",
+                axum::routing::put(handler.clone()),
+            )
             .route("/forms/submit", axum::routing::post(handler.clone()))
             .route(
                 "/websites/{id}/analytics/property",
@@ -431,6 +458,40 @@ mod tests {
         ] {
             assert_eq!(dashboard_methods(&path), None);
         }
+    }
+
+    #[tokio::test]
+    async fn saved_search_route_matrix() {
+        let site = "00000000-0000-0000-0000-000000000001";
+        for action in ["properties", "dashboard", "inspection-history"] {
+            let path = format!("/websites/{site}/search/{action}");
+            assert_eq!(dashboard_methods(&path), Some("POST"));
+            for method in ["POST", "GET", "PUT", "DELETE"] {
+                let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                    .oneshot(preflight(&path, ORIGIN, method))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    header_value(&response, header::ACCESS_CONTROL_ALLOW_METHODS),
+                    if method == "POST" { Some("POST") } else { None }
+                );
+                let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                    .oneshot(actual(method, &path, Some(ORIGIN), false))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                    if method == "POST" { Some(ORIGIN) } else { None }
+                );
+            }
+            for suffix in ["/", "/extra"] {
+                assert!(dashboard_methods(&format!("{path}{suffix}")).is_none());
+            }
+        }
+        for action in ["inspect", "dataset", "crawl-evidence", "other"] {
+            assert!(dashboard_methods(&format!("/websites/{site}/search/{action}")).is_none());
+        }
+        assert!(dashboard_methods("/websites/invalid/search/dashboard").is_none());
     }
 
     #[tokio::test]
@@ -614,6 +675,79 @@ mod tests {
             "/websites/invalid/repository".into(),
         ] {
             assert_eq!(dashboard_methods(&path), None);
+        }
+    }
+
+    #[tokio::test]
+    async fn report_cors_is_exact_and_preserves_auth() {
+        let site = "00000000-0000-0000-0000-000000000001";
+        for (resource, expected) in [
+            ("analytics/dashboard", "POST"),
+            ("bing/dashboard", "POST"),
+            ("insights/report", "POST"),
+            ("insights/history", "POST"),
+            ("business/location", "PUT"),
+            ("analytics/property", "PUT"),
+        ] {
+            let path = format!("/websites/{site}/{resource}");
+            assert_eq!(dashboard_methods(&path), Some(expected));
+            for method in ["GET", "POST", "PUT", "PATCH", "DELETE"] {
+                for origin in [ORIGIN, "https://evil.example"] {
+                    let allowed = method == expected && origin == ORIGIN;
+                    let calls = Arc::new(AtomicUsize::new(0));
+                    let response = app(calls.clone(), cors())
+                        .oneshot(preflight(&path, origin, method))
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_METHODS),
+                        allowed.then_some(expected)
+                    );
+                    assert_eq!(calls.load(Ordering::SeqCst), 0);
+                    let response = app(calls.clone(), cors())
+                        .oneshot(actual(method, &path, Some(origin), true))
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        response.status(),
+                        if method == expected {
+                            StatusCode::OK
+                        } else {
+                            StatusCode::METHOD_NOT_ALLOWED
+                        }
+                    );
+                    assert_eq!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                        allowed.then_some(ORIGIN)
+                    );
+                    let response = app(calls, cors())
+                        .oneshot(actual(method, &path, Some(origin), false))
+                        .await
+                        .unwrap();
+                    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+                    assert_eq!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                        allowed.then_some(ORIGIN)
+                    );
+                    assert!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none()
+                    );
+                }
+            }
+            for invalid in [
+                format!("{path}/"),
+                format!("{path}/extra"),
+                format!("/websites/invalid/{resource}"),
+                format!("/websites/{}/{resource}", site.replace('-', "")),
+            ] {
+                assert_eq!(dashboard_methods(&invalid), None);
+            }
+        }
+        for resource in ["analytics", "insights", "business", "bing"] {
+            assert_eq!(
+                dashboard_methods(&format!("/websites/{site}/{resource}")),
+                None
+            );
         }
     }
 
