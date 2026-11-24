@@ -9,6 +9,7 @@ mod insights;
 mod mcp;
 mod oauth;
 mod repositories;
+mod s14_worker;
 pub mod search;
 mod seosmith;
 pub mod websites;
@@ -98,6 +99,7 @@ pub fn app_with_capabilities(
         .nest_service("/mcp", mcp::service())
         .merge(oauth_routes)
         .merge(seosmith_ingest)
+        .merge(s14_worker::router())
         .merge(form_ingress::router())
         .merge(protected)
 }

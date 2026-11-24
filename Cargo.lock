@@ -619,6 +619,7 @@ dependencies = [
  "chrono",
  "form_urlencoded",
  "futures-util",
+ "htp-s14-receiver",
  "htp-shared",
  "jsonwebtoken",
  "reqwest",
@@ -646,6 +647,17 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "htp-s14-receiver"
+version = "0.1.0"
+dependencies = [
+ "language-tags",
+ "serde",
+ "serde_json",
+ "sha2",
+ "url",
 ]
 
 [[package]]
@@ -1012,6 +1024,12 @@ dependencies = [
  "simple_asn1",
  "zeroize",
 ]
+
+[[package]]
+name = "language-tags"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4345964bb142484797b161f473a503a434de77149dd8c7427788c6e13379388"
 
 [[package]]
 name = "libc"

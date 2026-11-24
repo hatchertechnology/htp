@@ -8,6 +8,7 @@ rust-version.workspace = true
 axum.workspace = true
 chrono.workspace = true
 htp-shared.workspace = true
+htp-s14-receiver = { path = "../../crates/s14-receiver" }
 futures-util = "0.3"
 form_urlencoded = "1"
 jsonwebtoken.workspace = true

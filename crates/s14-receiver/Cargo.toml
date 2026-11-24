@@ -1,0 +1,15 @@
+[package]
+name = "htp-s14-receiver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+sha2 = "0.10"
+url = "2"
+language-tags = "0.3.2"
+
+[lints]
+workspace = true
