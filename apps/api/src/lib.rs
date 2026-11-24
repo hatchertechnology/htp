@@ -12,6 +12,7 @@ mod form_verification;
 mod insights;
 mod mcp;
 mod oauth;
+mod providers;
 mod repositories;
 mod s14_worker;
 pub mod search;
@@ -85,6 +86,7 @@ pub fn app_with_capabilities(
     let protected = Router::new()
         .route("/secured", get(async || Json(secured_message())))
         .merge(mcp_routes)
+        .merge(providers::router())
         .merge(analytics::router(websites.clone(), analytics))
         .merge(search::router(
             websites.clone(),
