@@ -15,12 +15,26 @@ Client code: `apps/web/shared/utils/seosmith-client.ts` (routing) and `apps/web/
 
 `{site}` and `{run}` must be lowercase or uppercase hyphenated UUIDs. Anything else is refused before a request is sent.
 
-Static run detail is bounded in the browser: the whole read (headers and body) has a 120 s deadline, and the body is
-refused above 4,952,756 bytes (the API's report import limit), checked against `Content-Length` and while streaming.
-Timeouts, aborts, oversize bodies and malformed JSON all surface as "Seosmith reports could not load. Try again.".
+Static run detail is bounded in the browser by time, not size: the whole read (headers and body) has the same
+120 s deadline as the bounded server proxy, and an abort (run change, unmount, or deadline) cancels the fetch and the body read.
+Timeouts, aborts and malformed JSON all surface as "Seosmith reports could not load. Try again.". The browser applies no byte cap,
+matching the default proxy.
+
+Size boundary (server side, the only size limits that exist):
+
+- Import input: `report_json` is refused above 4,952,756 UTF-8 bytes (`supabase/migrations/20261121120000_seosmith_input_cap.sql`,
+  and `apps/api/src/seosmith.rs` `import`/`ingest`). Rows written before that migration were accepted up to 16,777,216 bytes
+  (earlier migrations, for example `20261116210550_seosmith_versioned_receiver.sql`), so legacy rows can hold raw reports above
+  4,952,756 bytes.
+- Detail body: the detail function returns both the parsed `report` (jsonb) and the raw `report_json`, so the body is larger than
+  the raw report. It is not bounded by the import limit: JSON escaping roughly doubles quoted text, and jsonb text output can differ
+  in length from the stored raw bytes. No server-side cap is applied to the detail response.
+- The static client therefore has no byte cap of its own. A browser-side cap would refuse normal stored runs, as PR 95's review
+  showed for runs near the import limit.
+
 The default bounded `/dashboard` proxy keeps its server-side 120 s deadline.
 
-The API returns the stored detail body without a size cap. The list `limit` is not clamped server-side either; the
+The API returns the stored detail body without a size cap (see the size boundary above). The list `limit` is not clamped server-side either; the
 static client always sends `limit=50`. Both are API-side follow-ups and are not changed here.
 
 Not routed in static mode (their calls still use `/api/...` and will fail on the static host):

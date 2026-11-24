@@ -1,6 +1,6 @@
 import type { AuditDetail, AuditHistory, AuditRun } from '../../shared/types/seosmith'
 import { isSavedDetail } from '#shared/utils/saved-detail-validation'
-import { JSON_CONTENT_TYPE, SAVED_DETAIL_DEADLINE_MS, SAVED_DETAIL_MAX_BYTES, readBoundedJson, resolveSeosmithReadPath } from '#shared/utils/seosmith-client'
+import { JSON_CONTENT_TYPE, SAVED_DETAIL_DEADLINE_MS, SEOSMITH_IMPORT_MAX_BYTES, resolveSeosmithReadPath } from '#shared/utils/seosmith-client'
 export function useSeosmith() {
   const ws = useWorkspace()
   const boundedSavedDetail = useRuntimeConfig().public.boundedSavedDetail === true
@@ -20,17 +20,19 @@ export function useSeosmith() {
       if (staticDashboard) {
         const token = await ws.accessToken()
         if (!token) throw new Error('Your session has ended. Sign in again.')
-        // Static has no Nitro proxy: bound the whole read (headers and body) by a deadline, and cap the body size.
+        // Static has no Nitro proxy: bound the whole read (headers and body) by the same deadline as the bounded proxy.
+        // No browser byte cap: the default proxy has none, and the stored detail body is not bounded by the import limit.
         const deadline = setTimeout(() => requestController.abort(), SAVED_DETAIL_DEADLINE_MS)
         try {
           const url = resolveSeosmithReadPath(`/api/websites/${site}/seo/audits/${id}`, true, apiBaseUrl)
           const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: requestController.signal })
           if (!response.ok || !JSON_CONTENT_TYPE.test(response.headers.get('content-type') || '')) throw new Error('Seosmith reports could not load. Try again.')
-          const value = await readBoundedJson(response, SAVED_DETAIL_MAX_BYTES)
+          // response.json() rejects a truncated transport and malformed or empty JSON, as the bounded proxy path does.
+          const value: unknown = await response.json()
           if (!isSavedDetail(value, id)) throw new Error('Seosmith reports could not load. Try again.')
           result = value
         } catch {
-          // Timeouts, aborts, transport errors, oversize, and malformed bodies all surface as the same typed message.
+          // Timeouts, aborts, transport errors and malformed bodies all surface as the same typed message.
           requestController.abort()
           throw new Error('Seosmith reports could not load. Try again.')
         } finally { clearTimeout(deadline) }
@@ -74,7 +76,7 @@ export function useSeosmith() {
     const gen = generation, site = ws.selectedId.value, user = ws.user.value?.id
     importing.value = true; error.value = ''; notice.value = ''
     try {
-      if (file.size > SAVED_DETAIL_MAX_BYTES) throw new Error('Choose a JSON report at most 4,952,756 bytes.')
+      if (file.size > SEOSMITH_IMPORT_MAX_BYTES) throw new Error('Choose a JSON report at most 4,952,756 bytes.')
       const report_json = await file.text()
       try { JSON.parse(report_json) } catch { throw new Error('This file is not a valid JSON report.') }
       const receipt = await ws.request<{delivery_id: string}>(`/api/websites/${site}/seo/audits/import`, { method: 'POST', body: { report_json } })
