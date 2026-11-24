@@ -102,14 +102,26 @@ test('bounded dataset read handles segments, legacy, analysis and landing outcom
         { keys: ['q', 'https://example.com/', 'MOBILE', 'usa'], clicks: 1 },
         { keys: ['q', 'https://example.com/', 'DESKTOP', 'usa'], clicks: 2 },
         { keys: ['q', 'https://example.com/', 'MOBILE', 'can'], clicks: 3 },
+        // Malformed/legacy saved rows: a short array, a missing `keys` member
+        // (SQL NULL), a legacy non-array type, an explicit JSON null, a bare
+        // scalar, a non-string key and an over-long array. Every one must be
+        // omitted and counted, never dropped from the count.
         { keys: ['malformed'] },
+        { foo: 1 },
+        { keys: 'str' },
+        { keys: null },
+        7,
+        { keys: ['a', 'b', 'c', 5] },
+        { keys: ['a', 'b', 'c', 'd', 'e'] },
       ], collection: { truncated: true, anonymized_queries: 'excluded' } },
       analysis: {
-        candidates: [{ kind: 'low_ctr_review', page: '/', evidence: [{ keys: ['a'] }] }],
+        semantics_version: 1,
+        period: { start_date: '2026-10-01', end_date: '2026-10-03' },
+        candidates: [{ kind: 'low_ctr_review', page: '/', evidence: Array.from({ length: 30 }, (_, i) => ({ keys: [String(i)] })) }],
         comparison: { available: true, reason: null },
         coverage: { scope: 'retained_observations_only' },
         policy: { min_impressions: 100 },
-        landing_outcomes: { available: false, reason: 'thresholded_or_sampled', rows: [] },
+        landing_outcomes: { available: true, reason: null, rows: Array.from({ length: 200 }, (_, i) => ({ landing_page: `/${i}` })) },
       },
     }])
     await db.query('insert into public.google_report_snapshots(job_id,data) values($1,$2)', [conversionJob, {
@@ -125,12 +137,28 @@ test('bounded dataset read handles segments, legacy, analysis and landing outcom
     assert.equal(segments.data.query_page_segments.rows.length, 1)
     assert.equal(segments.data.query_page_segments.rows[0].keys[3], 'usa')
     assert.equal(segments.page.retained_rows, 1)
-    assert.equal(segments.page.invalid_rows_omitted, 1)
+    // Seven malformed rows (including the missing-`keys` SQL NULL) are omitted
+    // and counted; the same predicate drives the page and the count.
+    assert.equal(segments.page.invalid_rows_omitted, 7)
+    const allSegments = await read('query_page_segments', { limit: 25 })
+    assert.equal(allSegments.page.retained_rows, 3)
+    assert.equal(allSegments.page.invalid_rows_omitted, 7)
     const analysis = await read('analysis', { limit: 25 })
     assert.equal(analysis.data.analysis.candidates.length, 1)
     assert.equal(analysis.data.analysis.candidates[0].kind, 'low_ctr_review')
+    // Evidence is bounded in SQL with the same retained/returned counts the
+    // public contract reports.
+    assert.equal(analysis.data.analysis.candidates[0].evidence.length, 25)
+    assert.equal(analysis.data.analysis.candidates[0].evidence_presentation.retained_rows, 30)
+    assert.equal(analysis.data.analysis.candidates[0].evidence_presentation.returned_rows, 25)
+    assert.equal(analysis.data.analysis.candidates[0].evidence_presentation.truncated, true)
     assert.equal(analysis.data.analysis.comparison.available, true)
     assert.equal(analysis.data.analysis.coverage.scope, 'retained_observations_only')
+    // The sibling landing_outcomes rows are never carried on an analysis read,
+    // and the analysis object keeps only the consumed metadata.
+    assert.equal(analysis.data.analysis.landing_outcomes, undefined)
+    assert.equal(analysis.data.analysis.period, undefined)
+    assert.ok(!JSON.stringify(analysis).includes('landing_page'))
     const landing = await readConversions('landing_outcomes', { offset: 1, limit: 1 })
     assert.equal(landing.data.analysis.landing_outcomes.available, true)
     assert.equal(landing.data.analysis.landing_outcomes.rows.length, 1)
@@ -138,6 +166,7 @@ test('bounded dataset read handles segments, legacy, analysis and landing outcom
     assert.equal(landing.page.retained_rows, 2)
     assert.equal(landing.page.has_more, false)
     assert.equal(landing.data.analysis.landing_outcomes.attribution, 'all_channels')
+    assert.equal(landing.data.analysis.landing_outcomes.coverage, undefined)
     assert.equal(landing.data.pages.metadata.currencyCode, 'USD')
     // A snapshot whose dataset is absent is unavailable, not an empty success.
     const legacy = await read('devices')
@@ -177,11 +206,12 @@ test('bounded dataset read fails closed on missing snapshots, bad input and over
     await assert.rejects(() => read('queries', { maxBytes: 4096 }), /search_page_too_large/)
     const normal = await read('queries')
     assert.equal(normal.data.queries.rows.length, 1)
-    // Legacy unavailable segment marker is preserved, not treated as empty.
+    // Legacy unavailable segment marker is preserved as a reason, not treated
+    // as empty and not carried as an unconsumed `unavailable` flag.
     const legacySegments = await read('query_page_segments')
-    assert.equal(legacySegments.data.query_page_segments.unavailable, true)
     assert.equal(legacySegments.data.query_page_segments.reason, 'segment_collection_unavailable')
     assert.equal(legacySegments.data.query_page_segments.rows, undefined)
+    assert.equal(legacySegments.data.query_page_segments.unavailable, undefined)
   } finally {
     await db.close()
   }

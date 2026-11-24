@@ -69,14 +69,20 @@ assert.equal(result.body.available, true)
 assert.equal(result.body.rows.length, 1)
 assert.equal(result.body.rows[0].keys[2], 'MOBILE')
 assert.equal(result.body.retained_rows, 1)
-assert.equal(result.body.invalid_rows_omitted, 1)
+// Two malformed rows (including a missing `keys` SQL NULL) are counted.
+assert.equal(result.body.invalid_rows_omitted, 2)
 assert.deepEqual(result.body.filters, { device: 'MOBILE', country: 'usa' })
 assert.equal(result.body.filter_scope, 'retained_bounded_rows_only')
 
-// Analysis candidates keep their comparison/coverage/policy metadata.
+// Analysis candidates keep their comparison/coverage/policy metadata, bound
+// their evidence, and never carry the sibling landing_outcomes rows.
 result = await call(owner, request({ dataset: 'analysis' }))
 assert.equal(result.body.available, true)
 assert.equal(result.body.rows[0].kind, 'low_ctr_review')
+assert.equal(result.body.rows[0].evidence.length, 2)
+assert.equal(result.body.rows[0].evidence_presentation.retained_rows, 2)
+assert.equal(result.body.rows[0].landing_outcomes, undefined)
+assert.ok(!JSON.stringify(result.body).includes('sibling-a'))
 assert.equal(result.body.comparison.available, true)
 assert.equal(result.body.coverage.scope, 'retained_observations_only')
 assert.equal(result.body.policy.min_impressions, 100)

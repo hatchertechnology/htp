@@ -3,16 +3,20 @@
 -- The existing /search/dataset contract reads the whole saved snapshot and
 -- slices it in the API process. This function selects only the requested page
 -- from the latest exact-period snapshot, re-checks ownership in the database,
--- and returns the collection/freshness/truncation metadata the existing API
--- contract already exposes. The full snapshot is never returned to a caller.
+-- and returns only the fields the Rust projection consumes. The full snapshot
+-- is still loaded inside the database, but the API transfer is bounded; it is
+-- never returned to the caller.
 --
--- The return shape intentionally mirrors the `saved` object the Rust projection
--- consumes today:
---   data.<dataset>.<rows|analysis.candidates|analysis.landing_outcomes.rows>
---   data.measurement, data.analysis.{comparison,coverage,policy,landing_outcomes}
+-- The return shape mirrors the `saved` object the Rust projection consumes:
+--   data.<dataset>.{rows,collection,reason}
+--   data.analysis.{semantics_version,comparison,coverage,policy,reason}
+--   data.analysis.candidates (per-candidate evidence trimmed to 25 rows)
+--   data.analysis.landing_outcomes.{available,reason,collection,attribution,rows}
+--   data.pages.metadata.currencyCode, data.measurement
 --   sync, daily_sync
 --   page.{retained_rows,has_more,invalid_rows_omitted}
 -- plus a `page` object that tells the projection the rows are already bounded.
+-- An analysis read never carries the sibling `landing_outcomes` rows.
 -- Legacy snapshots without a dataset (or with an explicit unavailable marker)
 -- return available=false and a truthful reason, never synthesized zero rows.
 --
@@ -34,7 +38,6 @@ declare
   h jsonb;
   daily_fetched timestamptz;
   source_arr jsonb := '[]'::jsonb;
-  filtered jsonb := '[]'::jsonb;
   page jsonb := '[]'::jsonb;
   meta jsonb;
   data jsonb;
@@ -118,22 +121,38 @@ begin
     end if;
   end if;
 
+  -- The validity predicate is computed once per row with a CASE, so the type
+  -- test always runs before jsonb_array_length/jsonb_array_elements. A missing
+  -- `keys` member (SQL NULL) is invalid, not unknown, and is counted as omitted.
+  -- The page and the two counts come from one scan; a full filtered array is
+  -- never materialized.
   if available and p_dataset = 'query_page_segments' then
-    select coalesce(jsonb_agg(v order by ord),'[]'::jsonb), count(*)
-      into filtered, total
-      from jsonb_array_elements(source_arr) with ordinality as t(v,ord)
-      where jsonb_typeof(v) = 'object'
-        and jsonb_typeof(v->'keys') = 'array' and jsonb_array_length(v->'keys') = 4
-        and (select bool_and(jsonb_typeof(k) = 'string') from jsonb_array_elements(v->'keys') k)
-        and (p_device is null or v->'keys'->>2 = p_device)
-        and (p_country is null or v->'keys'->>3 = p_country);
-    select count(*) into omitted from jsonb_array_elements(source_arr) v
-      where not (jsonb_typeof(v) = 'object'
-        and jsonb_typeof(v->'keys') = 'array' and jsonb_array_length(v->'keys') = 4
-        and (select bool_and(jsonb_typeof(k) = 'string') from jsonb_array_elements(v->'keys') k));
-    select coalesce(jsonb_agg(v order by ord),'[]'::jsonb) into page
-      from (select v, ord from jsonb_array_elements(filtered) with ordinality as t(v,ord)
-        order by ord offset p_offset limit p_limit) q;
+    select
+        coalesce(jsonb_agg(v order by ord)
+          filter (where valid and ord > p_offset and ord <= p_offset + p_limit),'[]'::jsonb),
+        count(*) filter (where valid),
+        count(*) filter (where not shape_valid)
+      into page, total, omitted
+      from (
+        select v, ord, x.shape_valid, x.keys,
+            x.shape_valid
+            and (p_device is null or x.keys->>2 = p_device)
+            and (p_country is null or x.keys->>3 = p_country) as valid
+          from jsonb_array_elements(source_arr) with ordinality as t(v,ord)
+          cross join lateral (
+            select
+              case
+                when jsonb_typeof(v) <> 'object' then false
+                when jsonb_typeof(v->'keys') is distinct from 'array' then false
+                when jsonb_array_length(v->'keys') <> 4 then false
+                when exists (select 1 from jsonb_array_elements(v->'keys') as e(value)
+                  where jsonb_typeof(value) is distinct from 'string') then false
+                else true
+              end as shape_valid,
+              case when jsonb_typeof(v) = 'object' and jsonb_typeof(v->'keys') = 'array'
+                then v->'keys' else null end as keys
+          ) x
+      ) elements;
   elsif available then
     total := jsonb_array_length(source_arr);
     select coalesce(jsonb_agg(v order by ord),'[]'::jsonb) into page
@@ -143,22 +162,50 @@ begin
   returned := jsonb_array_length(page);
 
   if p_dataset = 'analysis' then
-    meta := coalesce(s.data->'analysis','{}'::jsonb);
+    if available then
+      -- Match the public 25-row evidence bound in SQL so the byte budget applies
+      -- to the same page the API returns; the full evidence stays in the saved
+      -- snapshot and in the query_pages dataset.
+      select coalesce(jsonb_agg(
+        case
+          when jsonb_typeof(c->'evidence') = 'array' then
+            c || jsonb_build_object(
+              'evidence', coalesce((select jsonb_agg(e.value order by e.ord)
+                from jsonb_array_elements(c->'evidence') with ordinality as e(value,ord)
+                where e.ord <= 25),'[]'::jsonb),
+              'evidence_presentation', jsonb_build_object(
+                'retained_rows', jsonb_array_length(c->'evidence'),
+                'returned_rows', least(jsonb_array_length(c->'evidence'),25),
+                'truncated', jsonb_array_length(c->'evidence') > 25))
+          else c
+        end order by ord),'[]'::jsonb)
+        into page
+        from jsonb_array_elements(page) with ordinality as t(c,ord);
+    end if;
+    meta := jsonb_build_object(
+      'semantics_version', s.data#>'{analysis,semantics_version}',
+      'policy', s.data#>'{analysis,policy}',
+      'coverage', s.data#>'{analysis,coverage}',
+      'comparison', s.data#>'{analysis,comparison}');
     if available then meta := meta || jsonb_build_object('candidates',page);
-    else meta := meta - 'candidates'; end if;
+    else meta := meta || jsonb_build_object('reason',s.data#>'{analysis,reason}'); end if;
     data := jsonb_build_object('analysis',meta,'measurement',s.data->'measurement');
   elsif p_dataset = 'landing_outcomes' then
-    meta := coalesce(s.data#>'{analysis,landing_outcomes}','{}'::jsonb);
-    if available then meta := meta || jsonb_build_object('rows',page);
-    else meta := meta - 'rows'; end if;
+    meta := jsonb_build_object(
+      'available', s.data#>'{analysis,landing_outcomes,available}',
+      'reason', s.data#>'{analysis,landing_outcomes,reason}',
+      'collection', s.data#>'{analysis,landing_outcomes,collection}',
+      'attribution', s.data#>'{analysis,landing_outcomes,attribution}');
+    if available then meta := meta || jsonb_build_object('rows',page); end if;
     data := jsonb_build_object(
       'analysis',jsonb_build_object('landing_outcomes',meta),
       'pages',jsonb_build_object('metadata',s.data#>'{pages,metadata}'),
       'measurement',s.data->'measurement');
   else
-    meta := coalesce(s.data->p_dataset,'{}'::jsonb);
-    if available then meta := meta || jsonb_build_object('rows',page);
-    else meta := meta - 'rows'; end if;
+    meta := jsonb_build_object(
+      'collection', s.data#>array[p_dataset,'collection'],
+      'reason', s.data#>array[p_dataset,'reason']);
+    if available then meta := meta || jsonb_build_object('rows',page); end if;
     data := jsonb_build_object(p_dataset,meta,'measurement',s.data->'measurement');
   end if;
 

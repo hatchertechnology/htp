@@ -441,7 +441,11 @@ fn dataset_projection(saved: &Value, name: &str, offset: usize, limit: usize) ->
         (&[][..], None, false)
     };
     let page: Vec<Value> = page.iter().cloned().map(|mut row| {
-        if name == "analysis" {
+        if name == "analysis" && row.get("evidence_presentation").is_none() {
+            // The database already trims evidence and records the retained and
+            // returned counts for a bounded page; preserve that instead of
+            // recounting truncated rows. Legacy/in-process callers have no
+            // marker and keep the historical trim here.
             if let Some(evidence) = row.get_mut("evidence").and_then(Value::as_array_mut) {
                 let count = evidence.len();
                 evidence.truncate(25);
@@ -834,17 +838,119 @@ mod tests {
         assert_eq!(result["has_more"], true);
     }
     #[test]
+    fn bounded_projection_matches_established_snapshot_projection() {
+        // Representative authentic producer metadata: a page/query dataset with
+        // a collection object, an analysis object whose candidate evidence
+        // exceeds the public 25-row bound and which carries a large sibling
+        // landing_outcomes, and a landing_outcomes object. The full snapshot is
+        // the established in-process path; the bounded payload is the shape
+        // read_search_dataset_page returns. The public projections must match.
+        let evidence: Vec<Value> = (0..30).map(|i| json!({"keys": [i.to_string()]})).collect();
+        let landing: Vec<Value> = (0..2)
+            .map(|i| json!({"landing_page": format!("/{i}"), "metrics": {"sessions": i}}))
+            .collect();
+        let full = json!({
+            "sync":{"exact_range_available":true,"snapshot_id":7,"state":"ready"},
+            "daily_sync":{"state":"ready","coverage":{"state":"complete"}},
+            "data":{
+                "measurement":{"version":1},
+                "queries":{"rows":[{"keys":["a"]},{"keys":["b"]}],
+                    "collection":{"truncated":false,"anonymized_queries":"excluded"}},
+                "analysis":{
+                    "semantics_version":1,
+                    "policy":{"min_impressions":100},
+                    "coverage":{"scope":"retained_observations_only"},
+                    "comparison":{"available":true,"reason":null},
+                    "candidates":[{"kind":"low_ctr_review","page":"/","evidence":evidence.clone()}],
+                    "landing_outcomes":{"available":true,"reason":null,"rows":landing.clone()}
+                }
+            }
+        });
+        let bounded_queries = json!({
+            "sync":{"exact_range_available":true,"snapshot_id":7,"state":"ready"},
+            "daily_sync":{"state":"ready","coverage":{"state":"complete"}},
+            "data":{
+                "measurement":{"version":1},
+                "queries":{"rows":[{"keys":["a"]}],
+                    "collection":{"truncated":false,"anonymized_queries":"excluded"},"reason":null}
+            },
+            "page":{"retained_rows":2,"has_more":true,"invalid_rows_omitted":0}
+        });
+        assert_eq!(
+            dataset_projection(&full, "queries", 0, 1),
+            dataset_projection(&bounded_queries, "queries", 0, 1)
+        );
+        let bounded_analysis = json!({
+            "sync":{"exact_range_available":true,"snapshot_id":7,"state":"ready"},
+            "daily_sync":{"state":"ready","coverage":{"state":"complete"}},
+            "data":{
+                "measurement":{"version":1},
+                "analysis":{
+                    "semantics_version":1,
+                    "policy":{"min_impressions":100},
+                    "coverage":{"scope":"retained_observations_only"},
+                    "comparison":{"available":true,"reason":null},
+                    "candidates":[{"kind":"low_ctr_review","page":"/","evidence":evidence[..25].to_vec(),
+                        "evidence_presentation":{"retained_rows":30,"returned_rows":25,"truncated":true}}]
+                }
+            },
+            "page":{"retained_rows":1,"has_more":false,"invalid_rows_omitted":0}
+        });
+        assert_eq!(
+            dataset_projection(&full, "analysis", 0, 25),
+            dataset_projection(&bounded_analysis, "analysis", 0, 25)
+        );
+        // The bounded analysis projection does not carry the sibling rows and
+        // keeps the database-computed retained/returned evidence counts.
+        let projected = dataset_projection(&bounded_analysis, "analysis", 0, 25);
+        assert!(projected["rows"][0].get("landing_outcomes").is_none());
+        assert_eq!(
+            projected["rows"][0]["evidence_presentation"]["retained_rows"],
+            30
+        );
+        let full_landing = json!({
+            "sync":{"exact_range_available":true,"snapshot_id":7,"state":"ready"},
+            "daily_sync":{"state":"ready"},
+            "data":{
+                "measurement":{"version":1},
+                "analysis":{"landing_outcomes":{"available":true,"reason":null,
+                    "collection":{"truncated":false},"attribution":"all_channels","rows":landing.clone()}},
+                "pages":{"metadata":{"currencyCode":"USD"}}
+            }
+        });
+        let bounded_landing = json!({
+            "sync":{"exact_range_available":true,"snapshot_id":7,"state":"ready"},
+            "daily_sync":{"state":"ready"},
+            "data":{
+                "measurement":{"version":1},
+                "analysis":{"landing_outcomes":{"available":true,"reason":null,
+                    "collection":{"truncated":false},"attribution":"all_channels","rows":[landing[0].clone()]}},
+                "pages":{"metadata":{"currencyCode":"USD"}}
+            },
+            "page":{"retained_rows":2,"has_more":true,"invalid_rows_omitted":0}
+        });
+        assert_eq!(
+            landing_projection(&full_landing, 0, 1),
+            landing_projection(&bounded_landing, 0, 1)
+        );
+    }
+    #[test]
     fn segments_filter_only_retained_matching_dimensions() {
         let saved = json!({"sync":{"exact_range_available":true},"data":{"query_page_segments":{
             "collection":{"truncated":true,"anonymized_queries":"excluded"},"rows":[
               {"keys":["q","https://example.com/","MOBILE","usa"],"clicks":1},
               {"keys":["q","https://example.com/","DESKTOP","usa"],"clicks":2},
               {"keys":["q","https://example.com/","MOBILE","can"],"clicks":3},
-              {"keys":["malformed"]}]}}});
+              {"keys":["malformed"]},
+              {"foo":1},
+              {"keys":null},
+              7,
+              {"keys":["a","b","c",5]}]}}});
         let page = segment_projection(&saved, Some("MOBILE"), Some("usa"), 0, 10);
         assert_eq!(page["retained_rows"], 1);
         assert_eq!(page["rows"][0]["clicks"], 1);
         assert_eq!(page["collection"]["truncated"], true);
+        assert_eq!(page["invalid_rows_omitted"], 5);
         assert_eq!(page["filter_scope"], "retained_bounded_rows_only");
         assert_eq!(
             segment_projection(&saved, Some("TABLET"), None, 0, 10)["retained_rows"],
