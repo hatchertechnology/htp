@@ -1,5 +1,5 @@
 import type { Website, WebsitePage } from '../../shared/types/websites'
-import { resolveWebsitePath } from '../../shared/utils/websites-client'
+import { resolveWebsitePath } from '#shared/utils/websites-client'
 
 export function useWebsites() {
   const auth = useAuth()
