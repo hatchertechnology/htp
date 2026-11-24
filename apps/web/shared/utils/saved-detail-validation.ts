@@ -100,6 +100,8 @@ export function isSavedDetail(value: unknown, id: string): value is AuditDetail 
   return isRecord(value) && value.delivery_id === id
     && isDate(value.scan_at) && isDate(value.received_at) && isString(value.ingestion_source)
     && optional(value.report_json, isString)
+    && optional(value.summary_text, isString)
+    && optional(value.summary_sha256, isString) && optional(value.summary_bytes, isNumber)
     && optional(value.source_sha256, isString) && optional(value.source_bytes, isNumber)
     && isSummary(value.summary) && isReport(value.report)
 }

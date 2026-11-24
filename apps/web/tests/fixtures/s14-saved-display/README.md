@@ -32,7 +32,7 @@ cargo run --offline --locked -p htp-s14-receiver --example saved_summary -j1 -- 
   committed examples reports a policy violation. Relay this divergence to the
   receiver owner.
 
-## Pinned summary digests (canonical bytes)
+## Pinned summary text digests
 
 | Summary file | Canonical SHA-256 | Bytes |
 | --- | --- | ---: |
@@ -41,13 +41,39 @@ cargo run --offline --locked -p htp-s14-receiver --example saved_summary -j1 -- 
 | `summary-partial-omitted.json` | `167150c3a2b95b3608a0a2361db8ca24874a10e6d2b74df37537fcff66390895` | 7637 |
 | `summary-violation.json` (extra, not in the committed set) | `9afe3ff3d307dbb193050269b595ffbe2ac5e7e37e35ab3caf62c59e76c0b4c1` | 7710 |
 
+The digest is computed over the exact retained summary text bytes, not over
+`JSON.stringify(parsedSummary)`. A parsed summary object is not receiver
+canonical: PostgreSQL JSONB and ordinary object handling reorder keys, so the
+serialization can differ from the receiver text even when the semantic content
+is identical. The detail must carry the retained text separately from the
+parsed object. See the native e2e pair below.
+
+## Native e2e pair (JSONB-reordered parsed object)
+
+`summary-native-e2e.json` and `report-native-e2e.json` are the genuine paired
+artifacts from the local S14 receipt e2e fixture (`scripts/s14-receipt-e2e/`),
+copied byte-for-byte:
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `summary-native-e2e.json` | 7711 | `f55ee1b3390b05a33e2001dd7b3f5891e099698d331942b9e56bf0e68c9c5b27` |
+| `report-native-e2e.json` | 45958 | `2c59c8eff03997d98f7ad1c49d513a030faf6bd37fa3edbee52e76d8606e25a1` |
+
+`summary-native-e2e.jsonb.json` is that same summary after a normal PostgreSQL
+JSONB round trip (`...::jsonb::text`). It is 8257 bytes and its serialization
+differs from the receiver text. The browser check serves the JSONB-reordered
+object as the parsed `summary` and the raw text as `summary_text`, then asserts
+the download is the raw text. The absent-text and digest-mismatch runs use the
+same pair so they cannot pass by accidental round-tripping.
+
 ## Retained source binding
 
 `source_sha256` (`sha256:<lowercase-hex>`) and `source_bytes` bind a summary to
-the exact retained report bytes. They are returned beside the canonical summary
-and are **not** part of the emitted summary wire object, so the summary-v5
-fixture bytes are unchanged. The summary hash proves only the summary; compare
-the raw report by its own stored digest and size.
+the exact retained report bytes. They are returned beside the summary and are
+**not** part of the emitted summary wire object, so the summary-v5 fixture bytes
+are unchanged. The summary hash proves only the summary; compare the raw report
+by its own stored digest and size. The retained summary text is returned as
+`summary_text`; its digest and length are `summary_sha256` and `summary_bytes`.
 
 | Report file | SHA-256 | Bytes |
 | --- | --- | ---: |

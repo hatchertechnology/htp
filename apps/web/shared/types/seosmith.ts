@@ -87,8 +87,15 @@ export interface AuditReport {
 }
 export interface AuditDetail extends AuditRun {
   report_json?: string | null
-  // Stored beside the canonical summary, never inside it. They bind the summary
-  // to the exact retained report bytes; the summary digest proves only the summary.
+  // Stored beside the parsed summary, never inside it. The text is the exact
+  // opaque summary the receiver emitted; the digest and length bind those bytes.
+  // Parsed JSON of the summary object cannot be treated as the receiver bytes:
+  // PostgreSQL JSONB and normal object handling may reorder keys or numbers.
+  summary_text?: string | null
+  summary_sha256?: string
+  summary_bytes?: number
+  // Stored beside the summary, never inside it. They bind the summary to the
+  // exact retained report bytes; the summary digest proves only the summary.
   source_sha256?: string
   source_bytes?: number
   report: AuditReport

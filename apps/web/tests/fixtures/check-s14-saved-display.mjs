@@ -25,34 +25,54 @@ const sha256 = text => createHash('sha256').update(text, 'utf8').digest('hex')
 const summaryNames = ['summary-complete-verified.json', 'summary-partial-mixed.json', 'summary-partial-omitted.json', 'summary-violation.json']
 const reportNames = ['report-complete-verified.json', 'report-partial-mixed.json', 'report-partial-omitted.json', 'report-violation.json']
 const [completeSummary, partialSummary, omittedSummary, violationSummary, completeReport, partialReport, omittedReport, violationReport] = await Promise.all([...summaryNames, ...reportNames].map(load))
+// Exact retained summary text as the receiver emitted it. Never re-serialize the
+// parsed object and call it canonical: JSONB/object ordering can change bytes.
+const summaryTexts = await Promise.all(summaryNames.map(read))
+const summaryShas = summaryTexts.map(sha256)
+const summaryObjects = summaryTexts.map(text => JSON.parse(text))
+for (const [i, text] of summaryTexts.entries()) assert.equal(text, JSON.stringify(summaryObjects[i]), summaryNames[i])
 // The exact retained report bytes, not a re-serialization of the parsed report.
 const rawReports = await Promise.all(reportNames.map(read))
 const sourceShas = rawReports.map(report => sha256(report))
-// The receiver emits canonical compact summary bytes; we hash the same text the UI hashes.
-const canonicalSummaries = [completeSummary, partialSummary, omittedSummary, violationSummary].map(summary => JSON.stringify(summary))
-const summaryShas = canonicalSummaries.map(summary => sha256(summary))
-for (const [i, summary] of canonicalSummaries.entries()) assert.equal(summary, JSON.stringify(JSON.parse(summary)), summaryNames[i])
+
+// Native e2e pair: the receiver's real summary text plus a parsed object that
+// PostgreSQL JSONB reordered. The reordered object must never be hashed as the
+// receiver summary, so its serialization differs from the retained text.
+const e2eSummaryText = await read('summary-native-e2e.json')
+const e2eSummaryReordered = await load('summary-native-e2e.jsonb.json')
+const e2eSummarySha = 'f55ee1b3390b05a33e2001dd7b3f5891e099698d331942b9e56bf0e68c9c5b27'
+const e2eReportText = await read('report-native-e2e.json')
+const e2eSourceSha = '2c59c8eff03997d98f7ad1c49d513a030faf6bd37fa3edbee52e76d8606e25a1'
+assert.equal(sha256(e2eSummaryText), e2eSummarySha)
+assert.equal(sha256(e2eReportText), e2eSourceSha)
+assert.notEqual(JSON.stringify(e2eSummaryReordered), e2eSummaryText)
 
 const site = '00000000-0000-0000-0000-000000000003'
 const user = '00000000-0000-0000-0000-000000000001'
-const ids = ['00000000-0000-4000-8000-00000000000a', '00000000-0000-4000-8000-00000000000b', '00000000-0000-4000-8000-00000000000c', '00000000-0000-4000-8000-00000000000d', '00000000-0000-4000-8000-00000000000e', '00000000-0000-4000-8000-00000000000f']
+const ids = ['00000000-0000-4000-8000-00000000000a', '00000000-0000-4000-8000-00000000000b', '00000000-0000-4000-8000-00000000000c', '00000000-0000-4000-8000-00000000000d', '00000000-0000-4000-8000-00000000000e', '00000000-0000-4000-8000-00000000000f', '00000000-0000-4000-8000-000000000010', '00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000012']
 const time = '2026-11-16T12:02:00Z'
 const exp = Math.floor(Date.now() / 1000) + 3600
 const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: user, exp })).toString('base64url')}.fake`
 
-// Each of the first four runs pairs the receiver summary with the exact bytes
-// of its retained source report and the true stored source binding. Run E is a
-// real schema-4 report with a future summary version; the dashboard must say it
-// is unsupported rather than showing any claim. Run F is a supported summary
-// whose retained raw bytes are absent, so its export must be labeled
-// reconstructed and must never be offered for digest comparison.
+// Each of the first four runs pairs the receiver summary text with the exact
+// bytes of its retained source report and the true stored source binding. Run E
+// is a real schema-4 report with a future summary version; the dashboard must
+// say it is unsupported rather than showing any claim. Run F is a supported
+// summary whose retained raw bytes are absent, so its export must be labeled
+// reconstructed and must never be offered for digest comparison. Run G is the
+// native e2e pair whose parsed summary was JSONB-reordered. Run H has no
+// retained summary text. Run I carries summary text whose digest does not match
+// the stored binding.
 const details = [
-  { delivery_id: ids[0], scan_at: '2026-11-16T12:01:00Z', received_at: time, ingestion_source: 'worker', summary: completeSummary, report: completeReport, report_json: rawReports[0], source_sha256: `sha256:${sourceShas[0]}`, source_bytes: Buffer.byteLength(rawReports[0]) },
-  { delivery_id: ids[1], scan_at: '2026-11-16T12:00:00Z', received_at: time, ingestion_source: 'worker', summary: partialSummary, report: partialReport, report_json: rawReports[1], source_sha256: `sha256:${sourceShas[1]}`, source_bytes: Buffer.byteLength(rawReports[1]) },
-  { delivery_id: ids[2], scan_at: '2026-11-16T11:59:00Z', received_at: time, ingestion_source: 'import', summary: omittedSummary, report: omittedReport, report_json: rawReports[2], source_sha256: `sha256:${sourceShas[2]}`, source_bytes: Buffer.byteLength(rawReports[2]) },
-  { delivery_id: ids[3], scan_at: '2026-11-16T11:58:00Z', received_at: time, ingestion_source: 'worker', summary: violationSummary, report: violationReport, report_json: rawReports[3], source_sha256: `sha256:${sourceShas[3]}`, source_bytes: Buffer.byteLength(rawReports[3]) },
+  { delivery_id: ids[0], scan_at: '2026-11-16T12:01:00Z', received_at: time, ingestion_source: 'worker', summary: completeSummary, summary_text: summaryTexts[0], summary_sha256: summaryShas[0], summary_bytes: Buffer.byteLength(summaryTexts[0]), report: completeReport, report_json: rawReports[0], source_sha256: `sha256:${sourceShas[0]}`, source_bytes: Buffer.byteLength(rawReports[0]) },
+  { delivery_id: ids[1], scan_at: '2026-11-16T12:00:00Z', received_at: time, ingestion_source: 'worker', summary: partialSummary, summary_text: summaryTexts[1], summary_sha256: summaryShas[1], summary_bytes: Buffer.byteLength(summaryTexts[1]), report: partialReport, report_json: rawReports[1], source_sha256: `sha256:${sourceShas[1]}`, source_bytes: Buffer.byteLength(rawReports[1]) },
+  { delivery_id: ids[2], scan_at: '2026-11-16T11:59:00Z', received_at: time, ingestion_source: 'import', summary: omittedSummary, summary_text: summaryTexts[2], summary_sha256: summaryShas[2], summary_bytes: Buffer.byteLength(summaryTexts[2]), report: omittedReport, report_json: rawReports[2], source_sha256: `sha256:${sourceShas[2]}`, source_bytes: Buffer.byteLength(rawReports[2]) },
+  { delivery_id: ids[3], scan_at: '2026-11-16T11:58:00Z', received_at: time, ingestion_source: 'worker', summary: violationSummary, summary_text: summaryTexts[3], summary_sha256: summaryShas[3], summary_bytes: Buffer.byteLength(summaryTexts[3]), report: violationReport, report_json: rawReports[3], source_sha256: `sha256:${sourceShas[3]}`, source_bytes: Buffer.byteLength(rawReports[3]) },
   { delivery_id: ids[4], scan_at: '2026-11-16T11:57:00Z', received_at: time, ingestion_source: 'worker', summary: { ...completeSummary, summary_version: 6 }, report: completeReport },
-  { delivery_id: ids[5], scan_at: '2026-11-16T11:56:00Z', received_at: time, ingestion_source: 'worker', summary: completeSummary, report: completeReport, source_sha256: `sha256:${sourceShas[0]}`, source_bytes: Buffer.byteLength(rawReports[0]) },
+  { delivery_id: ids[5], scan_at: '2026-11-16T11:56:00Z', received_at: time, ingestion_source: 'worker', summary: completeSummary, summary_text: summaryTexts[0], summary_sha256: summaryShas[0], summary_bytes: Buffer.byteLength(summaryTexts[0]), report: completeReport, source_sha256: `sha256:${sourceShas[0]}`, source_bytes: Buffer.byteLength(rawReports[0]) },
+  { delivery_id: ids[6], scan_at: '2026-11-16T11:55:00Z', received_at: time, ingestion_source: 'worker', summary: e2eSummaryReordered, summary_text: e2eSummaryText, summary_sha256: e2eSummarySha, summary_bytes: Buffer.byteLength(e2eSummaryText), report: JSON.parse(e2eReportText), report_json: e2eReportText, source_sha256: e2eSourceSha, source_bytes: Buffer.byteLength(e2eReportText) },
+  { delivery_id: ids[7], scan_at: '2026-11-16T11:54:00Z', received_at: time, ingestion_source: 'worker', summary: e2eSummaryReordered, summary_sha256: e2eSummarySha, summary_bytes: Buffer.byteLength(e2eSummaryText), report: JSON.parse(e2eReportText), report_json: e2eReportText, source_sha256: e2eSourceSha, source_bytes: Buffer.byteLength(e2eReportText) },
+  { delivery_id: ids[8], scan_at: '2026-11-16T11:53:00Z', received_at: time, ingestion_source: 'worker', summary: e2eSummaryReordered, summary_text: e2eSummaryText, summary_sha256: '0'.repeat(64), summary_bytes: Buffer.byteLength(e2eSummaryText), report: JSON.parse(e2eReportText), report_json: e2eReportText, source_sha256: e2eSourceSha, source_bytes: Buffer.byteLength(e2eReportText) },
 ]
 const runs = details.map(({ report, report_json, ...run }) => run)
 const ruleTotals = coverage => {
@@ -107,15 +127,17 @@ try {
   // The retained source binding is stored beside, not inside, the summary.
   assert.ok(await panel.getByText(new RegExp(sourceShas[0])).count() >= 1)
   assert.ok(await panel.getByText(new RegExp(String(details[0].source_bytes) + ' bytes')).count() >= 1)
-  assert.ok(await panel.getByText(/stored separately from the canonical summary/).count() >= 1)
+  assert.ok(await panel.getByText(/stored separately from the summary/).count() >= 1)
   assert.ok(await panel.getByText(/byte-identical/).count() >= 1)
-  // The canonical summary digest, not the source digest, is what the summary download hashes.
+  // The retained summary text digest, not the source digest, is what the summary download hashes.
   assert.ok(await panel.getByText(new RegExp(summaryShas[0].slice(0, 16))).count() >= 1)
+  assert.ok(await panel.getByText(/matches the stored summary digest/).count() >= 1)
+  assert.ok(await panel.getByText(new RegExp(String(details[0].summary_bytes) + ' bytes')).count() >= 1)
   const summaryDownload = await downloadBytes('Download receiver summary')
-  assert.equal(summaryDownload.text, canonicalSummaries[0])
+  assert.equal(summaryDownload.text, summaryTexts[0])
   assert.equal(summaryDownload.sha, summaryShas[0])
   assert.notEqual(summaryDownload.sha, sourceShas[0])
-  assert.equal(summaryDownload.bytes.length, Buffer.byteLength(canonicalSummaries[0]))
+  assert.equal(summaryDownload.bytes.length, Buffer.byteLength(summaryTexts[0]))
 
   // Run A download: exact retained report bytes, verified by SHA-256, not a label.
   const completeDownload = await downloadBytes('Download run JSON')
@@ -172,6 +194,43 @@ try {
   assert.notEqual(reconstructedDownload.text, rawReports[0])
   assert.notEqual(reconstructedDownload.sha, sourceShas[0])
 
+  // Run G: real receiver summary text with a JSONB-reordered parsed object. The
+  // download must be the retained text, not JSON.stringify(reordered object).
+  await page.getByLabel('Inspect a run', { exact: true }).selectOption(ids[6])
+  await panel.getByText(/Partial or unknown/).waitFor()
+  assert.notEqual(JSON.stringify(e2eSummaryReordered), e2eSummaryText)
+  assert.ok(await panel.getByText(/matches the stored summary digest/).count() >= 1)
+  assert.ok(await panel.getByText(new RegExp(e2eSummarySha.slice(0, 16))).count() >= 1)
+  const e2eSummaryDownload = await downloadBytes('Download receiver summary')
+  assert.equal(e2eSummaryDownload.text, e2eSummaryText)
+  assert.equal(e2eSummaryDownload.sha, e2eSummarySha)
+  assert.notEqual(e2eSummaryDownload.text, JSON.stringify(e2eSummaryReordered))
+  assert.equal(e2eSummaryDownload.bytes.length, Buffer.byteLength(e2eSummaryText))
+  const e2eReportDownload = await downloadBytes('Download run JSON')
+  assert.equal(e2eReportDownload.text, e2eReportText)
+  assert.equal(e2eReportDownload.sha, e2eSourceSha)
+
+  // Run H: no retained summary text. The summary digest is a reconstruction and
+  // must not be presented as receiver-canonical or compared with the binding.
+  await page.getByLabel('Inspect a run', { exact: true }).selectOption(ids[7])
+  await panel.getByText(/Partial or unknown/).waitFor()
+  assert.ok(await panel.getByText(/Retained summary text is not stored with this detail/).count() >= 1)
+  assert.ok(await panel.getByText(/reconstructed JSON serialization/).count() >= 1)
+  assert.ok(await panel.getByText(/not receiver-canonical/).count() >= 1)
+  assert.equal(await panel.getByText(/matches the stored summary digest/).count(), 0)
+  const absentTextDownload = await downloadBytes('Download reconstructed summary')
+  assert.equal(absentTextDownload.text, JSON.stringify(e2eSummaryReordered))
+  assert.notEqual(absentTextDownload.sha, e2eSummarySha)
+  assert.notEqual(absentTextDownload.text, e2eSummaryText)
+  // Run I: retained summary text whose digest does not match the stored binding.
+  await page.getByLabel('Inspect a run', { exact: true }).selectOption(ids[8])
+  await panel.getByText(/Partial or unknown/).waitFor()
+  assert.ok(await panel.getByText(/does not match the stored summary digest/).count() >= 1)
+  const mismatchDownload = await downloadBytes('Download receiver summary')
+  assert.equal(mismatchDownload.text, e2eSummaryText)
+  assert.equal(mismatchDownload.sha, e2eSummarySha)
+  assert.notEqual(mismatchDownload.sha, '0'.repeat(64))
+
   await page.getByLabel('Inspect a run', { exact: true }).selectOption(ids[0])
   await panel.getByText(/Complete verified/).waitFor()
   await page.screenshot({ path: `/tmp/htp-s14-saved-display-${mode}.png`, fullPage: true })
@@ -187,7 +246,7 @@ try {
   assert.ok(!calls.some(call => call.startsWith('BLOCKED')), calls.join('\n'))
   assert.ok(calls.filter(call => /^(POST|PUT|PATCH|DELETE) /.test(call)).every(call => calls.includes(`ABORTED ${call}`)))
   assert.ok(!calls.some(call => /^(POST|PUT|PATCH|DELETE) .*\/seo\/audits/.test(call)))
-  console.log(`PASS: schema-4 receiver semantics in the normal dashboard (${mode} saved-read transport); complete, mixed partial, omitted and violation runs; future summary explicitly unsupported; exact retained report and canonical summary downloads verified by SHA-256; reconstructed export labeled when bytes are absent; reads only, no external traffic`)
+  console.log(`PASS: schema-4 receiver semantics in the normal dashboard (${mode} saved-read transport); complete, mixed partial, omitted and violation runs; future summary explicitly unsupported; retained summary text and retained report downloads verified by SHA-256; JSONB-reordered parsed summary not treated as receiver bytes; absent summary text and summary digest mismatch labeled; reconstructed exports labeled when bytes are absent; reads only, no external traffic`)
   console.log(calls.join('\n'))
 } catch (error) {
   console.error('page errors:', errors)

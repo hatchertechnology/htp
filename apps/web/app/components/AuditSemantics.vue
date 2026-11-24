@@ -3,7 +3,6 @@ import type { AuditDetail } from '../../shared/types/seosmith'
 import {
   SCHEMA4_SUMMARY_VERSION,
   auditCoverageLabel,
-  canonicalSummaryText,
   labelRule,
   recordCounts,
   reportExport,
@@ -13,6 +12,8 @@ import {
   semanticsSupport,
   sha256Hex,
   sha256Matches,
+  summaryExport,
+  type SummaryExportReason,
 } from '#shared/utils/saved-semantics'
 
 const props = defineProps<{ audit: AuditDetail }>()
@@ -30,22 +31,30 @@ const showAllRules = ref(false)
 const visibleClaims = computed(() => showAllRules.value ? claims.value : claims.value.filter(entry => entry.claim !== 'verified-clean'))
 const omitted = computed(() => (shownSummary.value?.omitted_records ?? 0) + (shownSummary.value?.omitted_observations ?? 0))
 function stamp(value: string | null | undefined) { return value ? `${value.replace('T', ' ').replace('Z', '')} UTC` : 'Unavailable' }
-// The receiver emits a canonical compact summary. We hash those exact bytes so
-// the displayed digest can be checked against the receiver's pinned digest,
-// and separately hash the retained report export. The two digests bind
-// different artifacts and must never be presented as interchangeable.
-const summaryDigest = ref<{ hex: string | null; bytes: number } | null>(null)
+// The receiver emits an opaque summary text. We hash those exact bytes when the
+// detail retains them, and separately hash the retained report export. A parsed
+// summary object is not receiver-canonical: JSONB and object handling may
+// reorder keys, so its serialization is a reconstruction and its digest must
+// never be compared with the receiver's stored summary digest.
+const retainedSummary = computed(() => summaryExport(props.audit))
+const summaryDigest = ref<{ hex: string | null; bytes: number; exact: boolean; reason: SummaryExportReason | null; matches: boolean | null } | null>(null)
 const reportDigest = ref<{ hex: string | null; bytes: number; exact: boolean; matches: boolean | null } | null>(null)
 let digestGeneration = 0
 watch(() => props.audit.delivery_id, async () => {
   const generation = ++digestGeneration
   summaryDigest.value = null; reportDigest.value = null
   if (support.value !== 'schema4-summary5') return
-  const canonical = canonicalSummaryText(summary.value!)
+  const summaryBytes = summaryExport(props.audit)
   const exported = reportExport(props.audit)
-  const [summaryHex, reportHex] = await Promise.all([sha256Hex(canonical), sha256Hex(exported.text)])
+  const [summaryHex, reportHex] = await Promise.all([sha256Hex(summaryBytes.text), sha256Hex(exported.text)])
   if (generation !== digestGeneration) return
-  summaryDigest.value = { hex: summaryHex, bytes: new TextEncoder().encode(canonical).length }
+  summaryDigest.value = {
+    hex: summaryHex,
+    bytes: new TextEncoder().encode(summaryBytes.text).length,
+    exact: summaryBytes.exact,
+    reason: summaryBytes.reason,
+    matches: summaryBytes.exact ? sha256Matches(summaryHex, props.audit.summary_sha256) : false,
+  }
   reportDigest.value = {
     hex: reportHex,
     bytes: new TextEncoder().encode(exported.text).length,
@@ -54,12 +63,15 @@ watch(() => props.audit.delivery_id, async () => {
   }
 }, { immediate: true })
 function downloadSummary() {
-  // Canonical compact bytes, not pretty JSON: pretty output can never match the pinned digest.
-  const data = canonicalSummaryText(summary.value!)
-  const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }))
+  // Exact retained receiver text when present; otherwise an explicitly
+  // reconstructed serialization that must not be compared to the stored digest.
+  const retained = summaryExport(props.audit)
+  const url = URL.createObjectURL(new Blob([retained.text], { type: 'application/json' }))
   const link = document.createElement('a')
   link.href = url
-  link.download = `seosmith-summary-${props.audit.delivery_id}.json`
+  link.download = retained.exact
+    ? `seosmith-summary-${props.audit.delivery_id}.json`
+    : `seosmith-summary-${props.audit.delivery_id}-reconstructed.json`
   link.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
@@ -69,7 +81,7 @@ function downloadSummary() {
   <section v-if="support === 'schema4-summary5'" class="report-panel seo-history-table" aria-labelledby="audit-semantics-title">
     <header>
       <div><h3 id="audit-semantics-title">Receiver-verified semantics</h3><p class="report-caption">Schema {{ shownSummary?.schema_version }} summary version {{ shownSummary?.summary_version }} · wire contract {{ shownSummary?.wire_contract_version || 'unavailable' }} · evidence state {{ shownSummary?.evidence_state || 'unavailable' }}. Derived by the receiver from the retained report; not a re-crawl.</p></div>
-      <button class="refresh-control" @click="downloadSummary">Download receiver summary</button>
+      <button class="refresh-control" @click="downloadSummary">{{ retainedSummary.exact ? 'Download receiver summary' : 'Download reconstructed summary' }}</button>
     </header>
     <p v-if="shownSummary?.coverage_complete === true" class="form-notice" role="status">Audit coverage: Complete verified. The whole expected finding population was independently reproduced for the retained evidence. A complete audit does not imply every rule is complete, and it does not mean the site is clean.</p>
     <p v-else class="form-notice" role="status">Audit coverage: {{ auditCoverageLabel(shownSummary?.audit_coverage) }}. Some checks did not complete, so a missing finding is unknown, not a pass.</p>
@@ -100,9 +112,10 @@ function downloadSummary() {
       <summary>Provenance and raw digests</summary>
       <p class="report-caption">Delivery {{ audit.delivery_id }} · {{ audit.ingestion_source === 'import' ? 'Imported report' : audit.ingestion_source === 'worker' ? 'Worker delivery' : 'Source unavailable' }} · received {{ stamp(audit.received_at) }} · engine {{ shownSummary?.engine_version || 'unknown' }} · ruleset {{ shownSummary?.ruleset_version || 'unknown' }} · observed {{ stamp(shownSummary?.started_at) }} to {{ stamp(shownSummary?.finished_at) }} · outcome {{ shownSummary?.stop_reason || shownSummary?.outcome }}.</p>
       <p class="report-caption">Policy digest {{ shownSummary?.policy_digest || 'Unavailable' }} · manifest digest {{ shownSummary?.manifest_digest || 'Unavailable' }} · scope digest {{ shownSummary?.scope_digest || 'Unavailable' }} · comparison key {{ shownSummary?.comparison_key || 'Unavailable' }}. These SHA-256 digests bind the declared policy, manifest and scope; they do not authenticate the raw source bytes.</p>
-      <p class="report-caption">Canonical summary SHA-256 {{ summaryDigest?.hex || 'unavailable' }} · {{ summaryDigest?.bytes ?? 'unknown' }} bytes, computed over the compact canonical summary serialization. This binds the summary content only and is not the source report digest.</p>
-      <p v-if="reportDigest?.exact" class="report-caption">Retained source binding: {{ audit.source_sha256 || 'not stored with this detail' }}<template v-if="audit.source_bytes !== undefined"> · {{ audit.source_bytes }} bytes</template>. This binding is stored separately from the canonical summary. The exact retained report bytes are present with this detail, so the run JSON download is byte-identical and its SHA-256 {{ reportDigest.matches === true ? 'matches this binding' : reportDigest.matches === false ? 'does not match this binding' : 'could not be verified against this binding' }}.</p>
-      <p v-else class="report-caption">Retained source binding: {{ audit.source_sha256 || 'not stored with this detail' }}<template v-if="audit.source_bytes !== undefined"> · {{ audit.source_bytes }} bytes</template>. This binding is stored separately from the canonical summary, but the raw report bytes are not retained with this detail. The run JSON download is a reconstructed export from the parsed report: it does not match this source digest and is not comparable to it. Only the canonical summary digest above is reproducible.</p>
+      <p v-if="summaryDigest?.exact" class="report-caption">Retained summary text SHA-256 {{ summaryDigest.hex || 'unavailable' }} · {{ summaryDigest.bytes ?? 'unknown' }} bytes computed over the exact opaque summary text stored with this detail. Stored summary binding: {{ audit.summary_sha256 || 'not stored with this detail' }}<template v-if="audit.summary_bytes !== undefined"> · {{ audit.summary_bytes }} bytes</template>. The computed digest {{ summaryDigest.matches === true ? 'matches the stored summary digest' : summaryDigest.matches === false ? 'does not match the stored summary digest' : 'has no stored summary digest to compare against' }}. It binds the summary content only and is not the source report digest.</p>
+      <p v-else class="report-caption">Retained summary text is {{ summaryDigest?.reason === 'invalid' ? 'present but not a valid summary object' : 'not stored with this detail' }}. The summary SHA-256 {{ summaryDigest?.hex || 'unavailable' }} · {{ summaryDigest?.bytes ?? 'unknown' }} bytes is computed over a reconstructed JSON serialization of the parsed summary, not the receiver's bytes. It is not receiver-canonical and must not be compared with the stored summary digest.</p>
+      <p v-if="reportDigest?.exact" class="report-caption">Retained source binding: {{ audit.source_sha256 || 'not stored with this detail' }}<template v-if="audit.source_bytes !== undefined"> · {{ audit.source_bytes }} bytes</template>. This binding is stored separately from the summary. The exact retained report bytes are present with this detail, so the run JSON download is byte-identical and its SHA-256 {{ reportDigest.matches === true ? 'matches this binding' : reportDigest.matches === false ? 'does not match this binding' : 'could not be verified against this binding' }}.</p>
+      <p v-else class="report-caption">Retained source binding: {{ audit.source_sha256 || 'not stored with this detail' }}<template v-if="audit.source_bytes !== undefined"> · {{ audit.source_bytes }} bytes</template>. This binding is stored separately from the summary, but the raw report bytes are not retained with this detail. The run JSON download is a reconstructed export from the parsed report: it does not match this source digest and is not comparable to it.<template v-if="summaryDigest?.exact"> Only the retained summary text digest above is reproducible.</template><template v-else> Neither the summary nor the report digest above is reproducible from receiver bytes.</template></p>
     </details>
     <details open>
       <summary>Per-rule claim scope ({{ totals.rules }} rules)</summary>

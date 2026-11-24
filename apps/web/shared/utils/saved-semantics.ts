@@ -76,12 +76,35 @@ export function auditCoverageLabel(audit: AuditSummary['audit_coverage']): strin
 }
 
 /**
- * Canonical summary bytes: the receiver emits compact JSON in stable field
- * order, so the parsed summary round-trips to the pinned canonical digest.
- * Pretty-printing produces different bytes and can never match that digest.
+ * Summary export bytes and whether they are the receiver's retained text.
+ *
+ * A parsed summary object is not the receiver's canonical bytes. PostgreSQL
+ * JSONB reorders keys, and normal object handling may change key order or
+ * number formatting, so `JSON.stringify(summary)` cannot be called
+ * receiver-canonical. When the detail carries the retained opaque summary text,
+ * return those exact bytes. Otherwise return a reconstructed serialization and
+ * mark it explicitly so the caller never presents its digest as the receiver's.
  */
-export function canonicalSummaryText(summary: AuditSummary): string {
-  return JSON.stringify(summary)
+export type SummaryExportReason = 'absent' | 'invalid'
+export interface SummaryExport {
+  text: string
+  exact: boolean
+  reason: SummaryExportReason | null
+}
+export function summaryExport(detail: Pick<AuditDetail, 'summary' | 'summary_text'>): SummaryExport {
+  const text = typeof detail.summary_text === 'string' ? detail.summary_text : null
+  if (text !== null && text.length > 0) {
+    try {
+      const parsed: unknown = JSON.parse(text)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return { text, exact: true, reason: null }
+      }
+    } catch {
+      // Fall through to the explicit reconstructed export.
+    }
+    return { text: JSON.stringify(detail.summary), exact: false, reason: 'invalid' }
+  }
+  return { text: JSON.stringify(detail.summary), exact: false, reason: 'absent' }
 }
 
 /**
