@@ -28,12 +28,13 @@ function client(event: H3Event) {
 function options(event: H3Event, maxAge: number) {
   return { httpOnly: true, secure: configuration(event).origin.startsWith('https:'), sameSite: 'lax' as const, path: '/', maxAge }
 }
-export async function requireDashboardUser(event: H3Event) {
+export async function requireDashboardUser(event: H3Event, signal?: AbortSignal) {
   const authorization = getHeader(event, 'authorization')
   if (!authorization || !/^Bearer [A-Za-z0-9._~-]{1,8192}$/i.test(authorization)) throw createError({ statusCode: 401, message: 'Sign in to continue.' })
   const config = useRuntimeConfig(event)
-  const supabase = createClient(config.public.supabaseUrl, config.public.supabasePublishableKey, { auth: { persistSession: false, autoRefreshToken: false } })
+  const supabase = createClient(config.public.supabaseUrl, config.public.supabasePublishableKey, { auth: { persistSession: false, autoRefreshToken: false }, ...(signal ? { global: { fetch: (input, init) => fetch(input, { ...init, signal }) } } : {}) })
   const { data, error } = await supabase.auth.getUser(authorization.slice(7))
+  signal?.throwIfAborted()
   if (error || !data.user || data.user.is_anonymous) throw createError({ statusCode: 401, message: 'Your session has ended. Sign in again.' })
   return { id: data.user.id, authorization }
 }

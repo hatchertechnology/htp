@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 import { chromium } from '../../apps/web/node_modules/playwright/index.mjs'
 const root = process.cwd(),
   site = '00000000-0000-4000-8000-000000000003',
+  site2 = '00000000-0000-4000-8000-000000000004',
   user = '00000000-0000-4000-8000-0000000000aa',
   ids = [
     '00000000-0000-4000-8000-000000000101',
@@ -109,7 +110,10 @@ const mock = http.createServer((req, res) => {
     res.end(JSON.stringify(x))
   }
   if (path === '/websites') {
-    return json({ items: [{ id: site, fqdn: 'example.com' }], has_more: false })
+    return json({ items: [{ id: site, fqdn: 'example.com' }, { id: site2, fqdn: 'other.example.com' }], has_more: false })
+  }
+  if (path === `/websites/${site2}/seo/audits`) {
+    return json({ items: [details[1]], has_more: false, next_cursor: null })
   }
   if (path === `/websites/${site}/seo/audits`) {
     return json({
@@ -126,12 +130,13 @@ const mock = http.createServer((req, res) => {
       res.writeHead(404)
       return res.end()
     }
-    const mode = modes[m[1]] || 'normal'
+    const mode = path.includes(site2) ? 'normal' : modes[m[1]] || 'normal'
     res.writeHead(200, {
       'content-type': mode === 'nonjson' ? 'text/plain' : 'application/json',
     })
     if (mode === 'nonjson') return res.end(JSON.stringify(d))
     if (mode === 'empty') return res.end()
+    if (mode === 'wrong-shape') return res.end(JSON.stringify({ ...d, summary: { ...d.summary, pages: null } }))
     if (mode === 'cut') {
       res.write('{"delivery_id":')
       return setTimeout(() => res.destroy(), 80)
@@ -261,8 +266,9 @@ try {
     await page.locator('.seo-summary').innerText(),
     new RegExp(String(details[1].summary.pages.checked)),
   )
+  assert.ok(closed > 0, 'cancelled detail must close upstream')
   console.log('delayed selection isolation passed upstream_closes', closed)
-  for (const mode of ['cut', 'empty', 'nonjson']) {
+  for (const mode of ['cut', 'empty', 'nonjson', 'wrong-shape']) {
     modes[ids[0]] = mode
     await select.selectOption(ids[0])
     await page.getByRole('alert').filter({ hasText: /Seosmith|fetch|JSON/i })
@@ -275,13 +281,21 @@ try {
     console.log(mode, 'error without stale detail passed')
     modes[ids[1]] = 'normal'
     await select.selectOption(ids[1])
-    await page.waitForFunction(
-      (id) =>
-        document.querySelector('select[aria-label="Inspect a run"]')?.value ===
-          id,
-      ids[1],
-    )
+    await panel.waitFor()
+    assert.equal(await page.getByRole('alert').filter({ hasText: /Seosmith|fetch|JSON/i }).count(), 0)
+    assert.match(await page.locator('.seo-summary').innerText(), new RegExp(String(details[1].summary.pages.checked)))
   }
+  modes[ids[0]] = 'delay'
+  await select.selectOption(ids[0])
+  await page.getByText('Loading this run’s findings…').waitFor()
+  const closesBeforeSiteSwitch = closed
+  await page.getByLabel('Select website').selectOption(site2)
+  await panel.waitFor()
+  await new Promise((r) => setTimeout(r, 2200))
+  assert.equal(await select.inputValue(), ids[1])
+  assert.match(await page.locator('.seo-summary').innerText(), new RegExp(String(details[1].summary.pages.checked)))
+  assert.ok(closed > closesBeforeSiteSwitch, 'site switch must close the old upstream')
+  console.log('cross-site selection isolation passed')
   assert.deepEqual(errors, [])
   console.log('PASS dashboard fixture requests', JSON.stringify(requests))
 } finally {

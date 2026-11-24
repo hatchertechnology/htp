@@ -1,4 +1,5 @@
 import type { AuditDetail, AuditHistory, AuditRun } from '../../shared/types/seosmith'
+import { isSavedDetail } from '#shared/utils/saved-detail-validation'
 export function useSeosmith() {
   const ws = useWorkspace()
   const boundedSavedDetail = useRuntimeConfig().public.boundedSavedDetail === true
@@ -19,10 +20,8 @@ export function useSeosmith() {
         if (!response.ok || !/^application\/(?:[\w.+-]+\+)?json(?:\s*;|$)/i.test(response.headers.get('content-type') || '')) throw new Error('Seosmith reports could not load. Try again.')
         // response.json() rejects a truncated transport and malformed or empty JSON.
         const value: unknown = await response.json()
-        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Seosmith reports could not load. Try again.')
-        const detail = value as AuditDetail
-        if (detail.delivery_id !== id || !detail.summary || !detail.report || typeof detail.report !== 'object' || (detail.report_json != null && typeof detail.report_json !== 'string')) throw new Error('Seosmith reports could not load. Try again.')
-        result = detail
+        if (!isSavedDetail(value, id)) throw new Error('Seosmith reports could not load. Try again.')
+        result = value
       } else {
         result = await ws.request<AuditDetail>(`/api/websites/${site}/seo/audits/${id}`, { signal: requestController.signal })
       }

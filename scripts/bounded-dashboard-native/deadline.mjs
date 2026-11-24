@@ -3,8 +3,17 @@ import { spawn } from 'node:child_process'
 import assert from 'node:assert/strict'
 const id = '00000000-0000-4000-8000-000000000001',
   run = '00000000-0000-4000-8000-000000000002'
-let closed = false
+let closed = false, authClosed = 0, authStarted = 0
 const mock = http.createServer((req, res) => {
+  if (req.url.startsWith('/auth/') && req.headers.authorization === 'Bearer invalid') {
+    res.writeHead(401, { 'content-type': 'application/json' })
+    return res.end(JSON.stringify({ message: 'Invalid token' }))
+  }
+  if (req.url.startsWith('/auth/') && req.headers.authorization === 'Bearer hanging') {
+    authStarted++
+    res.on('close', () => authClosed++)
+    return
+  }
   if (req.url.startsWith('/auth/')) {
     res.writeHead(200, { 'content-type': 'application/json' })
     return res.end(
@@ -44,7 +53,31 @@ try {
   const unauthorized = await fetch(url)
   assert.equal(unauthorized.status, 401)
   assert.match(unauthorized.headers.get('cache-control'), /no-store/)
-  console.log('early 401 no-store passed')
+  const invalid = await fetch(url, {
+    headers: { authorization: 'Bearer invalid' },
+  })
+  assert.equal(invalid.status, 401)
+  assert.match(invalid.headers.get('cache-control'), /no-store/)
+  console.log('missing and rejected credentials return 401 no-store')
+  const cancelled = new AbortController()
+  const pending = fetch(url, {
+    headers: { authorization: 'Bearer hanging' },
+    signal: cancelled.signal,
+  }).catch(() => {})
+  for (let i = 0; authStarted < 1 && i < 100; i++) {
+    await new Promise((r) => setTimeout(r, 20))
+  }
+  assert.equal(authStarted, 1)
+  cancelled.abort()
+  await pending
+  for (let i = 0; authClosed < 1 && i < 100; i++) {
+    await new Promise((r) => setTimeout(r, 20))
+  }
+  assert.equal(authClosed, 1, 'disconnect must close hanging auth upstream')
+  const authStart = Date.now()
+  const authTimeout = fetch(url, {
+    headers: { authorization: 'Bearer hanging' },
+  })
   const start = Date.now(),
     r = await fetch(url, { headers: { authorization: 'Bearer synthetic' } })
   assert.equal(r.status, 200)
@@ -57,6 +90,11 @@ try {
   const elapsed = Date.now() - start
   console.log('stalled body', JSON.stringify({ rejected, elapsed, closed }))
   assert.ok(rejected && closed && elapsed >= 119000 && elapsed < 130000)
+  const authResponse = await authTimeout
+  assert.equal(authResponse.status, 504)
+  assert.match(authResponse.headers.get('cache-control'), /no-store/)
+  assert.ok(Date.now() - authStart >= 119000 && authClosed >= 2)
+  console.log('hanging auth timeout and upstream closure passed')
 } finally {
   child.kill()
   mock.closeAllConnections()

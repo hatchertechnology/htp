@@ -12,23 +12,25 @@ export async function streamSavedDetail(event: H3Event) {
   if (useRuntimeConfig(event).public.boundedSavedDetail !== true) {
     throw createError({ statusCode: 404 })
   }
-  const user = await requireDashboardUser(event)
-  const id = getRouterParam(event, 'id'), run = getRouterParam(event, 'run')
-  if (!id || !UUID.test(id) || !run || !UUID.test(run)) {
-    throw createError({
-      statusCode: 400,
-      message: 'Choose a valid website and run.',
-    })
-  }
   const abort = new AbortController()
   const res = event.node.res
   const onClose = () => {
     if (!res.writableFinished) abort.abort()
   }
   res.once('close', onClose)
-  // Bound both header wait and a stalled body; late expiry terminates the stream.
-  const timer = setTimeout(() => abort.abort(), 120_000)
+  if (res.destroyed) abort.abort()
+  // Bound authentication, headers and body; late expiry terminates the stream.
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    abort.abort()
+  }, 120_000)
   try {
+    const user = await requireDashboardUser(event, abort.signal)
+    const id = getRouterParam(event, 'id'), run = getRouterParam(event, 'run')
+    if (!id || !UUID.test(id) || !run || !UUID.test(run)) {
+      throw createError({ statusCode: 400, message: 'Choose a valid website and run.' })
+    }
     const upstream = await fetch(
       `${
         useRuntimeConfig(event).apiBaseUrl.replace(/\/$/, '')
@@ -58,8 +60,9 @@ export async function streamSavedDetail(event: H3Event) {
     )
   } catch (error) {
     if (!res.headersSent && !res.destroyed) {
+      if (!abort.signal.aborted && [400, 401].includes((error as { statusCode?: number })?.statusCode ?? 0)) throw error
       throw createError({
-        statusCode: 502,
+        statusCode: timedOut ? 504 : 502,
         message: 'Seosmith reports could not load. Try again.',
       })
     }
