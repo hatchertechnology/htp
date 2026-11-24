@@ -4,7 +4,7 @@ const origin = process.env.HTP_TEST_ORIGIN || 'http://127.0.0.1:3105'
 const target = new URL(origin)
 if (target.protocol !== 'http:' || target.hostname !== '127.0.0.1') throw new Error('This test only runs against loopback HTTP.')
 const mode = process.env.HTP_COMPARISON_MODE || 'off'
-const calls = [], auditRequests = []
+const calls = [], auditRequests = [], importBodies = []
 let delaySource = false, releaseSource, sourceRequested
 const sourceRequest = new Promise(resolve => { sourceRequested = resolve })
 const sourceRelease = new Promise(resolve => { releaseSource = resolve })
@@ -28,7 +28,8 @@ await page.route('**/*',async route=>{
      return json(body.p_id?source:{items:[source],next_cursor:null})
    }
    if(path.endsWith('/independent_comparison_history')) return json({items:[snapshot,unsupported],next_cursor:null})
-   if(path.endsWith('/independent_comparison_detail')) return json({comparison:body.p_comparison_id === unsupported.id ? unsupported : snapshot,source,seosmith:{report,report_json:'original report',sha256:'abc'}})
+   if(path.endsWith('/independent_comparison_detail')) return json({comparison:body.p_comparison_id === unsupported.id ? unsupported : snapshot,source,seosmith:{fqdn:'example.com',report,report_json:'original report',sha256:'abc'}})
+   if(path.endsWith('/import_independent_audit')) { importBodies.push(body); return json({id:'00000000-0000-0000-0000-000000000009',source_sha256:'x',created_at:'now'}) }
    if(path.endsWith('/independent_evidence_fingerprint')) return json('fingerprint')
    return json(null)
  }
@@ -56,7 +57,7 @@ if (mode === 'off') {
   await page.goto(`${origin}/independent-audits`)
   await page.getByRole('button',{name:/example.csv/}).waitFor({timeout:20000})
   await page.getByRole('button',{name:/example.csv/}).click()
-  await page.getByText('Source: Not provided').waitFor()
+  await page.getByText('Unknown / not provided').first().waitFor()
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button',{name:'Download original CSV'}).click()
   await downloadPromise
@@ -99,6 +100,18 @@ if (mode === 'off') {
     await box.check()
     await page.getByRole('button',{name:/example.csv/}).click()
     if(await select.inputValue() !== '' || await box.isChecked() || await page.getByRole('table').count()) throw Error('import switch retained prior run')
+    const { readFileSync } = await import('node:fs')
+    const file = readFileSync(new URL('./independent-tool-controlled.csv', import.meta.url))
+    await page.locator('main.page-shell input[type=file]').setInputFiles({ name: 'independent-tool-controlled.csv', mimeType: 'text/csv', buffer: file })
+    await page.getByLabel('Independent tool').fill('locally generated standalone crawler')
+    await page.getByLabel('Tool version').fill('9.4')
+    const imported = page.waitForResponse(response => response.url().includes('/import_independent_audit') && response.status() === 200)
+    await page.getByRole('button',{name:'Save import'}).click()
+    await imported
+    if (importBodies.length !== 1 || importBodies[0].p_format !== 'controlled-csv-v1' || importBodies[0].p_metadata?.provenance?.tool !== 'locally generated standalone crawler' || importBodies[0].p_metadata?.provenance?.version !== '9.4') throw Error(`import provenance not submitted: ${JSON.stringify(importBodies)}`)
+    await page.getByRole('button',{name:/saved comparison/}).click()
+    await page.getByRole('table').waitFor()
+    await page.getByText(/1 agreement/).waitFor()
   }
 }
 if(errors.length) throw Error(JSON.stringify(errors))

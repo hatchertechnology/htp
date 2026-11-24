@@ -10,7 +10,7 @@ hides the surface; it does not undo collected data or revoke database privileges
 | --- | --- | --- | --- |
 | Forms | `NUXT_PUBLIC_ROLLOUT_FORMS=true` | `HTP_ROLLOUT_FORMS=true` | Management and confirmation hidden; public ingress 503. Existing proxy trust, secrets and rate gates still apply. |
 | Saved Search evidence | `NUXT_PUBLIC_ROLLOUT_SEARCH_EVIDENCE=true` | `HTP_ROLLOUT_SEARCH_EVIDENCE=true` (API and Google worker separately) | Dataset and crawl evidence unavailable; existing Search dashboard and inspection remain; the worker omits optional previous-period and segmented provider requests. |
-| Independent comparisons | `NUXT_PUBLIC_ROLLOUT_COMPARISONS=true` | — | Direct page shows unavailable and performs no RPCs. Database ACLs govern direct clients. |
+| Independent comparisons | `NUXT_PUBLIC_ROLLOUT_COMPARISONS=true` (full workflow); `NUXT_PUBLIC_ROLLOUT_COMPARISONS_READ_ONLY=true` (read-only; wins if both) | — | Direct page shows unavailable and performs no RPCs. Database ACLs govern direct clients. Read mode loads retained evidence but hides import, save and removal controls. |
 | Indexed lifecycle history | `NUXT_PUBLIC_ROLLOUT_LIFECYCLE=true` | `HTP_ROLLOUT_LIFECYCLE=true` | Indexed history controls and endpoints unavailable; existing audit reads and local comparisons remain. |
 
 For paired web/API controls, enable API first only after its dependencies are
@@ -21,8 +21,12 @@ proxy identity and its required service and IP-hash configuration.
 
 Before and after a separately authorized deployment, run the held and enabled
 browser checks in an isolated application with synthetic authentication and
-intercepted Supabase requests (`apps/web/tests/fixtures/check-rollout-held.mjs`
-and `check-independent-audits.mjs`). Confirm held comparisons make no RPCs,
+intercepted Supabase requests (`apps/web/tests/fixtures/check-rollout-held.mjs`,
+`check-independent-audits.mjs` and `check-comparison-modes.mjs`, driven by
+`HTP_COMPARISON_MODE=off|read-only|full|both`). The disposable native fixtures
+`scripts/comparison-native/run.sh read` and `run.sh full` additionally exercise
+real loopback PostgREST owner/nonowner reads, import, exact original download and
+replay. Confirm held comparisons make no RPCs,
 Forms controls are hidden, and enabled controls work with fixture data. These
 checks are not currently in PR CI: the existing jobs run unit and Vite fixtures
 but do not build or start the full Nuxt application; adding a second application

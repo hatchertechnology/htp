@@ -19,7 +19,7 @@ await page.route('**/*',async route=>{
    const body=route.request().postDataJSON()||{}
    if(path.endsWith('/independent_audit_history')) return json(body.p_id?source:{items:[source],next_cursor:null})
    if(path.endsWith('/independent_comparison_history')) return json({items:[snapshot,unsupported],next_cursor:null})
-   if(path.endsWith('/independent_comparison_detail')) return json({comparison:body.p_comparison_id === unsupported.id ? unsupported : snapshot,source,seosmith:{report,report_json:'original report',sha256:'abc'}})
+   if(path.endsWith('/independent_comparison_detail')) return json({comparison:body.p_comparison_id === unsupported.id ? unsupported : snapshot,source,seosmith:{fqdn:'example.com',report,report_json:'original report',sha256:'abc'}})
    if(path.endsWith('/independent_evidence_fingerprint')) return json('fingerprint')
    return json(null)
  }
