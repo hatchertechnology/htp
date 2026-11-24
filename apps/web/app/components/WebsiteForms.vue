@@ -28,6 +28,7 @@ async function staticEligible(websiteId: string, token: string) {
   return result?.eligible === true
 }
 let eligibilityGeneration = 0
+let inboxGeneration = 0
 watch(() => [auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId, props.mode] as const, async ([owner, anonymous, websiteId, mode]) => {
   const generation = ++eligibilityGeneration
   eligible.value = false
@@ -202,8 +203,11 @@ async function save() {
 }
 async function inbox(form:Form, more = false) {
   const generation = eligibilityGeneration, site = props.websiteId
+  // Every selection, reload (including write reconciliation), or page supersedes older reads.
+  const request = ++inboxGeneration
   const owner = auth.user.value?.id
-  if (!more) { selected.value=form; submissions.value=[]; deleting.value=null }; error.value=''
+  const current = () => request === inboxGeneration && generation === eligibilityGeneration && props.websiteId === site && !!owner && auth.user.value?.id === owner && auth.user.value?.is_anonymous !== true && selected.value?.id === form.id
+  if (!more) { selected.value=form; submissions.value=[]; moreResponses.value=false; deleting.value=null }; error.value=''
   const offset = submissions.value.length
   let data: unknown, err: unknown, hasMore = false
   if (apiReads.value) {
@@ -212,18 +216,18 @@ async function inbox(form:Form, more = false) {
     const result = await $supabase.from('website_form_responses').select('id,received_at,status,values').eq('website_id',props.websiteId).eq('form_id',form.id).order('received_at',{ascending:false}).order('id').range(offset,offset + 99)
     data = result.data; err = result.error; hasMore = (result.data ?? []).length === 100
   }
-  if (!owner || generation !== eligibilityGeneration || props.websiteId !== site || auth.user.value?.is_anonymous === true || auth.user.value?.id !== owner || selected.value?.id !== form.id) return
+  if (!current()) return
   if(err) { fail(err); return }; const rows=(data ?? []) as Submission[]; submissions.value.push(...rows); moreResponses.value=hasMore
   if (!legacy.value) { recipients.value=[]; deliveries.value=[]; return }
   const result=await $supabase.from('website_form_recipients').select('id,email,verified_at,enabled').eq('website_id',props.websiteId).eq('form_id',form.id)
-  if (auth.user.value?.id !== owner || selected.value?.id !== form.id) return
+  if (!current()) return
   if (result.error) { fail(result.error); return }
   recipients.value=(result.data ?? []) as Recipient[]
   if (recipients.value.length) {
     const all:Delivery[]=[]
     for (let offset=0; ; offset+=500) {
       const jobs=await $supabase.from('website_form_delivery_jobs').select('id,recipient_id,response_id,kind,state,attempts').in('recipient_id',recipients.value.map(r=>r.id)).order('created_at',{ascending:false}).order('id').range(offset,offset+499)
-      if (auth.user.value?.id !== owner || selected.value?.id !== form.id) return
+      if (!current()) return
       if (jobs.error) { fail(jobs.error); return }
       all.push(...((jobs.data ?? []) as Delivery[]))
       if (!jobs.data || jobs.data.length<500) break
