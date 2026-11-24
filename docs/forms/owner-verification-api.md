@@ -13,11 +13,11 @@ Both run as the signed-in owner. The caller's bearer is forwarded with the publi
 
 - REST sits behind the same `auth::require_user` layer as the websites routes.
 - MCP tools are registered only when the server flag is on, so the default tool listing is unchanged.
-- Responses are `Cache-Control: no-store`, because begin returns the challenge token once.
+- Handled REST responses are `Cache-Control: no-store`, because begin returns the challenge token once.
 
 ## Gate
 
-`HTP_FORMS_VERIFICATION_MCP=true` enables both entry points. Any other value, or unset, fails closed. Disabled REST returns 404 and never calls upstream. Disabled MCP tools are unregistered and absent from the listing.
+`HTP_FORMS_VERIFICATION_MCP=true` enables both entry points. Any other value, or unset, fails closed. Valid disabled REST requests return 404 and never call upstream. Invalid requests may be rejected by request parsing before the handler. Disabled MCP tools are unregistered and absent from the listing.
 
 The database grants are still the authority. If `begin_form_host_verification` or `form_host_challenge` is not granted to `authenticated` for the site, the call fails as not found. The server flag cannot grant access.
 
