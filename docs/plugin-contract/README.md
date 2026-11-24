@@ -12,9 +12,12 @@ caller intent/job association, retry, reconciliation and scoped withdrawal with
 versioned semantic traces. Backend PR45 is delivered/merged separately under #34; backend postchecks,
 contract acceptance, deployment and host activation remain distinct gates. The original `v1/`
 artifacts and accepted host pins remain historical 1.0.0 evidence. Accepted1.1 shared source remains pinned by `v1.1/skills.lock.json` and its
-archived source snapshot. Current shared source is pinned separately by
-`v1.2/skills.lock.json`; new workflows require deployed capability support. The checker validates both scenario sets and that
-current source lock. It does not promote an old host pin to the extension.
+archived source snapshot. Accepted1.2 shared source remains pinned by the frozen
+`v1.2/skills.lock.json` and its `v1.3/historical-v1.2-source/` archive. Current
+shared source is pinned separately by `v1.3/skills.lock.json`; new workflows
+require deployed capability support. The checker validates every archived
+scenario set and the current source lock. It does not promote an old host pin to
+the extension.
 
 The [audit export profile 1.2.0](v1.2/README.md) defines an additional versioned
 start/chunk/close workflow with full bytes/hash, owner revocation, lifetime and
@@ -24,6 +27,16 @@ migration and does not promise unchanged large-inline compatibility. Backend
 export implementation, deployment/endpoint acceptance and all three current-source
 readiness companions remain gated; contract checks prove no feature availability.
 Historical v1/accepted1.1 artifacts and host pins remain unchanged.
+
+The [audit read profile 1.3.0](v1.3/README.md) adds two owner-scoped stored reads,
+`website_audit_events` and `website_operational_episodes`, with an explicit
+`availability:producer_unavailable` state, a paired persisted cursor and held H15
+producer gates. The additive operations required a new minor profile instead of
+an edit to the frozen 1.0.0 inventory. Historical v1, accepted1.1 and accepted1.2
+contract bytes and pins remain byte-for-byte unchanged; the accepted1.2 source is
+archived under `v1.3/historical-v1.2-source/` and the current shared source is
+pinned by `v1.3/skills.lock.json`. No host pin is promoted and no producer is
+enabled.
 
 ## Authorization and discovery
 
@@ -82,11 +95,16 @@ Corrections to documentation/fixtures use patch versions and reviewed re-pinning
 Use Node 22 or newer, with no dependencies:
 
     node scripts/check-plugin-contract.mjs
-    node --test scripts/plugin-contract.test.mjs scripts/provider-request-contract.test.mjs scripts/audit-export-contract.test.mjs
+    node scripts/check-audit-export-contract.mjs
+    node scripts/check-audit-read-contract.mjs
+    node --test scripts/plugin-contract.test.mjs scripts/plugin-contract-versioning.test.mjs scripts/provider-request-contract.test.mjs scripts/audit-export-contract.test.mjs scripts/audit-read-contract.test.mjs
     node scripts/check-plugin-contract.mjs --results /path/results.json
 
 The checker verifies HTP tool inventory against source, historical/current shared skill hashes, three
-host descriptors and 38 synthetic normalized scenarios. Tests mutate transcripts to ensure
+host descriptors and the 1.0.0 38 synthetic normalized scenarios, plus the
+1.1.0/1.2.0/1.3.0 versioned profile traces and archived-source locks. The latest
+supported inventory is the frozen 1.0.0 set plus every additive profile
+operation; archived conformance is validated without rewriting it. Tests mutate transcripts to ensure
 unsafe results are rejected. The historical v1/provider checker inputs are capped at 1 MiB, 128 scenarios and
 16 MiB reported payload size. Export semantic CLI bounds are documented separately
 in1.2 and do not impose backend report limits. The checker does not execute hosts, read credentials or
@@ -200,13 +218,16 @@ v1 profile, fixture, lock or canonical pin; a future normative correction must b
 versioned and coordinated across mirrors.
 
 
-### Current audit export source and readiness
+### Current shared source and readiness
 
-Current source skills and their new1.2 lock intentionally differ from accepted1.1;
-`v1.2/historical-v1.1-source/` preserves the old four files for immutable lock
-verification. The checker verifies both histories and current source. No existing
-host pin is silently upgraded. The [1.2 migration/readiness plan](v1.2/README.md#migration-source-pins-and-readiness)
-requires three separate host companion changes after canonical merge and exact
+Accepted1.2 source uses the frozen `v1.2/skills.lock.json`, verified against
+`v1.3/historical-v1.2-source/`. Current shared source uses `v1.3/skills.lock.json`
+and adds the two audit reads. `v1.2/historical-v1.1-source/` still preserves the
+accepted1.1 four files for immutable lock verification. The checker verifies
+every archived history and the current source. No existing host pin is silently
+upgraded. The [1.2 migration/readiness plan](v1.2/README.md#migration-source-pins-and-readiness)
+and the [1.3 migration/readiness plan](v1.3/README.md#migration-source-pins-and-readiness)
+require three separate host companion changes after canonical merge and exact
 backend/deployment/endpoint evidence before availability claims. Actual host
-packages and vendored-source readiness are distinct. All export operations read
-saved evidence and create no collection work.
+packages and vendored-source readiness are distinct. All export and audit read
+operations read saved evidence and create no collection work.

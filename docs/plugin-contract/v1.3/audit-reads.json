@@ -1,0 +1,87 @@
+{
+  "contractVersion": "1.3.0",
+  "extends": [
+    "1.0.0",
+    "1.1.0",
+    "1.2.0"
+  ],
+  "capability": "htp.audit-read",
+  "status": "proposed-contract; additive owner-scoped stored reads; H15 producer availability gated; no activation, deployment or host support claimed",
+  "operations": [
+    {
+      "id": "htp.website_audit_events",
+      "binding": "website_audit_events",
+      "effect": "read",
+      "authorization": "htp-owner-oauth",
+      "collection": false,
+      "idempotency": true,
+      "destructive": false,
+      "inputs": {
+        "website_id": "UUID",
+        "limit": "optional integer 1..100, default 50",
+        "before": "optional RFC3339 timestamp; supply together with before_id from the previous next_cursor",
+        "before_id": "optional UUID; supply together with before from the previous next_cursor"
+      },
+      "result": "owner and current-FQDN scoped stored audit event page; explicit producer availability; never an empty-success substitute for missing support",
+      "resultFields": [
+        "semantics_version",
+        "events",
+        "has_more",
+        "next_cursor",
+        "availability"
+      ],
+      "pageField": "events",
+      "versionField": "semantics_version"
+    },
+    {
+      "id": "htp.website_operational_episodes",
+      "binding": "website_operational_episodes",
+      "effect": "read",
+      "authorization": "htp-owner-oauth",
+      "collection": false,
+      "idempotency": true,
+      "destructive": false,
+      "inputs": {
+        "website_id": "UUID",
+        "limit": "optional integer 1..100, default 50",
+        "before": "optional RFC3339 timestamp; supply together with before_id from the previous next_cursor",
+        "before_id": "optional UUID; supply together with before from the previous next_cursor"
+      },
+      "result": "owner and current-FQDN scoped stored provider operational episode page; explicit producer availability; never an empty-success substitute for missing support",
+      "resultFields": [
+        "version",
+        "episodes",
+        "has_more",
+        "next_cursor",
+        "availability"
+      ],
+      "pageField": "episodes",
+      "versionField": "version"
+    }
+  ],
+  "availability": {
+    "field": "availability",
+    "disabledValue": "producer_unavailable",
+    "meaning": "The H15 audit notification producer gates are disabled. This is explicit producer availability, not an empty history, not a zero count and not proof that no events or episodes exist. Discovery of the tool does not establish deployed producer support."
+  },
+  "discovery": "Discover tools and input schemas at connection time. A missing tool is unsupported, never an empty successful read; never substitute another operation. Do not treat absence from tools/list as a zero count.",
+  "limits": {
+    "limitMin": 1,
+    "limitMax": 100,
+    "defaultLimit": 50,
+    "cursor": "before and before_id must be supplied together, from the previous page's next_cursor; supplying only one is invalid"
+  },
+  "errors": [
+    "auth_required",
+    "forbidden",
+    "invalid_cursor_or_limit",
+    "unavailable",
+    "unsupported"
+  ],
+  "gates": [
+    "exact-head contract review and canonical merge",
+    "H15 producer/processor activation is independently gated and disabled",
+    "three host source/readiness companions at exact canonical merge; runtime support separately verified",
+    "fresh tools/list and input-schema discovery on the deployed host"
+  ]
+}
