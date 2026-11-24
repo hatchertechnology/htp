@@ -27,6 +27,7 @@ export default defineNuxtConfig({
       rolloutSearchEvidence: false,
       rolloutComparisons: false,
       rolloutComparisonsReadOnly: false,
+      boundedSavedDetail: false,
       rolloutLifecycle: false,
       rolloutRemediation: false,
       apiBaseUrl,

@@ -99,7 +99,7 @@ async function loadUrlHistory(entity_id: string, url: string, more = false) {
 }
 function download() {
   if (!selected.value) return
-  const url = URL.createObjectURL(new Blob([selected.value.report_json || JSON.stringify(selected.value.report, null, 2)], { type: 'application/json' }))
+  const url = URL.createObjectURL(new Blob([selected.value.report_json ?? JSON.stringify(selected.value.report, null, 2)], { type: 'application/json' }))
   const a = document.createElement('a'); a.href = url; a.download = `seosmith-${selected.value.delivery_id}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 </script>

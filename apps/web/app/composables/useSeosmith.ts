@@ -8,9 +8,23 @@ export function useSeosmith() {
   let controller: AbortController | undefined, detailController: AbortController | undefined
   async function select(id: string) {
     const gen = ++detailGeneration, site = ws.selectedId.value
-    detailController?.abort(); detailController = new AbortController(); selected.value = null; detailBusy.value = true; error.value = ''
+    detailController?.abort(); const requestController = new AbortController(); detailController = requestController; selected.value = null; detailBusy.value = true; error.value = ''
     try {
-      const result = await ws.request<AuditDetail>(`/api/websites/${site}/seo/audits/${id}`, { signal: detailController.signal })
+      let result: AuditDetail
+      if (useRuntimeConfig().public.boundedSavedDetail === true) {
+        const token = await ws.accessToken()
+        if (!token) throw new Error('Your session has ended. Sign in again.')
+        const response = await fetch(`/api/websites/${site}/seo/audits/${id}/dashboard`, { headers: { Authorization: `Bearer ${token}` }, signal: requestController.signal })
+        if (!response.ok) throw new Error('Seosmith reports could not load. Try again.')
+        // response.json() rejects a truncated transport and malformed or empty JSON.
+        const value: unknown = await response.json()
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Seosmith reports could not load. Try again.')
+        const detail = value as AuditDetail
+        if (detail.delivery_id !== id || !detail.summary || !detail.report || typeof detail.report !== 'object' || (detail.report_json != null && typeof detail.report_json !== 'string')) throw new Error('Seosmith reports could not load. Try again.')
+        result = detail
+      } else {
+        result = await ws.request<AuditDetail>(`/api/websites/${site}/seo/audits/${id}`, { signal: requestController.signal })
+      }
       if (gen === detailGeneration && site === ws.selectedId.value) selected.value = result
     } catch (cause) { if (gen === detailGeneration) error.value = failureMessage(cause) }
     finally { if (gen === detailGeneration) detailBusy.value = false }
