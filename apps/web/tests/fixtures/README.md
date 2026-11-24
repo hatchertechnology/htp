@@ -15,3 +15,8 @@ After installing web dependencies and Playwright Chromium, run `cargo test --loc
 # Static pilot owner workflow fixture
 
 With `npm run fixture:forms:serve` running, run `node tests/fixtures/check-forms-static-owner.mjs`. It mounts the static (`static=1`) pilot path with synthetic data and a stand-in owner API. It proves eligible and denied pilot behaviour, begin and confirm with the issued token, create and update saves, origin and host reads, and the unknown and refused outcome handling. It fails if any Supabase table, RPC or Edge Function runs, or if any request leaves the fixture origin.
+
+# Repository owner parity fixture
+
+Start `npm run fixture:bing:serve`, then run `node tests/fixtures/check-repository-owner.mjs`.
+This mounts the production workspace, RepositorySettings, RepositoryHistory, and RepositoryIssues with a synthetic authenticated transport in both static and legacy modes. It checks website selection, save/stop bodies, commit cursors, issue pages and filters, bearer forwarding, and sign-out. No hosted API or provider calls are made.

@@ -598,6 +598,18 @@ async fn every_website_operation_requires_authentication() {
             "GET",
             "/websites/00000000-0000-0000-0000-000000000001/repository/issues",
         ),
+        (
+            "GET",
+            "/websites/00000000-0000-0000-0000-000000000001/repository",
+        ),
+        (
+            "PUT",
+            "/websites/00000000-0000-0000-0000-000000000001/repository",
+        ),
+        (
+            "GET",
+            "/websites/00000000-0000-0000-0000-000000000001/repository/history",
+        ),
         ("POST", "/websites"),
         (
             "POST",
