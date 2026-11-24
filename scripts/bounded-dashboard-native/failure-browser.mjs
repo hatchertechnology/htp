@@ -87,7 +87,7 @@ console.log(
   })),
 )
 
-let modes = {}, closed = 0, requests = []
+let modes = {}, closed = 0, rejectedClosed = 0, requests = []
 const mock = http.createServer((req, res) => {
   const path = new URL(req.url, 'http://local').pathname
   if (req.headers.authorization !== `Bearer ${token}`) {
@@ -131,10 +131,13 @@ const mock = http.createServer((req, res) => {
       return res.end()
     }
     const mode = path.includes(site2) ? 'normal' : modes[m[1]] || 'normal'
-    res.writeHead(200, {
+    res.writeHead(mode === 'status' ? 503 : 200, {
       'content-type': mode === 'nonjson' ? 'text/plain' : 'application/json',
     })
-    if (mode === 'nonjson') return res.end(JSON.stringify(d))
+    if (mode === 'nonjson' || mode === 'status') {
+      res.on('close', () => rejectedClosed++)
+      return res.write('not JSON')
+    }
     if (mode === 'empty') return res.end()
     if (mode === 'unsupported') {
       d = structuredClone(d)
@@ -279,7 +282,7 @@ try {
   )
   assert.ok(closed > 0, 'cancelled detail must close upstream')
   console.log('delayed selection isolation passed upstream_closes', closed)
-  for (const mode of ['cut', 'empty', 'nonjson', 'wrong-shape']) {
+  for (const mode of ['cut', 'empty', 'nonjson', 'status', 'wrong-shape']) {
     modes[ids[0]] = mode
     await select.selectOption(ids[0])
     await page.getByRole('alert').filter({ hasText: /Seosmith|fetch|JSON/i })
@@ -289,6 +292,13 @@ try {
       await page.getByRole('button', { name: 'Download run JSON' }).count(),
       0,
     )
+    if (mode === 'nonjson' || mode === 'status') {
+      const expectedCloses = mode === 'nonjson' ? 1 : 2
+      for (let i = 0; rejectedClosed < expectedCloses && i < 100; i++) {
+        await new Promise((r) => setTimeout(r, 20))
+      }
+      assert.equal(rejectedClosed, expectedCloses, 'rejected response must close upstream')
+    }
     console.log(mode, 'error without stale detail passed')
     modes[ids[1]] = 'normal'
     await select.selectOption(ids[1])

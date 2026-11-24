@@ -17,7 +17,10 @@ export function useSeosmith() {
         const token = await ws.accessToken()
         if (!token) throw new Error('Your session has ended. Sign in again.')
         const response = await fetch(`/api/websites/${site}/seo/audits/${id}/dashboard`, { headers: { Authorization: `Bearer ${token}` }, signal: requestController.signal })
-        if (!response.ok || !/^application\/(?:[\w.+-]+\+)?json(?:\s*;|$)/i.test(response.headers.get('content-type') || '')) throw new Error('Seosmith reports could not load. Try again.')
+        if (!response.ok || !/^application\/(?:[\w.+-]+\+)?json(?:\s*;|$)/i.test(response.headers.get('content-type') || '')) {
+          requestController.abort()
+          throw new Error('Seosmith reports could not load. Try again.')
+        }
         // response.json() rejects a truncated transport and malformed or empty JSON.
         const value: unknown = await response.json()
         if (!isSavedDetail(value, id)) throw new Error('Seosmith reports could not load. Try again.')
