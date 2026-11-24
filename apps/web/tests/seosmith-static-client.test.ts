@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, ref, watch } from 'vue'
 import { useSeosmith } from '../app/composables/useSeosmith'
-import { JSON_CONTENT_TYPE, SAVED_DETAIL_DEADLINE_MS, SEOSMITH_IMPORT_MAX_BYTES, resolveSeosmithReadPath } from '../shared/utils/seosmith-client'
+import { JSON_CONTENT_TYPE, SAVED_DETAIL_DEADLINE_MS, SEOSMITH_IMPORT_MAX_BYTES, resolveSeosmithReadPath, resolveSeosmithImportPath } from '../shared/utils/seosmith-client'
 
 const base = 'https://api.example.test'
 const SITE = '00000000-0000-4000-8000-000000000001'
@@ -56,6 +56,8 @@ describe('useSeosmith transport', () => {
   const fetchMock = vi.fn()
   const accessToken = vi.fn()
   let scope = effectScope()
+  let workspace: any
+  let session: ReturnType<typeof ref<number>>
   const run = { delivery_id: RUN, scan_at: '2026-01-01T00:00:00Z', received_at: '2026-01-01T00:00:00Z', ingestion_source: 'import' }
   const detail = () => ({
     ...run,
@@ -71,7 +73,10 @@ describe('useSeosmith transport', () => {
     vi.stubGlobal('onBeforeUnmount', vi.fn())
     vi.stubGlobal('failureMessage', (cause: Error) => cause.message)
     vi.stubGlobal('useRuntimeConfig', () => ({ public: publicConfig }))
-    vi.stubGlobal('useWorkspace', () => ({ user: ref({ id: 'owner' }), selectedId: ref(SITE), selected: ref(null), accessToken, request }))
+    session = ref(0)
+    vi.stubGlobal('useState', () => session)
+    workspace = { user: ref({ id: 'owner' }), selectedId: ref(SITE), selected: ref({ id: SITE, fqdn: 'example.test' }), accessToken, request }
+    vi.stubGlobal('useWorkspace', () => workspace)
     vi.stubGlobal('fetch', fetchMock)
     return scope.run(() => useSeosmith())!
   }
@@ -105,13 +110,118 @@ describe('useSeosmith transport', () => {
     expect(model.selected.value).toBeNull()
   })
 
-  it('static: import is refused locally and sends no request', async () => {
-    const model = setup({ staticDashboard: true, boundedSavedDetail: false, apiBaseUrl: base })
+  it.each([true, false])('imports once and reads the receipt run (static=%s)', async staticDashboard => {
+    const model = setup({ staticDashboard, apiBaseUrl: base })
     await vi.waitFor(() => expect(model.selected.value).not.toBeNull())
     request.mockClear()
+    request.mockImplementation(async (url: string) => url.endsWith('/import') ? { delivery_id: RUN } : url.endsWith('/audits') ? history : detail())
     await model.importFile(new File(['{}'], 'report.json'))
-    expect(model.error.value).toBe('Import is not available in the static dashboard.')
+    expect(request.mock.calls[0]).toEqual([`${staticDashboard ? base : '/api'}/websites/${SITE}/seo/audits/import`, expect.objectContaining({ method: 'POST', body: { report_json: '{}' }, retry: 0 })])
+    if (staticDashboard) expect(request.mock.calls[0]![1]).toMatchObject({ redirect: 'error', timeout: 30_000 })
+    expect(request.mock.calls.filter(([url]) => url.endsWith('/import'))).toHaveLength(1)
+    expect(model.notice.value).toMatch(/Run saved/)
+  })
+
+  it.each(['size', 'utf8', 'json'])('bounds and validates files before submission: %s', async kind => {
+    const model = setup({ staticDashboard: true, apiBaseUrl: base })
+    await vi.waitFor(() => expect(model.selected.value).not.toBeNull())
+    request.mockClear()
+    const file = { size: kind === 'size' ? SEOSMITH_IMPORT_MAX_BYTES + 1 : 2, text: vi.fn().mockResolvedValue(kind === 'utf8' ? 'é'.repeat(SEOSMITH_IMPORT_MAX_BYTES / 2 + 1) : 'invalid') } as unknown as File
+    await model.importFile(file)
     expect(request).not.toHaveBeenCalled()
+    expect(model.error.value).toMatch(kind === 'json' ? /valid JSON/ : /at most/)
+    if (kind === 'size') expect(file.text).not.toHaveBeenCalled()
+  })
+
+  it.each(['file', 'post'].flatMap(stage => ['session', 'owner', 'website'].map(change => [stage, change])))('discards stale import during %s after %s change', async (stage, change) => {
+    const model = setup({ staticDashboard: true, apiBaseUrl: base })
+    await vi.waitFor(() => expect(model.selected.value).not.toBeNull())
+    let finish!: (value: any) => void
+    const pending = new Promise(resolve => { finish = resolve })
+    request.mockClear()
+    request.mockImplementation(async (url: string) => url.endsWith('/import') ? pending : history)
+    const work = model.importFile({ size: 2, text: () => stage === 'file' ? pending as Promise<string> : Promise.resolve('{}') } as File)
+    if (stage === 'post') await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1))
+    if (change === 'session') { workspace.user.value = null; workspace.user.value = { id: 'owner' }; session.value++ }
+    if (change === 'owner') workspace.user.value = { id: 'another-owner' }
+    if (change === 'website') workspace.selectedId.value = '00000000-0000-4000-8000-000000000003'
+    finish(stage === 'file' ? '{}' : { delivery_id: RUN })
+    await work
+    expect(model.notice.value).toBe('')
+    expect(model.importing.value).toBe(false)
+    if (stage === 'file') expect(request.mock.calls.some(([url]) => url.endsWith('/import'))).toBe(false)
+  })
+
+  it('reads the receipt run even when it is absent from refreshed history', async () => {
+    const model = setup({ staticDashboard: true, apiBaseUrl: base })
+    await vi.waitFor(() => expect(model.selected.value).not.toBeNull())
+    const imported = '00000000-0000-4000-8000-000000000009'
+    request.mockImplementation(async (url: string) => url.endsWith('/import') ? { delivery_id: imported } : history)
+    fetchMock.mockImplementation(async (url: string) => new Response(JSON.stringify({ ...detail(), delivery_id: url.split('/').pop() }), { headers: { 'content-type': 'application/json' } }))
+    await model.importFile(new File(['{}'], 'report.json'))
+    expect(model.selected.value?.delivery_id).toBe(imported)
+    expect(model.notice.value).toMatch(/Run saved/)
+  })
+
+  it('does not announce success when receipt readback fails', async () => {
+    const model = setup({ staticDashboard: true, apiBaseUrl: base })
+    await vi.waitFor(() => expect(model.selected.value).not.toBeNull())
+    request.mockImplementation(async (url: string) => url.endsWith('/import') ? { delivery_id: RUN } : history)
+    fetchMock.mockResolvedValue(new Response('{}', { status: 404 }))
+    await model.importFile(new File(['{}'], 'report.json'))
+    expect(model.notice.value).toBe('')
+    expect(model.error.value).toMatch(/could not load/)
+  })
+
+  it('accepts the inclusive byte limit and ignores a second concurrent click', async () => {
+    const model = setup({ staticDashboard: true, apiBaseUrl: base })
+    await vi.waitFor(() => expect(model.selected.value).not.toBeNull())
+    let finish!: (value: unknown) => void
+    request.mockClear()
+    request.mockImplementation(async (url: string) => url.endsWith('/import') ? new Promise(resolve => { finish = resolve }) : history)
+    const raw = '{}' + ' '.repeat(SEOSMITH_IMPORT_MAX_BYTES - 2)
+    const work = model.importFile(new File([raw], 'report.json'))
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+    await model.importFile(new File(['{}'], 'other.json'))
+    expect(request.mock.calls.filter(([url]) => url.endsWith('/import'))).toHaveLength(1)
+    expect(request.mock.calls[0]![1].body.report_json).toBe(raw)
+    finish({ delivery_id: RUN }); await work
+    expect(model.notice.value).toMatch(/Run saved/)
+  })
+
+  it('discards receipt detail completing after a session change', async () => {
+    const model = setup({ staticDashboard: true, apiBaseUrl: base })
+    await vi.waitFor(() => expect(model.selected.value).not.toBeNull())
+    let finish!: (value: Response) => void
+    request.mockImplementation(async (url: string) => url.endsWith('/import') ? { delivery_id: RUN } : { items: [], has_more: false, next_cursor: null })
+    fetchMock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const work = model.importFile(new File(['{}'], 'report.json'))
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+    session.value++
+    finish(new Response(JSON.stringify(detail()), { headers: { 'content-type': 'application/json' } }))
+    await work
+    expect(model.selected.value).toBeNull()
+    expect(model.notice.value).toBe('')
+  })
+
+  it.each([null, {}, { delivery_id: 'bad' }])('rejects malformed receipt %j without retry', async receipt => {
+    const model = setup({ staticDashboard: true, apiBaseUrl: base })
+    await vi.waitFor(() => expect(model.selected.value).not.toBeNull())
+    request.mockClear(); request.mockResolvedValue(receipt)
+    await model.importFile(new File(['{}'], 'report.json'))
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(model.error.value).toMatch(/receipt/)
+    expect(model.notice.value).toBe('')
+  })
+
+  it.each([401, 403, 413, 422, 500])('preserves import failure without retry: %s', async status => {
+    const model = setup({ staticDashboard: true, apiBaseUrl: base })
+    await vi.waitFor(() => expect(model.selected.value).not.toBeNull())
+    request.mockClear(); request.mockRejectedValue(new Error(`status ${status}`))
+    await model.importFile(new File(['{}'], 'report.json'))
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(model.error.value).toBe(`status ${status}`)
+    expect(model.notice.value).toBe('')
   })
 
   it('default: history and detail keep the same-origin proxy paths', async () => {
@@ -178,5 +288,15 @@ describe('useSeosmith transport', () => {
     const model = setup({ staticDashboard: true, boundedSavedDetail: false, apiBaseUrl: base })
     await vi.waitFor(() => expect(model.error.value).toMatch(/could not load/))
     expect(model.selected.value).toBeNull()
+  })
+})
+
+describe('exact import routing', () => {
+  it('maps only the owner import path and preserves legacy routing', () => {
+    expect(resolveSeosmithImportPath(`${listPath}/import`, true, base)).toBe(`${base}/websites/${SITE}/seo/audits/import`)
+    expect(resolveSeosmithImportPath(`${listPath}/import`, false, undefined)).toBe(`${listPath}/import`)
+    for (const path of [listPath, `${listPath}/import/`, `${listPath}/import\n`, `${listPath}/import?x=1`, `${detailPath}/work`, '/api/websites/invalid/seo/audits/import']) {
+      expect(() => resolveSeosmithImportPath(path, true, base)).toThrow()
+    }
   })
 })
