@@ -1,8 +1,9 @@
 import type { AuditDetail, AuditHistory, AuditRun } from '../../shared/types/seosmith'
 import { isSavedDetail } from '#shared/utils/saved-detail-validation'
-import { JSON_CONTENT_TYPE, SAVED_DETAIL_DEADLINE_MS, SEOSMITH_IMPORT_MAX_BYTES, resolveSeosmithReadPath } from '#shared/utils/seosmith-client'
+import { JSON_CONTENT_TYPE, SAVED_DETAIL_DEADLINE_MS, SEOSMITH_IMPORT_MAX_BYTES, resolveSeosmithReadPath, resolveSeosmithImportPath, isImportReceipt } from '#shared/utils/seosmith-client'
 export function useSeosmith() {
   const ws = useWorkspace()
+  const sessionGeneration = useState('workspace:session-generation', () => 0)
   const boundedSavedDetail = useRuntimeConfig().public.boundedSavedDetail === true
   // Static builds have no Nitro proxy: history and detail go straight to the API origin, and the detail is validated here.
   const staticDashboard = useRuntimeConfig().public.staticDashboard === true
@@ -10,7 +11,8 @@ export function useSeosmith() {
   const runs = ref<AuditRun[]>([]), selected = ref<AuditDetail | null>(null)
   const busy = ref(false), detailBusy = ref(false), importing = ref(false), error = ref(''), notice = ref('')
   const cursor = ref<AuditHistory['next_cursor']>(null)
-  let generation = 0, detailGeneration = 0
+  let generation = 0, detailGeneration = 0, importGeneration = 0
+  let importController: AbortController | undefined
   let controller: AbortController | undefined, detailController: AbortController | undefined
   async function select(id: string) {
     const gen = ++detailGeneration, site = ws.selectedId.value
@@ -19,6 +21,7 @@ export function useSeosmith() {
       let result: AuditDetail
       if (staticDashboard) {
         const token = await ws.accessToken()
+        if (gen !== detailGeneration || site !== ws.selectedId.value) return
         if (!token) throw new Error('Your session has ended. Sign in again.')
         // Static has no Nitro proxy: bound the whole read (headers and body) by the same deadline as the bounded proxy.
         // No browser byte cap: the default proxy has none, and the stored detail body is not bounded by the import limit.
@@ -38,6 +41,7 @@ export function useSeosmith() {
         } finally { clearTimeout(deadline) }
       } else if (boundedSavedDetail) {
         const token = await ws.accessToken()
+        if (gen !== detailGeneration || site !== ws.selectedId.value) return
         if (!token) throw new Error('Your session has ended. Sign in again.')
         const response = await fetch(`/api/websites/${site}/seo/audits/${id}/dashboard`, { headers: { Authorization: `Bearer ${token}` }, redirect: 'follow', signal: requestController.signal })
         if (!response.ok || !JSON_CONTENT_TYPE.test(response.headers.get('content-type') || '')) {
@@ -71,21 +75,33 @@ export function useSeosmith() {
     finally { if (gen === generation) busy.value = false }
   }
   async function importFile(file: File) {
-    // The static dashboard is read-only; import has no static route.
-    if (staticDashboard) { error.value = 'Import is not available in the static dashboard.'; return }
-    const gen = generation, site = ws.selectedId.value, user = ws.user.value?.id
+    if (importing.value || !ws.user.value || !ws.selectedId.value || !ws.selected.value) return
+    const gen = ++importGeneration, site = ws.selectedId.value, user = ws.user.value.id, session = sessionGeneration.value
+    const current = () => gen === importGeneration && site === ws.selectedId.value && user === ws.user.value?.id && session === sessionGeneration.value
+    const requestController = new AbortController(); importController = requestController
     importing.value = true; error.value = ''; notice.value = ''
     try {
       if (file.size > SEOSMITH_IMPORT_MAX_BYTES) throw new Error('Choose a JSON report at most 4,952,756 bytes.')
       const report_json = await file.text()
+      if (!current()) return
+      if (new TextEncoder().encode(report_json).length > SEOSMITH_IMPORT_MAX_BYTES) throw new Error('Choose a JSON report at most 4,952,756 bytes.')
       try { JSON.parse(report_json) } catch { throw new Error('This file is not a valid JSON report.') }
-      const receipt = await ws.request<{delivery_id: string}>(`/api/websites/${site}/seo/audits/import`, { method: 'POST', body: { report_json } })
-      if (gen !== generation || site !== ws.selectedId.value) return
-      await load(); if (site !== ws.selectedId.value || user !== ws.user.value?.id) return; await select(receipt.delivery_id); notice.value = 'Run saved. Re-importing the same file will not create a duplicate.'
-    } catch (cause) { if (gen === generation) error.value = failureMessage(cause) }
-    finally { importing.value = false }
+      const receipt: unknown = await ws.request(resolveSeosmithImportPath(`/api/websites/${site}/seo/audits/import`, staticDashboard, apiBaseUrl), {
+        method: 'POST', body: { report_json }, signal: requestController.signal, retry: 0,
+        ...(staticDashboard ? { redirect: 'error', timeout: 30_000 } : {}),
+      })
+      if (!current()) return
+      if (!isImportReceipt(receipt)) throw new Error('The import receipt could not be read. Refresh audits to check whether the run was saved.')
+      await load()
+      if (!current()) return
+      await select(receipt.delivery_id)
+      if (current() && selected.value?.delivery_id === receipt.delivery_id) notice.value = 'Run saved. Re-importing the same file will not create a duplicate.'
+    } catch (cause) { if (current()) error.value = failureMessage(cause) }
+    finally { if (current()) { importing.value = false; importController = undefined } }
   }
-  watch(() => [ws.user.value?.id, ws.selectedId.value, ws.selected.value?.fqdn], () => { notice.value = ''; void load() }, { immediate: true })
-  onBeforeUnmount(() => { generation++; detailGeneration++; controller?.abort(); detailController?.abort() })
+  watch(() => [ws.user.value?.id, sessionGeneration.value, ws.selectedId.value, ws.selected.value?.fqdn], () => {
+    importGeneration++; importController?.abort(); importing.value = false; notice.value = ''; void load()
+  }, { immediate: true, flush: 'sync' })
+  onBeforeUnmount(() => { importGeneration++; generation++; detailGeneration++; importController?.abort(); controller?.abort(); detailController?.abort() })
   return { runs, selected, busy, detailBusy, importing, error, notice, cursor, load, select, importFile }
 }

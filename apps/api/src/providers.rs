@@ -1,14 +1,16 @@
 //! Owner-scoped provider operations; consent and grant storage remain on the web origin.
 use axum::{
     Json, Router,
+    extract::Path,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use rmcp::model::CallToolResult;
 
 pub(crate) fn router() -> Router {
     Router::new()
+        .route("/websites/{id}/search/owner-inspect", post(owner_inspect))
         .route(
             "/providers/google/connection",
             get(google_status).delete(google_disconnect),
@@ -17,6 +19,25 @@ pub(crate) fn router() -> Router {
             "/providers/bing/connection",
             get(bing_status).delete(bing_disconnect),
         )
+}
+
+// This route uses the owner bridge; Nitro alone supplies the Google credential.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnerInspectionInput {
+    site_url: String,
+    url: String,
+}
+
+async fn owner_inspect(
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(input): Json<OwnerInspectionInput>,
+) -> Response {
+    let Some(id) = uuid::Uuid::parse_str(&id).ok().filter(|_| id.len() == 36) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    rest_response(crate::mcp::owner_inspection_call(&headers, id, input.site_url, input.url).await)
 }
 
 async fn google_status(headers: HeaderMap) -> Response {
@@ -74,6 +95,24 @@ mod tests {
         http::Request,
     };
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn owner_inspection_without_identity_never_forwards() {
+        let response = router()
+            .oneshot(
+                Request::post(
+                    "/websites/00000000-0000-0000-0000-000000000001/search/owner-inspect",
+                )
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"site_url":"sc-domain:example.com","url":"https://example.com/"}"#,
+                ))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
 
     #[tokio::test]
     async fn local_provider_fixtures_preserve_json_and_map_errors() {

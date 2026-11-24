@@ -120,6 +120,7 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
     let (site, resource) = rest.split_once('/')?;
     uuid::Uuid::parse_str(site).ok()?;
     match resource {
+        "search/owner-inspect" => return (site.len() == 36).then_some("POST"),
         "search/properties" | "search/dashboard" | "search/inspection-history" => {
             return Some("POST");
         }
@@ -146,6 +147,7 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
     }
     match resource.strip_prefix("seo/audits")? {
         "" => Some("GET"),
+        "/import" if site.len() == 36 => Some("POST"),
         run => uuid::Uuid::parse_str(run.strip_prefix('/')?)
             .ok()
             .map(|_| "GET"),
@@ -263,6 +265,10 @@ mod tests {
             )
             .route("/websites/{id}/seo/audits", get(handler.clone()))
             .route(
+                "/websites/{id}/seo/audits/import",
+                axum::routing::post(handler.clone()),
+            )
+            .route(
                 "/websites/{id}/repository",
                 get(handler.clone()).put(handler.clone()),
             )
@@ -287,6 +293,10 @@ mod tests {
             .route(
                 "/websites/{id}/business/location",
                 axum::routing::put(handler.clone()),
+            )
+            .route(
+                "/websites/{id}/search/owner-inspect",
+                axum::routing::post(handler.clone()),
             )
             .route("/forms/submit", axum::routing::post(handler.clone()))
             .route(
@@ -391,6 +401,7 @@ mod tests {
         assert!(dashboard_methods(&format!("/websites/{site}")).is_some());
         let audits = format!("/websites/{site}/seo/audits");
         assert_eq!(dashboard_methods(&audits), Some("GET"));
+        assert_eq!(dashboard_methods(&format!("{audits}/import")), Some("POST"));
         assert_eq!(dashboard_methods(&format!("{audits}/{run}")), Some("GET"));
         for path in [
             "/websites/",
@@ -398,10 +409,59 @@ mod tests {
             "/websites/x/analytics/property",
             "/forms/submit",
             "/websites-extra",
-            &format!("{audits}/import"),
+            &format!("{audits}/import/"),
             &format!("{audits}/{run}/work"),
         ] {
             assert!(dashboard_methods(path).is_none(), "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn import_cors_is_exact_post_only_and_preserves_authorization() {
+        let path = "/websites/00000000-0000-0000-0000-000000000001/seo/audits/import";
+        for method in ["GET", "POST", "PUT", "PATCH", "DELETE"] {
+            for origin in [ORIGIN, "https://evil.example"] {
+                let allowed = method == "POST" && origin == ORIGIN;
+                let calls = Arc::new(AtomicUsize::new(0));
+                let response = app(calls.clone(), cors())
+                    .oneshot(preflight(path, origin, method))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    header_value(&response, header::ACCESS_CONTROL_ALLOW_METHODS),
+                    allowed.then_some("POST")
+                );
+                assert_eq!(calls.load(Ordering::SeqCst), 0);
+                for auth in [false, true] {
+                    let response = app(calls.clone(), cors())
+                        .oneshot(actual(method, path, Some(origin), auth))
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                        allowed.then_some(ORIGIN)
+                    );
+                    assert!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none()
+                    );
+                    if !auth {
+                        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+                    } else if method == "POST" {
+                        assert_eq!(response.status(), StatusCode::OK);
+                    }
+                }
+            }
+        }
+        for path in [
+            format!("{path}/"),
+            format!("{path}/extra"),
+            path.replace("00000000-0000-0000-0000-000000000001", "invalid"),
+            path.replace(
+                "00000000-0000-0000-0000-000000000001",
+                "00000000000000000000000000000001",
+            ),
+        ] {
+            assert_eq!(dashboard_methods(&path), None);
         }
     }
 
@@ -627,6 +687,7 @@ mod tests {
     async fn report_cors_is_exact_and_preserves_auth() {
         let site = "00000000-0000-0000-0000-000000000001";
         for (resource, expected) in [
+            ("search/owner-inspect", "POST"),
             ("analytics/dashboard", "POST"),
             ("bing/dashboard", "POST"),
             ("insights/report", "POST"),
