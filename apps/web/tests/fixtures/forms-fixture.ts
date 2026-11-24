@@ -8,7 +8,7 @@ const NEW_HOST='30000000-0000-0000-0000-000000000002'
 const NEW_FORM='10000000-0000-0000-0000-000000000003'
 const TOKEN='b'.repeat(64)
 const form={id:FORM,name:'Cleaning Quote',form_key:'cleaning_quote',active:true,fields:[{key:'name',label:'Name',kind:'text',required:true,max_length:100}]}
-const data:Record<string,any[]>={website_form_hosts:[{id:HOST,hostname:'www.example.com',verified_at:'2026-01-01'}],website_forms:[form],website_form_responses:[{id:'response-id',status:'new',received_at:'2026-01-01',values:{name:'<script>unsafe</script>'}}],website_form_origins:[{form_id:FORM,host_id:HOST}],website_form_recipients:[{id:'recipient-id',email:'fixture@example.invalid',verified_at:'2026-01-01',enabled:true}],website_form_delivery_jobs:[{id:'job-id',recipient_id:'recipient-id',response_id:'response-id',kind:'response',state:'failed',attempts:1}]}
+const data:Record<string,any[]>={website_form_hosts:[{id:HOST,hostname:'www.example.com',verified_at:'2026-01-01'}],website_forms:[form],website_form_responses:[{id:'40000000-0000-0000-0000-000000000001',status:'new',received_at:'2026-01-01',values:{name:'<script>unsafe</script>'}}],website_form_origins:[{form_id:FORM,host_id:HOST}],website_form_recipients:[{id:'recipient-id',email:'fixture@example.invalid',verified_at:'2026-01-01',enabled:true}],website_form_delivery_jobs:[{id:'job-id',recipient_id:'recipient-id',response_id:'40000000-0000-0000-0000-000000000001',kind:'response',state:'failed',attempts:1}]}
 const params=new URLSearchParams(location.search), mode=params.get('mode')==='pilot'?'pilot':'legacy', visibility=params.get('eligible') ?? 'yes'
 const staticMode=params.get('static')==='1'
 const user=ref<{id:string;is_anonymous?:boolean}|null>({id:'owner'}), calls:string[]=[], queries:string[]=[], apiCalls:string[]=[], bodies:{method:string;path:string;body:any}[]=[]
@@ -61,6 +61,16 @@ async function apiFetch(target:URL, method:string, body:any){
     return {host_id:host.id,verified:true,status:'verified'}
   }
   if(new RegExp(`^/websites/${SITE}/forms/${FORM}/responses$`).test(path)&&method==='GET') return pageOf(data.website_form_responses)
+  const response = new RegExp(`^/websites/${SITE}/forms/${FORM}/responses/([0-9a-f-]+)(/status)?$`).exec(path)
+  if(response && (method==='PATCH'||method==='DELETE')) {
+    const failed=takeFailure('response')
+    if(failed&&!failed.applied) throw failureError(failed)
+    const row=data.website_form_responses.find(row=>row.id===response[1])
+    if(method==='PATCH'&&row) row.status=body.status
+    if(method==='DELETE') data.website_form_responses=data.website_form_responses.filter(row=>row.id!==response[1])
+    if(failed) throw failureError(failed)
+    return method==='PATCH'?{id:response[1],status:body.status}:{id:response[1],deleted:true}
+  }
   throw Object.assign(new Error(`fixture has no route for ${method} ${path}`),{data:{code:'not_found'}})
 }
 const apiOrNitroFetch=async(url:string,options:{method?:string;body?:any}={})=>{
@@ -77,7 +87,7 @@ const apiOrNitroFetch=async(url:string,options:{method?:string;body?:any}={})=>{
   return apiFetch(target,method,options.body)
 }
 const {default:WebsiteForms}=await import('../../app/components/WebsiteForms.vue')
-Object.assign(globalThis,vue,{formFixture:{calls,queries,apiCalls,bodies,setOwner:(id:string|null)=>{user.value=id?{id}:null},setAnonymous:()=>{user.value={id:'owner',is_anonymous:true}},failNext:(route:string,code?:string,applied=false)=>{nextFailure={route,code,applied}},state:()=>({calls:[...calls],queries:[...queries],apiCalls:[...apiCalls],bodies:[...bodies]})},setChallengeError:(value:string)=>{challengeError=value},useNuxtApp:()=>({$supabase:supabase}),useAuth:()=>({user,accessToken:async()=>user.value?'fixture-token':null}),useRuntimeConfig:()=>({public:{supabaseUrl:'https://example.test',apiBaseUrl:'https://api.example.test',staticDashboard:staticMode,rolloutFormsPilot:true}}),$fetch:apiOrNitroFetch})
+Object.assign(globalThis,vue,{formFixture:{calls,queries,apiCalls,bodies,setOwner:(id:string|null)=>{user.value=id?{id}:null},setAnonymous:()=>{user.value={id:'owner',is_anonymous:true}},failNext:(route:string,code?:string,applied=false)=>{nextFailure={route,code,applied}},state:()=>({calls:[...calls],queries:[...queries],apiCalls:[...apiCalls],bodies:[...bodies]})},setChallengeError:(value:string)=>{challengeError=value},useNuxtApp:()=>({$supabase:supabase}),useAuth:()=>({user,accessToken:async()=>user.value?'fixture-token':null}),useRuntimeConfig:()=>({public:{supabaseUrl:'https://example.test',apiBaseUrl:'https://api.example.test',staticDashboard:staticMode,rolloutFormsPilot:true,rolloutFormsResponses:params.get('responses')==='1'}}),$fetch:apiOrNitroFetch})
 const app=createApp(WebsiteForms,{websiteId:SITE,fqdn:'www.example.com',mode})
 app.component('UButton',defineComponent({inheritAttrs:false,setup(_,{slots,attrs}){return()=>h('button',attrs,slots.default?.())}}))
 app.mount('#app')
