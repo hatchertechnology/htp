@@ -125,33 +125,42 @@ begin
   -- test always runs before jsonb_array_length/jsonb_array_elements. A missing
   -- `keys` member (SQL NULL) is invalid, not unknown, and is counted as omitted.
   -- The page and the two counts come from one scan; a full filtered array is
-  -- never materialized.
+  -- never materialized. Paging is over `valid_rank`, the rank of a row among
+  -- the shape-valid rows that also pass the device/country filter, not the raw
+  -- source ordinal. Otherwise malformed rows and rows filtered out by
+  -- device/country would consume page slots and the fixed-offset caller would
+  -- see short or duplicate pages.
   if available and p_dataset = 'query_page_segments' then
     select
         coalesce(jsonb_agg(v order by ord)
-          filter (where valid and ord > p_offset and ord <= p_offset + p_limit),'[]'::jsonb),
+          filter (where valid and valid_rank > p_offset and valid_rank <= p_offset + p_limit),'[]'::jsonb),
         count(*) filter (where valid),
         count(*) filter (where not shape_valid)
       into page, total, omitted
       from (
-        select v, ord, x.shape_valid, x.keys,
-            x.shape_valid
-            and (p_device is null or x.keys->>2 = p_device)
-            and (p_country is null or x.keys->>3 = p_country) as valid
-          from jsonb_array_elements(source_arr) with ordinality as t(v,ord)
-          cross join lateral (
-            select
-              case
-                when jsonb_typeof(v) <> 'object' then false
-                when jsonb_typeof(v->'keys') is distinct from 'array' then false
-                when jsonb_array_length(v->'keys') <> 4 then false
-                when exists (select 1 from jsonb_array_elements(v->'keys') as e(value)
-                  where jsonb_typeof(value) is distinct from 'string') then false
-                else true
-              end as shape_valid,
-              case when jsonb_typeof(v) = 'object' and jsonb_typeof(v->'keys') = 'array'
-                then v->'keys' else null end as keys
-          ) x
+        select v, ord, shape_valid, keys, valid,
+            count(*) filter (where valid) over (order by ord
+              rows between unbounded preceding and current row) as valid_rank
+          from (
+            select v, ord, x.shape_valid, x.keys,
+                x.shape_valid
+                and (p_device is null or x.keys->>2 = p_device)
+                and (p_country is null or x.keys->>3 = p_country) as valid
+              from jsonb_array_elements(source_arr) with ordinality as t(v,ord)
+              cross join lateral (
+                select
+                  case
+                    when jsonb_typeof(v) <> 'object' then false
+                    when jsonb_typeof(v->'keys') is distinct from 'array' then false
+                    when jsonb_array_length(v->'keys') <> 4 then false
+                    when exists (select 1 from jsonb_array_elements(v->'keys') as e(value)
+                      where jsonb_typeof(value) is distinct from 'string') then false
+                    else true
+                  end as shape_valid,
+                  case when jsonb_typeof(v) = 'object' and jsonb_typeof(v->'keys') = 'array'
+                    then v->'keys' else null end as keys
+              ) x
+          ) shaped
       ) elements;
   elsif available then
     total := jsonb_array_length(source_arr);

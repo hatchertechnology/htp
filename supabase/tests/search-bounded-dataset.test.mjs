@@ -100,14 +100,21 @@ test('bounded dataset read handles segments, legacy, analysis and landing outcom
       queries: { rows: [] },
       query_page_segments: { rows: [
         { keys: ['q', 'https://example.com/', 'MOBILE', 'usa'], clicks: 1 },
-        { keys: ['q', 'https://example.com/', 'DESKTOP', 'usa'], clicks: 2 },
-        { keys: ['q', 'https://example.com/', 'MOBILE', 'can'], clicks: 3 },
-        // Malformed/legacy saved rows: a short array, a missing `keys` member
-        // (SQL NULL), a legacy non-array type, an explicit JSON null, a bare
-        // scalar, a non-string key and an over-long array. Every one must be
-        // omitted and counted, never dropped from the count.
+        // Malformed rows and rows for other device/country segments are
+        // interleaved with the retained MOBILE/usa rows, so paging them by
+        // raw source ordinal would short or duplicate pages.
         { keys: ['malformed'] },
+        { keys: ['q', 'https://example.com/', 'MOBILE', 'usa'], clicks: 2 },
+        { keys: ['q', 'https://example.com/', 'DESKTOP', 'usa'], clicks: 20 },
         { foo: 1 },
+        { keys: ['q', 'https://example.com/', 'MOBILE', 'can'], clicks: 30 },
+        { keys: ['q', 'https://example.com/', 'MOBILE', 'usa'], clicks: 3 },
+        { keys: ['q', 'https://example.com/', 'MOBILE', 'usa'], clicks: 4 },
+        { keys: ['q', 'https://example.com/', 'MOBILE', 'usa'], clicks: 5 },
+        // The remaining malformed/legacy saved rows: a legacy non-array type,
+        // an explicit JSON null, a bare scalar, a non-string key and an
+        // over-long array. Every one must be omitted and counted, never
+        // dropped from the count.
         { keys: 'str' },
         { keys: null },
         7,
@@ -134,15 +141,43 @@ test('bounded dataset read handles segments, legacy, analysis and landing outcom
     }])
     await identity(owner)
     const segments = await read('query_page_segments', { device: 'MOBILE', country: 'usa', limit: 25 })
-    assert.equal(segments.data.query_page_segments.rows.length, 1)
+    assert.equal(segments.data.query_page_segments.rows.length, 5)
     assert.equal(segments.data.query_page_segments.rows[0].keys[3], 'usa')
-    assert.equal(segments.page.retained_rows, 1)
+    assert.equal(segments.page.retained_rows, 5)
     // Seven malformed rows (including the missing-`keys` SQL NULL) are omitted
     // and counted; the same predicate drives the page and the count.
     assert.equal(segments.page.invalid_rows_omitted, 7)
+    // Paging ranks shape-valid, device/country-filtered rows, so interleaved
+    // malformed rows and rows for other segments never consume page slots.
+    const firstPage = await read('query_page_segments', { device: 'MOBILE', country: 'usa', offset: 0, limit: 2 })
+    assert.deepEqual(firstPage.data.query_page_segments.rows.map((r) => r.clicks), [1, 2])
+    assert.equal(firstPage.page.retained_rows, 5)
+    assert.equal(firstPage.page.has_more, true)
+    const secondPage = await read('query_page_segments', { device: 'MOBILE', country: 'usa', offset: 2, limit: 2 })
+    assert.deepEqual(secondPage.data.query_page_segments.rows.map((r) => r.clicks), [3, 4])
+    assert.equal(secondPage.page.has_more, true)
+    const lastPage = await read('query_page_segments', { device: 'MOBILE', country: 'usa', offset: 4, limit: 2 })
+    assert.deepEqual(lastPage.data.query_page_segments.rows.map((r) => r.clicks), [5])
+    assert.equal(lastPage.page.retained_rows, 5)
+    assert.equal(lastPage.page.has_more, false)
+    const straddling = await read('query_page_segments', { device: 'MOBILE', country: 'usa', offset: 1, limit: 2 })
+    assert.deepEqual(straddling.data.query_page_segments.rows.map((r) => r.clicks), [2, 3])
+    assert.equal(straddling.page.has_more, true)
+    // Segments for another device/country remain reachable on their own page.
+    const desktop = await read('query_page_segments', { device: 'DESKTOP', country: 'usa', limit: 25 })
+    assert.deepEqual(desktop.data.query_page_segments.rows.map((r) => r.clicks), [20])
+    assert.equal(desktop.page.retained_rows, 1)
     const allSegments = await read('query_page_segments', { limit: 25 })
-    assert.equal(allSegments.page.retained_rows, 3)
+    assert.equal(allSegments.page.retained_rows, 7)
     assert.equal(allSegments.page.invalid_rows_omitted, 7)
+    // Without a filter the page also ranks only shape-valid rows, matching the
+    // reviewer's unfiltered interleaved repro.
+    const allStraddling = await read('query_page_segments', { offset: 1, limit: 2 })
+    assert.deepEqual(allStraddling.data.query_page_segments.rows.map((r) => r.clicks), [2, 20])
+    assert.equal(allStraddling.page.has_more, true)
+    const allLast = await read('query_page_segments', { offset: 6, limit: 2 })
+    assert.deepEqual(allLast.data.query_page_segments.rows.map((r) => r.clicks), [5])
+    assert.equal(allLast.page.has_more, false)
     const analysis = await read('analysis', { limit: 25 })
     assert.equal(analysis.data.analysis.candidates.length, 1)
     assert.equal(analysis.data.analysis.candidates[0].kind, 'low_ctr_review')

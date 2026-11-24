@@ -62,17 +62,39 @@ result = await call(owner, request({ offset: 2, limit: 1 }))
 assert.equal(result.body.rows[0].keys[0], 'gamma')
 assert.equal(result.body.has_more, false)
 
-// Segment filters apply to retained rows and report omissions.
-result = await call(owner, request({ dataset: 'query_page_segments', device: 'MOBILE', country: 'usa' }))
+// Segment filters apply to retained rows and report omissions. Paging ranks
+// the shape-valid, device/country-filtered rows, so interleaved malformed rows
+// and rows for other segments never consume a page slot and no page is short
+// or duplicated.
+result = await call(owner, request({ dataset: 'query_page_segments', device: 'MOBILE', country: 'usa', offset: 0, limit: 2 }))
 assert.equal(result.status, 200)
 assert.equal(result.body.available, true)
-assert.equal(result.body.rows.length, 1)
+assert.deepEqual(result.body.rows.map((r) => r.clicks), [1, 2])
 assert.equal(result.body.rows[0].keys[2], 'MOBILE')
-assert.equal(result.body.retained_rows, 1)
+assert.equal(result.body.retained_rows, 5)
+assert.equal(result.body.has_more, true)
 // Two malformed rows (including a missing `keys` SQL NULL) are counted.
 assert.equal(result.body.invalid_rows_omitted, 2)
 assert.deepEqual(result.body.filters, { device: 'MOBILE', country: 'usa' })
 assert.equal(result.body.filter_scope, 'retained_bounded_rows_only')
+
+result = await call(owner, request({ dataset: 'query_page_segments', device: 'MOBILE', country: 'usa', offset: 1, limit: 2 }))
+assert.deepEqual(result.body.rows.map((r) => r.clicks), [2, 3])
+assert.equal(result.body.has_more, true)
+
+result = await call(owner, request({ dataset: 'query_page_segments', device: 'MOBILE', country: 'usa', offset: 2, limit: 2 }))
+assert.deepEqual(result.body.rows.map((r) => r.clicks), [3, 4])
+assert.equal(result.body.has_more, true)
+
+result = await call(owner, request({ dataset: 'query_page_segments', device: 'MOBILE', country: 'usa', offset: 4, limit: 2 }))
+assert.deepEqual(result.body.rows.map((r) => r.clicks), [5])
+assert.equal(result.body.retained_rows, 5)
+assert.equal(result.body.has_more, false)
+
+// A different device/country segment is still reachable on its own page.
+result = await call(owner, request({ dataset: 'query_page_segments', device: 'DESKTOP', country: 'usa' }))
+assert.deepEqual(result.body.rows.map((r) => r.clicks), [20])
+assert.equal(result.body.retained_rows, 1)
 
 // Analysis candidates keep their comparison/coverage/policy metadata, bound
 // their evidence, and never carry the sibling landing_outcomes rows.
