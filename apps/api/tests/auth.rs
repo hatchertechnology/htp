@@ -2503,3 +2503,74 @@ async fn provider_connections_require_verified_owner_bearer() {
     }
     assert_eq!(fixture.requests.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn owner_inspection_authenticates_before_validation_and_rejects_unbounded_input() {
+    let auth = TestAuth::new().await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let site = "00000000-0000-0000-0000-000000000001";
+    for (id, body, expected) in [
+        (
+            site.to_owned(),
+            json!({"site_url":"sc-domain:example.com","url":"x".repeat(2049)}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            site.to_owned(),
+            json!({"site_url":"","url":"https://example.com"}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            site.to_owned(),
+            json!({"site_url":"x".repeat(2049),"url":"https://example.com"}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            site.to_owned(),
+            json!({"site_url":"sc-domain:example.com","url":"https://example.com","access_token":"secret"}),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            site.to_owned(),
+            json!({"site_url":123,"url":"https://example.com"}),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            site.to_owned(),
+            json!({"site_url":"sc-domain:example.com"}),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            site.replace('-', ""),
+            json!({"site_url":"sc-domain:example.com","url":"https://example.com"}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "invalid".to_owned(),
+            json!({"site_url":"sc-domain:example.com","url":"https://example.com"}),
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        for bearer in [None, Some("invalid"), Some(token.as_str())] {
+            let mut request = Request::post(format!("/websites/{id}/search/owner-inspect"))
+                .header("content-type", "application/json");
+            if let Some(bearer) = bearer {
+                request = request.header("authorization", format!("Bearer {bearer}"));
+            }
+            let response = auth
+                .app
+                .clone()
+                .oneshot(request.body(Body::from(body.to_string())).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                if bearer == Some(token.as_str()) {
+                    expected
+                } else {
+                    StatusCode::UNAUTHORIZED
+                }
+            );
+        }
+    }
+}

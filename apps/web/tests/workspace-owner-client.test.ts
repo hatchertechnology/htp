@@ -13,6 +13,7 @@ it('maps only implemented owner operations and preserves legacy paths', () => {
     ['/api/websites?limit=100', 'GET', '/websites?limit=100'],
     ['/api/websites?limit=50&offset=100', 'GET', '/websites?limit=50&offset=100'],
     ...['properties', 'dashboard', 'inspection-history'].map(action => [`/api/websites/${id}/search/${action}`, 'POST', `/websites/${id}/search/${action}`]),
+    [`/api/websites/${id}/search/inspect`, 'POST', `/websites/${id}/search/owner-inspect`],
     [repository, 'GET', `/websites/${id}/repository`],
     [repository, 'PUT', `/websites/${id}/repository`],
     [`${repository}/history`, 'GET', `/websites/${id}/repository`],
@@ -23,8 +24,10 @@ it('maps only implemented owner operations and preserves legacy paths', () => {
     expect(() => resolveWorkspaceOwnerPath(path!, method, true, 'https://api.test/path')).toThrow()
   }
   for (const [path, method] of [
-    ...['inspect', 'dataset', 'crawl-evidence', 'unknown', 'dashboard/', 'dashboard/extra', 'dashboard?x=1'].map(action => [`/api/websites/${id}/search/${action}`, 'POST']),
+    ...['inspect/', 'inspect/extra', 'inspect?x=1', 'owner-inspect', 'dataset', 'crawl-evidence', 'unknown', 'dashboard/', 'dashboard/extra', 'dashboard?x=1'].map(action => [`/api/websites/${id}/search/${action}`, 'POST']),
     ...['GET', 'PUT', 'DELETE', 'post', undefined].map(method => [`/api/websites/${id}/search/dashboard`, method]),
+    ...['GET', 'PUT', 'DELETE', 'post', undefined].map(method => [`/api/websites/${id}/search/inspect`, method]),
+    ...['invalid', id.replaceAll('-', '')].map(value => [`/api/websites/${value}/search/inspect`, 'POST']),
     ['/api/websites/invalid/search/dashboard', 'POST'],
     ...reports.flatMap(resource => ['GET', 'DELETE', ['business/location', 'analytics/property'].includes(resource) ? 'POST' : 'PUT'].map(method => [`/api/websites/${id}/${resource}`, method])),
     ...reports.flatMap(resource => [`/api/websites/invalid/${resource}`, `/api/websites/${id.replaceAll('-', '')}/${resource}`, `/api/websites/${id}/${resource}/`, `/api/websites/${id}/${resource}/extra`, `/api/websites/${id}/${resource}?x=1`].map(path => [path, ['business/location', 'analytics/property'].includes(resource) ? 'PUT' : 'POST'])),
@@ -52,6 +55,7 @@ it.each([true, false])('workspace forwards owner payloads, query, signal and res
     const signal = new AbortController().signal
     for (const [path, options] of [
       ...['properties', 'dashboard', 'inspection-history'].map(action => [`/api/websites/${id}/search/${action}`, {method: 'POST', body: {site_url: 'sc-domain:example.test', start_date: '2026-10-01', end_date: '2026-10-30', url: 'https://example.test/', before_id: 12}, signal}]),
+      [`/api/websites/${id}/search/inspect`, {method: 'POST', body: {site_url: 'sc-domain:example.test', url: 'https://example.test/'}, signal}],
       ...reports.map(resource => [`/api/websites/${id}/${resource}`, {method: ['business/location', 'analytics/property'].includes(resource) ? 'PUT' : 'POST', body: resource === 'analytics/property' ? {property_id: '123'} : resource === 'business/location' ? {location_id: 'locations/123', linked: false} : {start_date: '2026-10-01', end_date: '2026-10-30', ...(resource.startsWith('bing/') ? {} : {property_id: '123'}), ...(resource.startsWith('insights/') ? {kind: 'conversions', before_id: 12} : {})}, signal}]),
       [repository, {query: {start_date: '2026-10-01', end_date: '2026-10-30', before_id: 12}, signal}],
       [`${repository}/issues`, {query: {state: 'closed', page: 2}, signal}],
