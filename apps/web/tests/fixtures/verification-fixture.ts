@@ -5,7 +5,7 @@ const user = ref<{ id: string; is_anonymous: boolean } | null>({ id: 'fixture-ow
 const calls: unknown[] = []
 let fail = false
 const supabase = {
-  rpc: async (name: string, args: unknown) => { calls.push([name,args]); return fail ? { data: null, error: { message: 'failure' } } : { data: { host_id: 'fixture-host', txt_name: '_htp-verification.www.example.test', txt_value: 'htp-verification=' + 'a'.repeat(64) }, error: null } },
+  rpc: (name: string, args: unknown) => ({ retry: async (enabled: boolean) => { if (enabled !== false) throw Error('retry enabled'); calls.push([name,args]); return fail ? { data: null, error: { message: 'failure' } } : { data: { host_id: 'fixture-host', txt_name: '_htp-verification.www.example.test', txt_value: 'htp-verification=' + 'a'.repeat(64) }, error: null } } }),
   functions: { invoke: async (name: string, args: unknown) => { calls.push([name,args]); return fail ? { data: null, error: {} } : { data: { ok: true }, error: null } } },
 }
 Object.assign(globalThis, vue, { verificationFixture: { calls, fail: (v: boolean) => { fail = v }, signOut: () => { user.value = null } }, useNuxtApp: () => ({ $supabase: supabase }), useAuth: () => ({ user, accessToken: async () => 'fixture-token' }), $fetch: async () => ({ eligible: params.get('eligible') !== 'no' }) })
