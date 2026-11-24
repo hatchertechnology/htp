@@ -102,6 +102,14 @@ describe('source provenance', () => {
     expect(provenanceEntries(null).every(entry => entry.value === null)).toBe(true)
   })
 
+  it('preserves legacy free-text provenance instead of hiding it', () => {
+    const entries = provenanceEntries('  Recorded before structured metadata; parser differences unknown.  ')
+    expect(entries).toHaveLength(PROVENANCE_FIELDS.length + 1)
+    expect(entries.find(entry => entry.key === 'legacy')).toMatchObject({ label: 'Legacy source note', value: 'Recorded before structured metadata; parser differences unknown.' })
+    expect(entries.filter(entry => entry.key !== 'legacy').every(entry => entry.value === null)).toBe(true)
+    expect(provenanceEntries('   ').some(entry => entry.key === 'legacy')).toBe(false)
+  })
+
   it('bounds provenance to the receiver metadata limit', () => {
     expect(() => normalizeProvenance({ notes: 'x'.repeat(60_001) })).toThrow(/60 KiB/)
     expect(normalizeProvenance({ notes: 'x'.repeat(59_000) }).notes).toHaveLength(59_000)

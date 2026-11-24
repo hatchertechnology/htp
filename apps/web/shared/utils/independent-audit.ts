@@ -31,10 +31,24 @@ export function normalizeProvenance(input: Partial<Record<string, string | null 
   return result
 }
 
-/** Render stored provenance with explicit unknown values, never silent keys. */
-export function provenanceEntries(provenance: unknown) {
+export type ProvenanceEntry = { key: string; label: string; placeholder: string; value: string | null }
+
+/**
+ * Render stored provenance with explicit unknown values, never silent keys.
+ * Imports saved before structured metadata was introduced may carry a free-text
+ * string; keep that text visible as a legacy note rather than hiding it.
+ */
+export function provenanceEntries(provenance: unknown): ProvenanceEntry[] {
+  const legacy = typeof provenance === 'string' ? provenance.trim() : ''
   const value = provenance && typeof provenance === 'object' ? provenance as Record<string, unknown> : {}
-  return PROVENANCE_FIELDS.map(field => ({ ...field, value: typeof value[field.key] === 'string' && (value[field.key] as string).trim() ? (value[field.key] as string) : null }))
+  const entries: ProvenanceEntry[] = PROVENANCE_FIELDS.map(field => ({
+    key: field.key,
+    label: field.label,
+    placeholder: field.placeholder,
+    value: typeof value[field.key] === 'string' && (value[field.key] as string).trim() ? (value[field.key] as string) : null,
+  }))
+  if (legacy) entries.push({ key: 'legacy', label: 'Legacy source note', placeholder: '', value: legacy })
+  return entries
 }
 
 /** Count every disagreement and unknown category so the UI never hides unsupported rows. */

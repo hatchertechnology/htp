@@ -29,7 +29,7 @@ async function load() {
   const gen = ++generation, site = ws.selectedId.value
   selectionGeneration++
   importCursor.value = null; snapshotCursor.value = null; runCursor.value = null
-  snapshots.value = []; imports.value = []; selected.value = null; runs.value = []; report.value = null; run.value = ''; error.value = ''
+  snapshots.value = []; imports.value = []; selected.value = null; runs.value = []; report.value = null; reportMeta.value = null; run.value = ''; error.value = ''
   if (!comparisonEnabled || !site || !ws.user.value) return
   try {
     const [history, audits, comparisons] = await Promise.all([
@@ -65,12 +65,12 @@ async function more(kind: 'imports' | 'snapshots' | 'runs') {
 }
 async function choose(id: string) {
   const gen = generation, selection = ++selectionGeneration, site = ws.selectedId.value
-  selected.value = null; run.value = ''; report.value = null; asserted.value = false; semantics.value = CURRENT_SEMANTICS
+  selected.value = null; run.value = ''; report.value = null; reportMeta.value = null; asserted.value = false; semantics.value = CURRENT_SEMANTICS
   try {
     const result = await supabase.rpc('independent_audit_history', { p_website_id: site, p_id: id })
     if (result.error) throw result.error
     if (gen === generation && selection === selectionGeneration) selected.value = result.data
-  } catch (cause) { if (gen === generation && selection === selectionGeneration) error.value = failureMessage(cause) }
+  } catch (cause) { if (gen === generation && selection === selectionGeneration) { reportMeta.value = null; error.value = failureMessage(cause) } }
 }
 async function chooseRun() {
   const gen = generation, site = ws.selectedId.value, id = run.value; report.value = null; reportMeta.value = null; asserted.value = false; semantics.value = CURRENT_SEMANTICS
@@ -172,7 +172,7 @@ async function save() {
   } catch (cause) { if (gen === generation) error.value = failureMessage(cause) }
   finally { busy.value = false }
 }
-watch(() => [ws.user.value?.id, ws.selectedId.value, ws.selected.value?.fqdn], () => { source.value = ''; sourceName.value = ''; for (const field of PROVENANCE_FIELDS) provenance[field.key] = ''; asserted.value = false; semantics.value = CURRENT_SEMANTICS; deleteConfirmation.value = ''; exportFingerprint.value = ''; notice.value = ''; void load() }, { immediate: true })
+watch(() => [ws.user.value?.id, ws.selectedId.value, ws.selected.value?.fqdn], () => { source.value = ''; sourceName.value = ''; for (const field of PROVENANCE_FIELDS) provenance[field.key] = ''; reportMeta.value = null; asserted.value = false; semantics.value = CURRENT_SEMANTICS; deleteConfirmation.value = ''; exportFingerprint.value = ''; notice.value = ''; void load() }, { immediate: true })
 onBeforeUnmount(() => { generation++ })
 </script>
 <template>
@@ -218,7 +218,7 @@ onBeforeUnmount(() => { generation++ })
           <label><input v-model="asserted" type="checkbox"> I verified this is the unmodified controlled SEOsmith 0.2.0 engine and 2026-11-01.1 ruleset. Version strings alone do not establish this.</label></template>
           <p v-else-if="report">Saved assertion: {{ asserted ? 'verified by the original author' : 'not asserted' }}.</p>
           <p>Only the two S15 metadata rules have a mapping. Other rules are unmapped; unavailable and partial evidence stays unknown. Differences may arise from scope, rendering, parsing, fetch results, thresholds or rule meaning.</p>
-          <p v-if="reportMeta">Compared SEOsmith report: {{ reportMeta.fqdn || 'unknown host' }} · {{ reportMeta.sha256 ? 'SHA-256 ' + reportMeta.sha256 : 'SHA-256 not provided' }}</p>
+          <p v-if="reportMeta && report">Compared SEOsmith report: {{ reportMeta.fqdn || 'unknown host' }} · {{ reportMeta.sha256 ? 'SHA-256 ' + reportMeta.sha256 : 'SHA-256 not provided' }}</p>
           <p v-if="report && semantics !== CURRENT_SEMANTICS" role="alert">This comparison uses unsupported semantics {{ semantics }}. {{ readOnly ? 'Its original CSV can still be downloaded.' : 'Its original evidence can still be exported.' }}</p>
           <button v-if="canWrite && report && semantics === CURRENT_SEMANTICS" :disabled="busy" @click="saveComparison">Save comparison</button>
           <template v-if="report && semantics === CURRENT_SEMANTICS">
