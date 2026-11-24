@@ -21,14 +21,16 @@ function isSummary(value: unknown): boolean {
 }
 
 function isPage(value: unknown): boolean {
-  if (!isRecord(value) || !hasStrings(value, ['url', 'content_type'])) return false
+  if (!isRecord(value)) return false
   // Historical reports can omit these display values.
-  return optional(value.title, isString) && optional(value.bytes, isNumber)
+  return optional(value.url, isString) && optional(value.content_type, isString)
+    && optional(value.title, isString) && optional(value.bytes, isNumber)
     && optional(value.ttfb_ms, isNumber) && optional(value.status, isNumber)
 }
 
 function isFinding(value: unknown): boolean {
-  return isRecord(value) && hasStrings(value, ['key', 'rule', 'severity', 'url', 'evidence'])
+  return isRecord(value) && hasStrings(value, ['rule', 'severity', 'url'])
+    && optional(value.key, isString) && optional(value.evidence, isString)
 }
 
 function isKnownEvidence(value: RecordValue): boolean {

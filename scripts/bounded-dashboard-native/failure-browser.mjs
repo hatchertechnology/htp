@@ -60,6 +60,12 @@ await db.query("select set_config('request.jwt.claims',$1,false)", [
 const details = []
 for (let i = 0; i < reports.length; i++) {
   const report = reports[i]
+  if (i === 0) {
+    // Receiver-accepted legacy minimum: preserve absent fields in raw JSON.
+    report.pages[0] = {}
+    delete report.findings[0].key
+    delete report.findings[0].evidence
+  }
   report.request.website_id = site
   report.request.request_id = ids[i]
   const raw = JSON.stringify(report, null, i ? 2 : 1) + '\n'
@@ -75,6 +81,11 @@ for (let i = 0; i < reports.length; i++) {
       ids[i],
     ])).rows[0].d
   assert.equal(detail.report_json, raw)
+  if (i === 0) {
+    assert.deepEqual(detail.report.pages[0], {})
+    assert.equal(Object.hasOwn(detail.report.findings[0], 'key'), false)
+    assert.equal(Object.hasOwn(detail.report.findings[0], 'evidence'), false)
+  }
   details.push(detail)
 }
 await db.close()
@@ -174,7 +185,7 @@ const child = spawn(process.execPath, ['.output/server/index.mjs'], {
     ...process.env,
     PORT: '38293',
     HOST: '127.0.0.1',
-    NUXT_PUBLIC_BOUNDED_SAVED_DETAIL: 'true',
+    NUXT_PUBLIC_BOUNDED_SAVED_DETAIL: process.env.H15_LEGACY_ONLY ? 'false' : 'true',
     NUXT_API_BASE_URL: `http://127.0.0.1:${port}`,
     NUXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${port}`,
     NUXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'synthetic',
@@ -237,6 +248,15 @@ try {
       ids[i],
     )
     await panel.waitFor()
+    if (i === 0) {
+      const urls = page.locator('details.seo-pages')
+      await urls.locator('summary').click()
+      await page.getByLabel('Resource type').selectOption('text/html')
+      await page.getByLabel('Resource type').selectOption('all')
+      await page.getByLabel('Find a checked URL').fill('missing')
+      await page.getByLabel('Find a checked URL').fill('')
+      assert.match(await urls.innerText(), /Unavailable/)
+    }
     assert.match(
       await page.locator('.seo-summary').innerText(),
       new RegExp(String(details[i].summary.pages.checked)),
@@ -256,83 +276,85 @@ try {
       details[i].summary.pages.checked,
     )
   }
-  // Start v1 slowly, then choose v2 via the trend chart while the select is disabled.
-  modes[ids[0]] = 'delay'
-  await select.selectOption(ids[0])
-  await page.getByText('Loading this run’s findings…').waitFor()
-  assert.equal(await page.locator('.seo-summary').count(), 0)
-  const point = page.locator('svg circle[role="button"]').filter({
-    has: page.locator('title'),
-  })
-  const index = await point.count()
-  assert.equal(index, 2)
-  await point.filter({ hasText: new Date(details[1].scan_at).toISOString() })
-    .click()
-  await page.waitForFunction(
-    (id) =>
-      document.querySelector('select[aria-label="Inspect a run"]')?.value ===
-        id,
-    ids[1],
-  )
-  await new Promise((r) => setTimeout(r, 2200))
-  assert.equal(await select.inputValue(), ids[1])
-  assert.match(
-    await page.locator('.seo-summary').innerText(),
-    new RegExp(String(details[1].summary.pages.checked)),
-  )
-  assert.ok(closed > 0, 'cancelled detail must close upstream')
-  console.log('delayed selection isolation passed upstream_closes', closed)
-  for (const mode of ['cut', 'empty', 'nonjson', 'status', 'wrong-shape']) {
-    modes[ids[0]] = mode
+  if (!process.env.H15_LEGACY_ONLY) {
+    // Start v1 slowly, then choose v2 via the trend chart while the select is disabled.
+    modes[ids[0]] = 'delay'
     await select.selectOption(ids[0])
-    await page.getByRole('alert').filter({ hasText: /Seosmith|fetch|JSON/i })
-      .waitFor({ timeout: 10000 })
+    await page.getByText('Loading this run’s findings…').waitFor()
     assert.equal(await page.locator('.seo-summary').count(), 0)
-    assert.equal(
-      await page.getByRole('button', { name: 'Download run JSON' }).count(),
-      0,
+    const point = page.locator('svg circle[role="button"]').filter({
+      has: page.locator('title'),
+    })
+    const index = await point.count()
+    assert.equal(index, 2)
+    await point.filter({ hasText: new Date(details[1].scan_at).toISOString() })
+      .click()
+    await page.waitForFunction(
+      (id) =>
+        document.querySelector('select[aria-label="Inspect a run"]')?.value ===
+          id,
+      ids[1],
     )
-    if (mode === 'nonjson' || mode === 'status') {
-      const expectedCloses = mode === 'nonjson' ? 1 : 2
-      for (let i = 0; rejectedClosed < expectedCloses && i < 100; i++) {
-        await new Promise((r) => setTimeout(r, 20))
+    await new Promise((r) => setTimeout(r, 2200))
+    assert.equal(await select.inputValue(), ids[1])
+    assert.match(
+      await page.locator('.seo-summary').innerText(),
+      new RegExp(String(details[1].summary.pages.checked)),
+    )
+    assert.ok(closed > 0, 'cancelled detail must close upstream')
+    console.log('delayed selection isolation passed upstream_closes', closed)
+    for (const mode of ['cut', 'empty', 'nonjson', 'status', 'wrong-shape']) {
+      modes[ids[0]] = mode
+      await select.selectOption(ids[0])
+      await page.getByRole('alert').filter({ hasText: /Seosmith|fetch|JSON/i })
+        .waitFor({ timeout: 10000 })
+      assert.equal(await page.locator('.seo-summary').count(), 0)
+      assert.equal(
+        await page.getByRole('button', { name: 'Download run JSON' }).count(),
+        0,
+      )
+      if (mode === 'nonjson' || mode === 'status') {
+        const expectedCloses = mode === 'nonjson' ? 1 : 2
+        for (let i = 0; rejectedClosed < expectedCloses && i < 100; i++) {
+          await new Promise((r) => setTimeout(r, 20))
+        }
+        assert.equal(rejectedClosed, expectedCloses, 'rejected response must close upstream')
       }
-      assert.equal(rejectedClosed, expectedCloses, 'rejected response must close upstream')
+      console.log(mode, 'error without stale detail passed')
+      modes[ids[1]] = 'normal'
+      await select.selectOption(ids[1])
+      await panel.waitFor()
+      assert.equal(await page.getByRole('alert').filter({ hasText: /Seosmith|fetch|JSON/i }).count(), 0)
+      assert.match(await page.locator('.seo-summary').innerText(), new RegExp(String(details[1].summary.pages.checked)))
     }
-    console.log(mode, 'error without stale detail passed')
+    for (const mode of ['unsupported', 'truncated']) {
+      modes[ids[1]] = mode
+      modes[ids[0]] = 'normal'
+      await select.selectOption(ids[0])
+      await panel.waitFor()
+      await select.selectOption(ids[1])
+      await panel.waitFor()
+      if (mode === 'unsupported') {
+        await panel.getByText(/unavailable or unsupported/).waitFor()
+      } else {
+        await panel.getByText(/Evidence was truncated/).waitFor()
+      }
+      assert.equal(await page.getByRole('alert').filter({ hasText: /Seosmith|fetch|JSON/i }).count(), 0)
+      console.log(mode, 'evidence panel passed')
+    }
     modes[ids[1]] = 'normal'
-    await select.selectOption(ids[1])
-    await panel.waitFor()
-    assert.equal(await page.getByRole('alert').filter({ hasText: /Seosmith|fetch|JSON/i }).count(), 0)
-    assert.match(await page.locator('.seo-summary').innerText(), new RegExp(String(details[1].summary.pages.checked)))
-  }
-  for (const mode of ['unsupported', 'truncated']) {
-    modes[ids[1]] = mode
-    modes[ids[0]] = 'normal'
+    modes[ids[0]] = 'delay'
     await select.selectOption(ids[0])
+    await page.getByText('Loading this run’s findings…').waitFor()
+    const closesBeforeSiteSwitch = closed
+    await page.getByLabel('Select website').selectOption(site2)
     await panel.waitFor()
-    await select.selectOption(ids[1])
-    await panel.waitFor()
-    if (mode === 'unsupported') {
-      await panel.getByText(/unavailable or unsupported/).waitFor()
-    } else {
-      await panel.getByText(/Evidence was truncated/).waitFor()
-    }
-    assert.equal(await page.getByRole('alert').filter({ hasText: /Seosmith|fetch|JSON/i }).count(), 0)
-    console.log(mode, 'evidence panel passed')
+    await new Promise((r) => setTimeout(r, 2200))
+    assert.equal(await select.inputValue(), ids[1])
+    assert.match(await page.locator('.seo-summary').innerText(), new RegExp(String(details[1].summary.pages.checked)))
+    assert.ok(closed > closesBeforeSiteSwitch, 'site switch must close the old upstream')
+    console.log('cross-site selection isolation passed')
   }
-  modes[ids[1]] = 'normal'
-  modes[ids[0]] = 'delay'
-  await select.selectOption(ids[0])
-  await page.getByText('Loading this run’s findings…').waitFor()
-  const closesBeforeSiteSwitch = closed
-  await page.getByLabel('Select website').selectOption(site2)
-  await panel.waitFor()
-  await new Promise((r) => setTimeout(r, 2200))
-  assert.equal(await select.inputValue(), ids[1])
-  assert.match(await page.locator('.seo-summary').innerText(), new RegExp(String(details[1].summary.pages.checked)))
-  assert.ok(closed > closesBeforeSiteSwitch, 'site switch must close the old upstream')
-  console.log('cross-site selection isolation passed')
   assert.deepEqual(errors, [])
   console.log('PASS dashboard fixture requests', JSON.stringify(requests))
 } finally {

@@ -20,5 +20,7 @@ describe('saved detail validation', () => {
     expect(isSavedDetail({ ...value, summary: { ...value.summary, pages: null } }, 'run')).toBe(false)
     expect(isSavedDetail({ ...value, report: { ...value.report, evidence_contract: { version: 1 } } }, 'run')).toBe(false)
     expect(isSavedDetail({ ...value, report: { ...value.report, pages: [{ url: 3 }] } }, 'run')).toBe(false)
+    expect(isSavedDetail({ ...value, report: { ...value.report, pages: [{ content_type: 3 }] } }, 'run')).toBe(false)
+    expect(isSavedDetail({ ...value, report: { ...value.report, findings: [{ rule: 'r', severity: 'warning', url: 'https://example.com', evidence: 3 }] } }, 'run')).toBe(false)
   })
 })
