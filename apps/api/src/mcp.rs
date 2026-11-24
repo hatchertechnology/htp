@@ -1430,6 +1430,27 @@ fn env_list(name: &str, default: &str) -> Vec<String> {
         .collect()
 }
 
+/// Demo-only adapter: no RPC dispatch, arguments, request forwarding or credentials.
+pub(crate) fn playground_demo(secured: bool, list: bool) -> serde_json::Value {
+    if list {
+        let tools = if secured {
+            website_tool_router(crate::form_verification::enabled_from_env()).list_all()
+        } else {
+            HelloWorldMcp::tool_router().list_all()
+        };
+        serde_json::json!({"jsonrpc": "2.0", "id": 2, "result": {"tools": tools}})
+    } else {
+        let mut result = if secured {
+            WebsiteMcp::hello_world_secured()
+        } else {
+            HelloWorldMcp::hello_world()
+        };
+        // Match the legacy Nitro client's fixed MCP 2025-11-25 wire response.
+        result.result_type = None;
+        serde_json::json!({"jsonrpc": "2.0", "id": 3, "result": result})
+    }
+}
+
 #[cfg(test)]
 mod management_tests {
     use super::*;

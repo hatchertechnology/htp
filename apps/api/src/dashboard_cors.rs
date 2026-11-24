@@ -100,6 +100,9 @@ impl DashboardCors {
 
 /// The methods exposed to the static dashboard for an exact route shape.
 fn dashboard_methods(path: &str) -> Option<&'static str> {
+    if matches!(path, "/playground/public" | "/playground/secured") {
+        return Some("POST");
+    }
     if matches!(
         path,
         "/providers/google/connection" | "/providers/bing/connection"
@@ -847,6 +850,53 @@ mod tests {
             assert!(
                 header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none(),
                 "{path} must not receive dashboard CORS"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn playground_preflight_is_exact_and_does_not_cover_mcp() {
+        let app = app(Arc::new(AtomicUsize::new(0)), cors());
+        for path in ["/playground/public", "/playground/secured"] {
+            let response = app
+                .clone()
+                .oneshot(preflight(path, ORIGIN, "POST"))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+            assert_eq!(
+                response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+                ORIGIN
+            );
+            for origin in ["https://other.example", "https://dashboard.example.evil"] {
+                let response = app
+                    .clone()
+                    .oneshot(preflight(path, origin, "POST"))
+                    .await
+                    .unwrap();
+                assert!(
+                    !response
+                        .headers()
+                        .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                );
+            }
+        }
+        for path in [
+            "/mcp",
+            "/mcp/secured",
+            "/secured",
+            "/",
+            "/playground/public/extra",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(preflight(path, ORIGIN, "POST"))
+                .await
+                .unwrap();
+            assert!(
+                !response
+                    .headers()
+                    .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
             );
         }
     }
