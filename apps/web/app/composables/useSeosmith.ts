@@ -1,8 +1,12 @@
 import type { AuditDetail, AuditHistory, AuditRun } from '../../shared/types/seosmith'
 import { isSavedDetail } from '#shared/utils/saved-detail-validation'
+import { JSON_CONTENT_TYPE, resolveSeosmithReadPath } from '#shared/utils/seosmith-client'
 export function useSeosmith() {
   const ws = useWorkspace()
   const boundedSavedDetail = useRuntimeConfig().public.boundedSavedDetail === true
+  // Static builds have no Nitro proxy: history and detail go straight to the API origin, and the detail is validated here.
+  const staticDashboard = useRuntimeConfig().public.staticDashboard === true
+  const apiBaseUrl = useRuntimeConfig().public.apiBaseUrl
   const runs = ref<AuditRun[]>([]), selected = ref<AuditDetail | null>(null)
   const busy = ref(false), detailBusy = ref(false), importing = ref(false), error = ref(''), notice = ref('')
   const cursor = ref<AuditHistory['next_cursor']>(null)
@@ -13,11 +17,12 @@ export function useSeosmith() {
     detailController?.abort(); const requestController = new AbortController(); detailController = requestController; selected.value = null; detailBusy.value = true; error.value = ''
     try {
       let result: AuditDetail
-      if (boundedSavedDetail) {
+      if (boundedSavedDetail || staticDashboard) {
         const token = await ws.accessToken()
         if (!token) throw new Error('Your session has ended. Sign in again.')
-        const response = await fetch(`/api/websites/${site}/seo/audits/${id}/dashboard`, { headers: { Authorization: `Bearer ${token}` }, signal: requestController.signal })
-        if (!response.ok || !/^application\/(?:[\w.+-]+\+)?json(?:\s*;|$)/i.test(response.headers.get('content-type') || '')) {
+        const url = staticDashboard ? resolveSeosmithReadPath(`/api/websites/${site}/seo/audits/${id}`, true, apiBaseUrl) : `/api/websites/${site}/seo/audits/${id}/dashboard`
+        const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, redirect: staticDashboard ? 'error' : 'follow', signal: requestController.signal })
+        if (!response.ok || !JSON_CONTENT_TYPE.test(response.headers.get('content-type') || '')) {
           requestController.abort()
           throw new Error('Seosmith reports could not load. Try again.')
         }
@@ -39,7 +44,7 @@ export function useSeosmith() {
     if (!ws.user.value || !site) { busy.value = false; return }
     busy.value = true
     try {
-      const result = await ws.request<AuditHistory>(`/api/websites/${site}/seo/audits`, { query: { limit: 50, ...(more ? cursor.value : {}) }, signal: controller.signal })
+      const result = await ws.request<AuditHistory>(resolveSeosmithReadPath(`/api/websites/${site}/seo/audits`, staticDashboard, apiBaseUrl), { query: { limit: 50, ...(more ? cursor.value : {}) }, signal: controller.signal })
       if (gen !== generation) return
       runs.value = [...new Map([...(more ? runs.value : []), ...result.items].map(r => [r.delivery_id, r])).values()]
       cursor.value = result.has_more ? result.next_cursor : null
@@ -48,6 +53,8 @@ export function useSeosmith() {
     finally { if (gen === generation) busy.value = false }
   }
   async function importFile(file: File) {
+    // The static dashboard is read-only; import has no static route.
+    if (staticDashboard) { error.value = 'Import is not available in the static dashboard.'; return }
     const gen = generation, site = ws.selectedId.value, user = ws.user.value?.id
     importing.value = true; error.value = ''; notice.value = ''
     try {
