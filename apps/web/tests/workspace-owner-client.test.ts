@@ -12,6 +12,7 @@ it('maps only implemented owner operations and preserves legacy paths', () => {
     ...reports.map(resource => [`/api/websites/${id}/${resource}`, ['business/location', 'analytics/property'].includes(resource) ? 'PUT' : 'POST', `/websites/${id}/${resource}`]),
     ['/api/websites?limit=100', 'GET', '/websites?limit=100'],
     ['/api/websites?limit=50&offset=100', 'GET', '/websites?limit=50&offset=100'],
+    ...['properties', 'dashboard', 'inspection-history'].map(action => [`/api/websites/${id}/search/${action}`, 'POST', `/websites/${id}/search/${action}`]),
     [repository, 'GET', `/websites/${id}/repository`],
     [repository, 'PUT', `/websites/${id}/repository`],
     [`${repository}/history`, 'GET', `/websites/${id}/repository`],
@@ -22,6 +23,9 @@ it('maps only implemented owner operations and preserves legacy paths', () => {
     expect(() => resolveWorkspaceOwnerPath(path!, method, true, 'https://api.test/path')).toThrow()
   }
   for (const [path, method] of [
+    ...['inspect', 'dataset', 'crawl-evidence', 'unknown', 'dashboard/', 'dashboard/extra', 'dashboard?x=1'].map(action => [`/api/websites/${id}/search/${action}`, 'POST']),
+    ...['GET', 'PUT', 'DELETE', 'post', undefined].map(method => [`/api/websites/${id}/search/dashboard`, method]),
+    ['/api/websites/invalid/search/dashboard', 'POST'],
     ...reports.flatMap(resource => ['GET', 'DELETE', ['business/location', 'analytics/property'].includes(resource) ? 'POST' : 'PUT'].map(method => [`/api/websites/${id}/${resource}`, method])),
     ...reports.flatMap(resource => [`/api/websites/invalid/${resource}`, `/api/websites/${id.replaceAll('-', '')}/${resource}`, `/api/websites/${id}/${resource}/`, `/api/websites/${id}/${resource}/extra`, `/api/websites/${id}/${resource}?x=1`].map(path => [path, ['business/location', 'analytics/property'].includes(resource) ? 'PUT' : 'POST'])),
     [repository, 'POST'], [`${repository}/issues`, 'PUT'], [`${repository}/history`, 'PUT'],
@@ -47,6 +51,7 @@ it.each([true, false])('workspace forwards owner payloads, query, signal and res
     expect(ws.selectedId.value).toBe(id)
     const signal = new AbortController().signal
     for (const [path, options] of [
+      ...['properties', 'dashboard', 'inspection-history'].map(action => [`/api/websites/${id}/search/${action}`, {method: 'POST', body: {site_url: 'sc-domain:example.test', start_date: '2026-10-01', end_date: '2026-10-30', url: 'https://example.test/', before_id: 12}, signal}]),
       ...reports.map(resource => [`/api/websites/${id}/${resource}`, {method: ['business/location', 'analytics/property'].includes(resource) ? 'PUT' : 'POST', body: resource === 'analytics/property' ? {property_id: '123'} : resource === 'business/location' ? {location_id: 'locations/123', linked: false} : {start_date: '2026-10-01', end_date: '2026-10-30', ...(resource.startsWith('bing/') ? {} : {property_id: '123'}), ...(resource.startsWith('insights/') ? {kind: 'conversions', before_id: 12} : {})}, signal}]),
       [repository, {query: {start_date: '2026-10-01', end_date: '2026-10-30', before_id: 12}, signal}],
       [`${repository}/issues`, {query: {state: 'closed', page: 2}, signal}],
