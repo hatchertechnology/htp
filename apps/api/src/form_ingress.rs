@@ -1,5 +1,4 @@
-//! Public forms ingress. Enable Fly client identity only after verifying that
-//! the Fly HTTP proxy is the exclusive path to this listener.
+//! Public forms ingress. Trust configuration is an operational assertion, not proxy verification.
 use axum::{
     Router,
     body::{Body, to_bytes},
@@ -12,6 +11,55 @@ use futures_util::StreamExt;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, net::IpAddr, sync::Arc, time::Duration};
+use subtle::ConstantTimeEq;
+
+#[derive(Clone)]
+enum IdentityMode {
+    Disabled,
+    Fly,
+    Edge(Vec<[u8; 32]>),
+}
+
+// Keys are uniformly random 32-byte values encoded as exactly 64 lowercase hex digits.
+fn edge_key(value: &str) -> Option<[u8; 32]> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return None;
+    }
+    let mut key = [0; 32];
+    for (i, byte) in key.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(key)
+}
+
+fn identity_mode(
+    mode: Option<&str>,
+    fly: bool,
+    current: Option<&str>,
+    previous: Option<&str>,
+) -> IdentityMode {
+    match mode {
+        None | Some("fly") if fly => IdentityMode::Fly,
+        Some("edge") => {
+            let Some(key) = current.and_then(edge_key) else {
+                return IdentityMode::Disabled;
+            };
+            let mut keys = vec![key];
+            if let Some(previous) = previous {
+                let Some(key) = edge_key(previous) else {
+                    return IdentityMode::Disabled;
+                };
+                keys.push(key);
+            }
+            IdentityMode::Edge(keys)
+        }
+        _ => IdentityMode::Disabled,
+    }
+}
 
 #[derive(Clone)]
 struct Config {
@@ -19,7 +67,7 @@ struct Config {
     db: String,
     service_key: String,
     hash_key: String,
-    trusted_fly: bool,
+    identity: IdentityMode,
     slots: Arc<tokio::sync::Semaphore>,
     #[cfg(test)]
     allow_test_loopback: bool,
@@ -35,14 +83,23 @@ impl Config {
             db: std::env::var("SUPABASE_URL").unwrap_or_default(),
             service_key: std::env::var("FORMS_SERVICE_KEY").unwrap_or_default(),
             hash_key: std::env::var("FORMS_IP_HASH_KEY").unwrap_or_default(),
-            trusted_fly: std::env::var("FORMS_TRUST_FLY_PROXY").as_deref() == Ok("verified"),
+            identity: identity_mode(
+                std::env::var_os("FORMS_INGRESS_MODE")
+                    .as_ref()
+                    .map(|v| v.to_str().unwrap_or("invalid")),
+                std::env::var("FORMS_TRUST_FLY_PROXY").as_deref() == Ok("verified"),
+                std::env::var("FORMS_EDGE_KEY_CURRENT").ok().as_deref(),
+                std::env::var_os("FORMS_EDGE_KEY_PREVIOUS")
+                    .as_ref()
+                    .map(|v| v.to_str().unwrap_or("invalid")),
+            ),
             slots: Arc::new(tokio::sync::Semaphore::new(32)),
             #[cfg(test)]
             allow_test_loopback: false,
         }
     }
     fn ready(&self) -> bool {
-        self.trusted_fly
+        !matches!(self.identity, IdentityMode::Disabled)
             && self.hash_key.len() >= 32
             && !self.service_key.is_empty()
             && reqwest::Url::parse(&self.db).is_ok_and(|u| {
@@ -146,8 +203,27 @@ fn error(status: StatusCode, code: &'static str, origin: Option<&str>) -> Respon
         status == StatusCode::TOO_MANY_REQUESTS,
     )
 }
-fn client_ip(h: &HeaderMap) -> Option<IpAddr> {
-    let mut values = h.get_all("fly-client-ip").iter();
+fn client_ip(mode: &IdentityMode, h: &HeaderMap) -> Option<IpAddr> {
+    let name = match mode {
+        IdentityMode::Disabled => return None,
+        IdentityMode::Fly => "fly-client-ip",
+        IdentityMode::Edge(keys) => {
+            let mut auth = h.get_all("x-htp-edge-auth").iter();
+            let candidate = edge_key(auth.next()?.to_str().ok()?)?;
+            if auth.next().is_some() {
+                return None;
+            }
+            let mut valid = subtle::Choice::from(0);
+            for key in keys {
+                valid |= key.ct_eq(&candidate);
+            }
+            if !bool::from(valid) {
+                return None;
+            }
+            "x-htp-client-ip"
+        }
+    };
+    let mut values = h.get_all(name).iter();
     let first = values.next()?.to_str().ok()?;
     if values.next().is_some() {
         return None;
@@ -224,7 +300,7 @@ async fn submit_inner(c: Config, id: String, request: Request) -> Response {
             None,
         );
     };
-    let Some(ip) = client_ip(request.headers()) else {
+    let Some(ip) = client_ip(&c.identity, request.headers()) else {
         return error(
             StatusCode::SERVICE_UNAVAILABLE,
             "temporarily_unavailable",
@@ -458,7 +534,7 @@ mod tests {
     }
     fn configured(base: String) -> Config {
         let mut c = Config::from_env();
-        c.trusted_fly = true;
+        c.identity = IdentityMode::Fly;
         c.allow_test_loopback = true;
         c.db = base;
         c.hash_key = "h".repeat(48);
@@ -469,7 +545,7 @@ mod tests {
     fn exact_browser_origin_and_proxy_identity() {
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", HeaderValue::from_static("1.2.3.4"));
-        assert!(client_ip(&h).is_none());
+        assert!(client_ip(&IdentityMode::Fly, &h).is_none());
         h.insert(
             header::ORIGIN,
             HeaderValue::from_static("https://www.example.com"),
@@ -486,6 +562,56 @@ mod tests {
             assert!(browser_origin(&h).is_none());
         }
     }
+    #[test]
+    fn edge_identity_is_independent_and_fails_closed() {
+        let current = "ab".repeat(32);
+        let previous = "cd".repeat(32);
+        let mode = identity_mode(Some("edge"), true, Some(&current), Some(&previous));
+        let mut headers = HeaderMap::new();
+        headers.insert("fly-client-ip", HeaderValue::from_static("192.0.2.4"));
+        assert!(client_ip(&mode, &headers).is_none());
+        headers.insert("x-htp-client-ip", HeaderValue::from_static("192.0.2.5"));
+        for key in [&current, &previous] {
+            headers.insert("x-htp-edge-auth", HeaderValue::from_str(key).unwrap());
+            assert_eq!(
+                client_ip(&mode, &headers),
+                Some("192.0.2.5".parse().unwrap())
+            );
+        }
+        headers.insert(
+            "x-htp-edge-auth",
+            HeaderValue::from_str(&"ef".repeat(32)).unwrap(),
+        );
+        assert!(client_ip(&mode, &headers).is_none());
+        headers.insert("x-htp-edge-auth", HeaderValue::from_str(&current).unwrap());
+        headers.append("x-htp-edge-auth", HeaderValue::from_str(&current).unwrap());
+        assert!(client_ip(&mode, &headers).is_none());
+        headers.remove("x-htp-edge-auth");
+        headers.insert("x-htp-edge-auth", HeaderValue::from_str(&current).unwrap());
+        headers.append("x-htp-client-ip", HeaderValue::from_static("192.0.2.6"));
+        assert!(client_ip(&mode, &headers).is_none());
+        assert!(matches!(
+            identity_mode(Some("edge"), true, None, None),
+            IdentityMode::Disabled
+        ));
+        assert!(matches!(
+            identity_mode(Some("edge"), true, Some(&current), Some("bad")),
+            IdentityMode::Disabled
+        ));
+        assert!(matches!(
+            identity_mode(Some("unknown"), true, None, None),
+            IdentityMode::Disabled
+        ));
+        assert!(matches!(
+            identity_mode(None, false, None, None),
+            IdentityMode::Disabled
+        ));
+        assert!(matches!(
+            identity_mode(None, true, None, None),
+            IdentityMode::Fly
+        ));
+    }
+
     #[tokio::test]
     async fn rpc_path_preserves_limits_and_submission_contract() {
         let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -588,7 +714,7 @@ mod tests {
             .unwrap();
         assert_eq!(bad.status(), StatusCode::PAYLOAD_TOO_LARGE);
         let mut missing = Config::from_env();
-        missing.trusted_fly = false;
+        missing.identity = IdentityMode::Disabled;
         let app = Router::new()
             .route("/public/forms/{form_id}", any(submit))
             .with_state(missing);
@@ -601,6 +727,90 @@ mod tests {
         );
         server.abort();
     }
+    // A cooperative test double: copies only public contract headers, then supplies
+    // identity obtained from its synthetic transport and its own secret.
+    fn synthetic_forward(incoming: Request, ip: &str, key: &str) -> Request {
+        let (parts, body) = incoming.into_parts();
+        let mut builder = Request::builder().method(parts.method).uri(parts.uri);
+        for name in [
+            header::ORIGIN,
+            header::REFERER,
+            header::CONTENT_TYPE,
+            header::ACCEPT,
+        ] {
+            for value in parts.headers.get_all(&name) {
+                builder = builder.header(&name, value);
+            }
+        }
+        builder
+            .header("x-htp-client-ip", ip)
+            .header("x-htp-edge-auth", key)
+            .body(body)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn synthetic_forwarder_preserves_admission_cors_and_receipts() {
+        let key = "ab".repeat(32);
+        let expected = format!(
+            "{:x}",
+            Sha256::digest(format!("{}\0{}", "h".repeat(48), "192.0.2.9").as_bytes())
+        );
+        let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = accepted.clone();
+        let fake = Router::new().route("/rest/v1/rpc/{name}", axum::routing::post(move |Path(name): Path<String>, axum::Json(args): axum::Json<Value>| {
+            let counter = counter.clone(); let expected = expected.clone(); async move {
+                axum::Json(match name.as_str() {
+                    "charge_form_client" => { assert_eq!(args["p_hash"], expected); json!("ok") },
+                    "charge_form_ingress" => json!("ok"),
+                    "website_form_origin_allowed" => json!(true),
+                    "accept_website_form" => json!({"ok":true,"duplicate":counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst)>0}),
+                    _ => Value::Null,
+                })
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut config = configured(format!("http://{}", listener.local_addr().unwrap()));
+        config.identity = identity_mode(Some("edge"), true, Some(&key), None);
+        let server = tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
+        let app = Router::new()
+            .route("/public/forms/{form_id}", any(submit))
+            .with_state(config);
+        let mut incoming = request(Method::OPTIONS, "");
+        incoming
+            .headers_mut()
+            .insert("x-htp-client-ip", HeaderValue::from_static("198.51.100.1"));
+        incoming
+            .headers_mut()
+            .insert("x-htp-edge-auth", HeaderValue::from_static("untrusted"));
+        let pre = app
+            .clone()
+            .oneshot(synthetic_forward(incoming, "192.0.2.9", &key))
+            .await
+            .unwrap();
+        assert_eq!(pre.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            pre.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            "https://www.example.com"
+        );
+        let payload = json!({"submission_id":SID,"name":"Ada"}).to_string();
+        for duplicate in [false, true] {
+            let response = app
+                .clone()
+                .oneshot(synthetic_forward(
+                    request(Method::POST, &payload),
+                    "192.0.2.9",
+                    &key,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(value(response).await["duplicate"], duplicate);
+        }
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 2);
+        server.abort();
+    }
+
     #[tokio::test]
     async fn limited_form_preflight_then_readable_post_and_database_failure() {
         let fake = Router::new().route(
