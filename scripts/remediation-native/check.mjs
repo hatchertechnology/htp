@@ -18,6 +18,10 @@ try {
  await page.goto(web,{waitUntil:'domcontentloaded'});const picker=page.getByLabel('Inspect a run',{exact:true}); await picker.waitFor({timeout:15000}).catch(async e=>{console.error('dashboard:',(await page.locator('body').innerText()).slice(0,3000),'errors:',errors);throw e})
  for(const {report,id} of reports) {
   await picker.selectOption(id); const panel=page.getByRole('region',{name:'Remediation work'});await panel.locator('label').filter({hasText:'Finding'}).locator('select').waitFor();await panel.locator('label').filter({hasText:'Finding'}).locator('select').selectOption('0')
+  const priority = panel.locator('dl[aria-label="Priority inputs"] > div')
+  assert.match(await priority.filter({hasText:'Evidence confidence'}).first().innerText(), report.schema_version === 2 ? /high/ : /unknown/)
+  assert.match(await priority.filter({hasText:'Affected reach'}).first().innerText(), report.schema_version === 2 ? /unknown/ : /1/)
+  assert.match(await priority.filter({hasText:'Intended policy'}).first().innerText(), /unavailable/)
   await panel.locator('label').filter({hasText:'Status'}).locator('select').selectOption('done');await panel.locator('label').filter({hasText:'Notes'}).locator('input').fill(`owner schema ${report.schema_version}`);await panel.getByRole('button',{name:'Save work'}).click();await panel.getByText('Work saved. Status does not verify a fix.').waitFor()
   let listed=await call(api,`/websites/${site}/seo/audits/${id}/work?finding_index=0`,owner);assert.equal(listed.status,200);assert.equal(listed.body[0].finding_key,report.findings[0].key);assert.equal(listed.body[0].status,'done');assert.equal(listed.body[0].notes,`owner schema ${report.schema_version}`)
   await panel.locator('label').filter({hasText:'Notes'}).locator('input').fill('edited by owner');await panel.getByRole('button',{name:'Save work'}).click();await panel.getByText('Work saved. Status does not verify a fix.').waitFor()

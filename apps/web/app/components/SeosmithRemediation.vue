@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { AuditDetail } from '../../shared/types/seosmith'
-import { findingEvaluation } from '#shared/utils/seosmith-remediation'
+import { findingEvaluation, findingPriority } from '#shared/utils/seosmith-remediation'
 const props = defineProps<{ audit: AuditDetail }>()
 type Attempt = { id: string; result: string; note: string; created_at: string; delivery_id: string | null }
 type Work = { id: string; finding_index: number; status: string; assignee: string | null; segments: Record<string, string>; exception_note: string | null; notes: string | null; business_exposure: string | null; estimated_effort: string | null; rationale: string | null; attempts: Attempt[]; attempts_more: boolean }
@@ -12,6 +12,7 @@ const finding = computed(() => props.audit.report.findings[index.value])
 const rankedFindings = computed(() => props.audit.report.findings.map((item, index) => ({ item, index })).sort((a, b) => ['critical', 'alert', 'warning'].indexOf(a.item.severity) - ['critical', 'alert', 'warning'].indexOf(b.item.severity) || a.index - b.index))
 const current = computed(() => items.value.find(item => item.finding_index === index.value))
 const evaluation = computed(() => findingEvaluation(props.audit.report, index.value))
+const priority = computed(() => findingPriority(props.audit.report, index.value))
 const endpoint = computed(() => `/api/websites/${ws.selectedId.value}/seo/audits/${props.audit.delivery_id}/work`)
 const loaded = ref(false)
 let retryPage = 0
@@ -94,19 +95,21 @@ async function addAttempt() {
 <template>
   <section class="report-panel" aria-labelledby="remediation-title" :aria-busy="busy">
     <h3 id="remediation-title">Remediation work</h3>
-    <p class="report-caption">Findings are ordered by technical severity. Plan against the saved evidence; work status and exceptions do not verify a fix.</p>
+    <p class="report-caption">Findings are ordered by technical severity. Plan against the saved evidence; work status and exceptions do not verify a fix. Business exposure, estimated effort and recommendation rationale are owner-entered and are not provider evidence.</p>
     <p v-if="error" role="alert" class="form-error">{{ error }} <button class="refresh-control" :disabled="busy" @click="load(retryPage)">Retry</button></p>
     <p v-if="message" role="status" class="form-notice">{{ message }}</p>
     <p v-if="!audit.report.findings.length" class="compact-empty">This audit has no findings to plan.</p>
     <template v-else>
       <label class="insight-control">Finding<select v-model.number="index" :disabled="busy"><option v-for="entry in rankedFindings" :key="entry.index" :value="entry.index">{{ entry.item.severity }} · {{ entry.item.rule }} · {{ entry.item.url }}</option></select></label>
-      <p v-if="finding" class="report-caption">Technical severity: {{ finding.severity }} · Evidence: {{ finding.evidence || 'Unavailable' }} · Source: /findings/{{ index }} · Confidence: {{ evaluation?.confidence ?? 'unknown' }} · Intended policy: unknown · Affected reach: unknown. See evidence and coverage above.</p>
+      <p v-if="finding" class="report-caption">Evidence: {{ finding.evidence || 'Unavailable' }} · Source: /findings/{{ index }}. See evidence and coverage above.</p>
+      <dl v-if="finding" class="priority-inputs" aria-label="Priority inputs"><div v-for="input in priority.inputs" :key="input.key"><dt>{{ input.label }}</dt><dd><strong>{{ input.state === 'known' ? input.value : input.state }}</strong> <span>{{ input.basis }}</span></dd></div></dl>
+      <p v-if="finding" class="report-caption">{{ priority.rationale }}</p>
       <p class="report-caption">Collection interval: {{ audit.report.started_at || 'unknown' }} to {{ audit.report.finished_at || 'unknown' }}<template v-if="evaluation"> · Rule {{ evaluation.rule_version }} · Validator {{ evaluation.validator_version }} · Expected: {{ evaluation.expected.state === 'known' ? evaluation.expected.value : evaluation.expected.state === 'source' ? evaluation.expected.source_locator : 'unavailable' }}</template>.</p>
       <form v-if="loaded" class="seo-filters" @submit.prevent="save">
         <label>Status<select v-model="form.status"><option value="open">Open</option><option value="in_progress">In progress</option><option value="done">Done (unverified)</option><option value="excepted">Exception</option></select></label>
         <label>Owner<input v-model="form.assignee" maxlength="4096" /></label>
         <label>Page segment<input v-model="form.page" /></label><label>Template<input v-model="form.template" /></label><label>Locale<input v-model="form.locale" /></label><label>Device<input v-model="form.device" /></label><label>Business segment<input v-model="form.business" /></label>
-        <label>Business exposure (optional)<input v-model="form.business_exposure" /></label><label>Estimated effort (optional)<input v-model="form.estimated_effort" /></label><label>Recommendation rationale<input v-model="form.rationale" /></label><label>Exception reason<input v-model="form.exception_note" /></label><label>Notes<input v-model="form.notes" /></label>
+        <label>Business exposure (optional)<input v-model="form.business_exposure" placeholder="Not assessed" /></label><label>Estimated effort (optional)<input v-model="form.estimated_effort" placeholder="Not assessed" /></label><label>Recommendation rationale<input v-model="form.rationale" placeholder="Not recorded" /></label><label>Exception reason<input v-model="form.exception_note" /></label><label>Notes<input v-model="form.notes" /></label>
         <button class="refresh-control" :disabled="busy">Save work</button>
       </form>
       <template v-if="current"><h4>Verification attempts</h4><p class="report-caption">An attempt records what was checked; it does not automatically resolve the finding.</p>
