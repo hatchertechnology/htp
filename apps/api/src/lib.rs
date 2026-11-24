@@ -7,6 +7,7 @@ mod bing;
 mod dashboard_cors;
 mod form_inbox;
 mod form_ingress;
+mod form_save;
 mod form_verification;
 mod insights;
 mod mcp;
@@ -104,6 +105,9 @@ pub fn app_with_capabilities(
             enabled: form_inbox::enabled_from_env(),
             pilot: form_inbox::pilot_from_env(),
         }))
+        .merge(form_save::router(form_save::state_from_env(
+            websites.forms_saver(),
+        )))
         .merge(websites::router(websites))
         .layer(middleware::from_fn_with_state(capabilities, rollout_gate))
         .layer(middleware::from_fn_with_state(auth, auth::require_user));
