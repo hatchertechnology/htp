@@ -74,6 +74,13 @@ const details = [
   { delivery_id: ids[7], scan_at: '2026-11-16T11:54:00Z', received_at: time, ingestion_source: 'worker', summary: e2eSummaryReordered, summary_sha256: e2eSummarySha, summary_bytes: Buffer.byteLength(e2eSummaryText), report: JSON.parse(e2eReportText), report_json: e2eReportText, source_sha256: e2eSourceSha, source_bytes: Buffer.byteLength(e2eReportText) },
   { delivery_id: ids[8], scan_at: '2026-11-16T11:53:00Z', received_at: time, ingestion_source: 'worker', summary: e2eSummaryReordered, summary_text: e2eSummaryText, summary_sha256: '0'.repeat(64), summary_bytes: Buffer.byteLength(e2eSummaryText), report: JSON.parse(e2eReportText), report_json: e2eReportText, source_sha256: e2eSourceSha, source_bytes: Buffer.byteLength(e2eReportText) },
 ]
+// Run J: a supported summary that omits the rule_coverage and severity maps.
+// Missing coverage is unknown, never a population of verified-clean rules.
+const noCoverageId = '00000000-0000-4000-8000-000000000013'
+const noCoverageSummary = { ...partialSummary }
+delete noCoverageSummary.rule_coverage
+delete noCoverageSummary.severities
+details.push({ ...details[1], delivery_id: noCoverageId, summary: noCoverageSummary, summary_text: undefined, summary_sha256: undefined })
 const runs = details.map(({ report, report_json, ...run }) => run)
 const ruleTotals = coverage => {
   const claims = Object.values(coverage ?? {}).map(rule => rule.coverage !== 'complete_verified' ? 'unverified' : rule.reported_findings > 0 ? 'findings' : 'clean')
@@ -81,33 +88,41 @@ const ruleTotals = coverage => {
 }
 const completeTotals = ruleTotals(completeSummary.rule_coverage), partialTotals = ruleTotals(partialSummary.rule_coverage), omittedTotals = ruleTotals(omittedSummary.rule_coverage), violationTotals = ruleTotals(violationSummary.rule_coverage)
 
+const authInit = ({ token, exp, user }) => localStorage.setItem('sb-raxuvdbdfmmtpqjcafcq-auth-token', JSON.stringify({ access_token: token, refresh_token: 'fake', token_type: 'bearer', expires_in: 3600, expires_at: exp, user: { id: user, aud: 'authenticated', role: 'authenticated' } }))
+// One route handler for every page: intercepts auth and saved-detail GETs,
+// aborts mutation requests and blocks non-loopback traffic. The log is per page
+// so the no-Web-Crypto page cannot pollute the transport assertions.
+function installRoutes(target, log) {
+  return target.route('**/*', async route => {
+    const request = route.request(), url = new URL(request.url()), path = url.pathname
+    const json = data => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) })
+    if (url.hostname === 'raxuvdbdfmmtpqjcafcq.supabase.co' && path.includes('/auth/v1/')) return json({ id: user, aud: 'authenticated' })
+    if (url.hostname !== '127.0.0.1') { log.push(`BLOCKED ${request.method()} ${url.hostname}${path}`); return route.abort() }
+    if (path.startsWith('/api/')) {
+      log.push(`${request.method()} ${path}`)
+      if (request.method() !== 'GET') { log.push(`ABORTED ${request.method()} ${path}`); return route.abort() }
+      if (path === '/api/websites') return json({ items: [{ id: site, fqdn: 'example.com' }], has_more: false })
+      if (path === `/api/websites/${site}/seo/audits`) return json({ items: runs, has_more: false, next_cursor: null })
+      const bounded = path.match(/\/seo\/audits\/([^/]+)\/dashboard$/)
+      if (bounded) return json(details.find(detail => detail.delivery_id === bounded[1]))
+      const detail = path.match(/\/seo\/audits\/([^/]+)$/)
+      if (detail) return json(details.find(d => d.delivery_id === detail[1]))
+      return json({ connected: false, configured: false })
+    }
+    return route.continue()
+  })
+}
+
 const browser = await chromium.launch({ headless: true })
 const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
 const errors = [], calls = []
 page.on('pageerror', error => errors.push(error.message))
-await page.addInitScript(({ token, exp, user }) => localStorage.setItem('sb-raxuvdbdfmmtpqjcafcq-auth-token', JSON.stringify({ access_token: token, refresh_token: 'fake', token_type: 'bearer', expires_in: 3600, expires_at: exp, user: { id: user, aud: 'authenticated', role: 'authenticated' } })), { token, exp, user })
-await page.route('**/*', async route => {
-  const request = route.request(), url = new URL(request.url()), path = url.pathname
-  const json = data => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) })
-  if (url.hostname === 'raxuvdbdfmmtpqjcafcq.supabase.co' && path.includes('/auth/v1/')) return json({ id: user, aud: 'authenticated' })
-  if (url.hostname !== '127.0.0.1') { calls.push(`BLOCKED ${request.method()} ${url.hostname}${path}`); return route.abort() }
-  if (path.startsWith('/api/')) {
-    calls.push(`${request.method()} ${path}`)
-    if (request.method() !== 'GET') { calls.push(`ABORTED ${request.method()} ${path}`); return route.abort() }
-    if (path === '/api/websites') return json({ items: [{ id: site, fqdn: 'example.com' }], has_more: false })
-    if (path === `/api/websites/${site}/seo/audits`) return json({ items: runs, has_more: false, next_cursor: null })
-    const bounded = path.match(/\/seo\/audits\/([^/]+)\/dashboard$/)
-    if (bounded) return json(details.find(detail => detail.delivery_id === bounded[1]))
-    const detail = path.match(/\/seo\/audits\/([^/]+)$/)
-    if (detail) return json(details.find(d => d.delivery_id === detail[1]))
-    return json({ connected: false, configured: false })
-  }
-  return route.continue()
-})
+await page.addInitScript(authInit, { token, exp, user })
+await installRoutes(page, calls)
 
 // Download a named button and return the exact bytes the browser saved.
-async function downloadBytes(name) {
-  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name, exact: true }).click()])
+async function downloadBytes(name, target = page) {
+  const [download] = await Promise.all([target.waitForEvent('download'), target.getByRole('button', { name, exact: true }).click()])
   const bytes = await readFile(await download.path())
   return { bytes, text: bytes.toString('utf8'), sha: createHash('sha256').update(bytes).digest('hex') }
 }
@@ -186,7 +201,7 @@ try {
   await page.getByLabel('Inspect a run', { exact: true }).selectOption(ids[5])
   await panel.getByText(/Complete verified/).waitFor()
   assert.ok(await panel.getByText(/reconstructed export from the parsed report/).count() >= 1)
-  assert.ok(await panel.getByText(/does not match this source digest/).count() >= 1)
+  assert.ok(await panel.getByText(/cannot be compared to this source digest/).count() >= 1)
   assert.equal(await panel.getByText(/compare the downloaded raw report by this retained digest/i).count(), 0)
   const reconstructed = JSON.stringify(completeReport, null, 2)
   const reconstructedDownload = await downloadBytes('Download run JSON')
@@ -231,6 +246,15 @@ try {
   assert.equal(mismatchDownload.sha, e2eSummarySha)
   assert.notEqual(mismatchDownload.sha, '0'.repeat(64))
 
+  // Run J: an absent rule_coverage map is unavailable coverage, not a verified
+  // population. The all-clean sentence and the 0/0/0 totals must not appear.
+  await page.getByLabel('Inspect a run', { exact: true }).selectOption(noCoverageId)
+  await panel.getByText(/Per-rule coverage is unavailable/).waitFor()
+  const noCoverageText = await panel.textContent()
+  assert.match(noCoverageText, /Per-rule claim scope \(unavailable\)/)
+  assert.doesNotMatch(noCoverageText, /Every reported rule is verified clean within retained scope/)
+  assert.doesNotMatch(noCoverageText, /0 verified clean within retained scope/)
+
   await page.getByLabel('Inspect a run', { exact: true }).selectOption(ids[0])
   await panel.getByText(/Complete verified/).waitFor()
   await page.screenshot({ path: `/tmp/htp-s14-saved-display-${mode}.png`, fullPage: true })
@@ -246,7 +270,30 @@ try {
   assert.ok(!calls.some(call => call.startsWith('BLOCKED')), calls.join('\n'))
   assert.ok(calls.filter(call => /^(POST|PUT|PATCH|DELETE) /.test(call)).every(call => calls.includes(`ABORTED ${call}`)))
   assert.ok(!calls.some(call => /^(POST|PUT|PATCH|DELETE) .*\/seo\/audits/.test(call)))
-  console.log(`PASS: schema-4 receiver semantics in the normal dashboard (${mode} saved-read transport); complete, mixed partial, omitted and violation runs; future summary explicitly unsupported; retained summary text and retained report downloads verified by SHA-256; JSONB-reordered parsed summary not treated as receiver bytes; absent summary text and summary digest mismatch labeled; reconstructed exports labeled when bytes are absent; reads only, no external traffic`)
+
+  // No-Web-Crypto fallback: a digest that cannot be computed is unknown, not a
+  // mismatch. The downloaded bytes still hash to the stored binding.
+  const noCryptoCalls = [], noCryptoErrors = []
+  const noCryptoPage = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  noCryptoPage.on('pageerror', error => noCryptoErrors.push(error.message))
+  await noCryptoPage.addInitScript(authInit, { token, exp, user })
+  await noCryptoPage.addInitScript(() => Object.defineProperty(globalThis, 'crypto', { value: {}, configurable: true }))
+  await installRoutes(noCryptoPage, noCryptoCalls)
+  await noCryptoPage.goto(origin.href, { waitUntil: 'domcontentloaded' })
+  const noCryptoPanel = noCryptoPage.getByRole('region', { name: 'Receiver-verified semantics' })
+  await noCryptoPanel.waitFor()
+  const noCryptoText = await noCryptoPanel.textContent()
+  assert.match(noCryptoText, /could not be computed because Web Crypto is unavailable/)
+  assert.doesNotMatch(noCryptoText, /does not match the stored summary digest/)
+  assert.doesNotMatch(noCryptoText, /does not match this binding/)
+  const noCryptoDownload = await downloadBytes('Download receiver summary', noCryptoPage)
+  assert.equal(noCryptoDownload.sha, summaryShas[0])
+  assert.deepEqual(noCryptoErrors, [])
+  assert.ok(!noCryptoCalls.some(call => call.startsWith('BLOCKED')), noCryptoCalls.join('\n'))
+  assert.ok(noCryptoCalls.filter(call => /^(POST|PUT|PATCH|DELETE) /.test(call)).every(call => noCryptoCalls.includes(`ABORTED ${call}`)))
+  await noCryptoPage.close()
+
+  console.log(`PASS: schema-4 receiver semantics in the normal dashboard (${mode} saved-read transport); complete, mixed partial, omitted and violation runs; future summary explicitly unsupported; retained summary text and retained report downloads verified by SHA-256; JSONB-reordered parsed summary not treated as receiver bytes; absent summary text and summary digest mismatch labeled; reconstructed exports labeled when bytes are absent; missing rule_coverage shown as unavailable instead of all-clean; unavailable digest computation distinct from a mismatch; reads only, no external traffic`)
   console.log(calls.join('\n'))
 } catch (error) {
   console.error('page errors:', errors)

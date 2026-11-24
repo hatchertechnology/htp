@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { isSavedDetail } from '../shared/utils/saved-detail-validation'
-import { auditCoverageLabel, recordCounts, reportExport, ruleClaim, ruleClaimLabels, ruleClaimTotals, semanticsSupport, sha256Hex, sha256Matches, summaryExport, SCHEMA4_SUMMARY_VERSION } from '../shared/utils/saved-semantics'
+import { auditCoverageLabel, digestStatus, recordCounts, reportExport, ruleClaim, ruleClaimLabels, ruleClaimTotals, semanticsSupport, sha256Hex, sha256Matches, summaryExport, SCHEMA4_SUMMARY_VERSION } from '../shared/utils/saved-semantics'
 import { auditPoints, auditValue, severityCount } from '../shared/utils/seosmith'
 import type { AuditDetail, AuditRun, AuditSummary } from '../shared/types/seosmith'
 
@@ -52,6 +52,13 @@ describe('receiver-verified schema 4 semantics', () => {
     expect(auditCoverageLabel('complete_verified')).toBe('Complete verified')
     expect(auditCoverageLabel('unknown_partial')).toBe('Partial or unknown')
     expect(auditCoverageLabel(undefined)).toBe('Unavailable')
+  })
+
+  it('reports no verified population when the rule_coverage map is absent or empty', () => {
+    // The panel gates its all-clean sentence on a nonempty verified population,
+    // so absent coverage must not look like every rule verified clean.
+    expect(ruleClaimTotals(undefined)).toEqual({ rules: 0, verified: 0, findings: 0, unknown: 0 })
+    expect(ruleClaimTotals({})).toEqual({ rules: 0, verified: 0, findings: 0, unknown: 0 })
   })
 })
 
@@ -206,12 +213,20 @@ describe('retained summary text and retained report exports', () => {
     expect(sha256Matches(await sha256Hex(exported.text), `sha256:${reportSha}`)).toBe(false)
   })
 
-  it('treats a missing stored binding as unavailable rather than a mismatch', () => {
+  it('distinguishes an unavailable digest computation from an observed mismatch', () => {
+    // No stored binding is a distinct state from a binding we could not compute.
+    expect(digestStatus('abc', undefined)).toBe('no-binding')
+    expect(digestStatus('abc', null)).toBe('no-binding')
+    expect(digestStatus(null, 'sha256:abc')).toBe('unavailable')
+    expect(digestStatus(undefined, 'abc')).toBe('unavailable')
+    expect(digestStatus('ABC', 'sha256:abc')).toBe('match')
+    expect(digestStatus('abc', 'sha256:def')).toBe('mismatch')
+    // The boolean view stays null for both non-comparison states.
     expect(sha256Matches('abc', undefined)).toBeNull()
-    expect(sha256Matches('abc', null)).toBeNull()
-    expect(sha256Matches(null, 'sha256:abc')).toBe(false)
-    expect(sha256Matches(undefined, 'abc')).toBe(false)
+    expect(sha256Matches(null, 'sha256:abc')).toBeNull()
+    expect(sha256Matches(undefined, 'abc')).toBeNull()
     expect(sha256Matches('ABC', 'sha256:abc')).toBe(true)
+    expect(sha256Matches('abc', 'sha256:def')).toBe(false)
   })
 })
 

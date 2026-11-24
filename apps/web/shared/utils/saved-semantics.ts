@@ -118,11 +118,29 @@ export function reportExport(detail: Pick<AuditDetail, 'report' | 'report_json'>
     : { text: JSON.stringify(detail.report, null, 2), exact: false }
 }
 
+/**
+ * Outcome of comparing a computed digest with a stored binding. `unavailable`
+ * means the digest could not be computed (for example, no Web Crypto); it is
+ * an unknown verification result, not evidence that the bytes differ.
+ * `no-binding` means no stored digest was provided to compare against.
+ */
+export type DigestStatus = 'match' | 'mismatch' | 'unavailable' | 'no-binding'
+
 /** Compare a computed lowercase hex digest with a stored `sha256:<hex>` binding. */
-export function sha256Matches(actualHex: string | null | undefined, expected: string | null | undefined): boolean | null {
-  if (!expected) return null
+export function digestStatus(actualHex: string | null | undefined, expected: string | null | undefined): DigestStatus {
+  if (!actualHex) return 'unavailable'
+  if (!expected) return 'no-binding'
   const normalized = (expected.startsWith('sha256:') ? expected.slice(7) : expected).toLowerCase()
-  return !!actualHex && actualHex.toLowerCase() === normalized
+  return actualHex.toLowerCase() === normalized ? 'match' : 'mismatch'
+}
+
+/**
+ * Boolean view of {@link digestStatus}: true on match, false on mismatch, and
+ * null when no comparison was possible (unavailable computation or no binding).
+ */
+export function sha256Matches(actualHex: string | null | undefined, expected: string | null | undefined): boolean | null {
+  const status = digestStatus(actualHex, expected)
+  return status === 'match' ? true : status === 'mismatch' ? false : null
 }
 
 /** Lowercase hex SHA-256 of UTF-8 text, or null where Web Crypto is unavailable. */
