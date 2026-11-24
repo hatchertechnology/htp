@@ -1,7 +1,10 @@
 import type { Website, WebsitePage } from '../../shared/types/websites'
+import { resolveWebsitePath } from '#shared/utils/websites-client'
 
 export function useWebsites() {
   const auth = useAuth()
+  // Optional local typing: the build lane owns the declaration and default of these settings.
+  const runtime = useRuntimeConfig().public as { apiBaseUrl?: unknown; staticDashboard?: boolean }
   const items = ref<Website[]>([])
   const hasMore = ref(false)
   const loading = ref(false)
@@ -13,7 +16,8 @@ export function useWebsites() {
   async function request<T>(path: string, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', body?: { fqdn: string }, signal?: AbortSignal) {
     const token = await auth.accessToken()
     if (!token) throw new Error('Your session has ended. Sign in again.')
-    return $fetch<T>(path, { method, body, signal, headers: { Authorization: `Bearer ${token}` }, retry: 0 })
+    const url = resolveWebsitePath(path, runtime.staticDashboard === true, runtime.apiBaseUrl)
+    return $fetch<T>(url, { method, body, signal, headers: { Authorization: `Bearer ${token}` }, retry: 0 })
   }
 
   function message(cause: unknown) {
