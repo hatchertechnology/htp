@@ -9,7 +9,7 @@ let generation = 0
 function markerKey(owner: string, site: string) { return `forms-verification-pending:${owner}:${site}` }
 watch(() => [auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId, props.fqdn] as const, async ([owner, anonymous, websiteId]) => {
   const current = ++generation
-  eligible.value = false; expanded.value = false; challenge.value = null; creationUncertain.value = false; error.value = ''; notice.value = ''
+  eligible.value = false; expanded.value = false; challenge.value = null; creationUncertain.value = false; busy.value = false; error.value = ''; notice.value = ''
   if (!owner || anonymous !== false) return
   try {
     creationUncertain.value = localStorage.getItem(markerKey(owner, websiteId)) !== null
@@ -30,7 +30,7 @@ async function begin() {
     if (err || !data?.host_id || !data?.txt_name || !data?.txt_value) throw new Error('Could not create a DNS challenge. Please try again later.')
     if (current === generation) challenge.value = { ...data, expires: started + 24 * 60 * 60 * 1000 }
   } catch { if (current === generation) { creationUncertain.value = true; error.value = 'The challenge request may have succeeded, but its value was not received. Do not create another challenge until this is resolved with support.' } }
-  finally { busy.value = false }
+  finally { if (current === generation) busy.value = false }
 }
 async function verify() {
   const item = challenge.value
@@ -44,7 +44,7 @@ async function verify() {
     if (err || !data?.ok) throw new Error('verification failed')
     if (current === generation) { localStorage.removeItem(markerKey(auth.user.value!.id, props.websiteId)); challenge.value = null; notice.value = 'Domain verified.' }
   } catch { if (current === generation) error.value = 'Could not verify the DNS record yet. Check the value and try again. Challenges expire after 24 hours.' }
-  finally { busy.value = false }
+  finally { if (current === generation) busy.value = false }
 }
 </script>
 
