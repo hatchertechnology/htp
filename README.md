@@ -254,6 +254,15 @@ fly apps create htp-web-kerry-hatcher
 fly deploy apps/web --config fly.toml --remote-only --ha=false
 ```
 
+`apps/web/fly.toml` is the production configuration: a 512 MB shared-CPU
+machine with `NUXT_PUBLIC_BOUNDED_SAVED_DETAIL=true` for the opt-in H15
+bounded saved-detail dashboard read. The Nuxt default in `nuxt.config.ts`
+remains `false`. To roll the dashboard read back, set `memory = "256mb"`,
+remove that `[env]` line, and deploy the last verified production web image
+(revision `718c674`, manifest
+`sha256:930f0981c653dfec243670c7f04d3cc8d16ac2b5a667937cd5e36195a5be1214`)
+until a fresh qualified image is available.
+
 The Cargo workspace continues to build only the Rust crates. Frontend dependencies
 and build output are excluded from the API's Docker build context.
 

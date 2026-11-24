@@ -9,6 +9,9 @@ primary_region = "iad"
   PORT = "3000"
   NUXT_API_BASE_URL = "https://htp-api-kerry-hatcher.fly.dev"
   NUXT_PUBLIC_API_BASE_URL = "https://htp-api-kerry-hatcher.fly.dev"
+  # Production H15 bounded saved-detail dashboard read. Nuxt's default in
+  # nuxt.config.ts remains false; this overrides it for this Fly app only.
+  NUXT_PUBLIC_BOUNDED_SAVED_DETAIL = "true"
   NUXT_PUBLIC_SUPABASE_URL = "https://raxuvdbdfmmtpqjcafcq.supabase.co"
   NUXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Loul540Y3Oj_qIojV0kr0w_Jq5vhn5H"
 
@@ -29,4 +32,4 @@ primary_region = "iad"
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory = "256mb"
+  memory = "512mb"
