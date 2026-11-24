@@ -15,7 +15,6 @@ use axum::{
 /// Environment variable naming the single allowed origin, for example `https://dashboard.example`.
 pub const ORIGIN_ENV: &str = "HTP_DASHBOARD_CORS_ORIGIN";
 
-const ALLOWED_METHODS: [&str; 4] = ["GET", "POST", "PATCH", "DELETE"];
 const ALLOWED_REQUEST_HEADERS: [&str; 2] = ["authorization", "content-type"];
 const PREFLIGHT_MAX_AGE_SECONDS: &str = "600";
 
@@ -99,28 +98,31 @@ impl DashboardCors {
     }
 }
 
-/// Whether `path` is one of the dashboard-covered website routes.
-#[must_use]
-pub fn is_dashboard_path(path: &str) -> bool {
-    match path.strip_prefix("/websites") {
-        Some("") => true,
-        Some(rest) => rest
-            .strip_prefix('/')
-            .is_some_and(|id| !id.is_empty() && !id.contains('/')),
-        None => false,
+/// The methods exposed to the static dashboard for an exact route shape.
+fn dashboard_methods(path: &str) -> Option<&'static str> {
+    if path == "/websites" {
+        return Some("GET, POST, PATCH, DELETE");
     }
-}
-
-fn method_is_allowed(method: &str) -> bool {
-    ALLOWED_METHODS.contains(&method)
+    let rest = path.strip_prefix("/websites/")?;
+    if !rest.is_empty() && !rest.contains('/') {
+        return Some("GET, POST, PATCH, DELETE");
+    }
+    let (site, resource) = rest.split_once('/')?;
+    uuid::Uuid::parse_str(site).ok()?;
+    match resource.strip_prefix("seo/audits")? {
+        "" => Some("GET"),
+        run => uuid::Uuid::parse_str(run.strip_prefix('/')?)
+            .ok()
+            .map(|_| "GET"),
+    }
 }
 
 /// Axum middleware: answer covered preflights and add exact-origin headers to covered responses.
 pub async fn layer(State(cors): State<DashboardCors>, request: Request, next: Next) -> Response {
-    let path = request.uri().path().to_owned();
-    if !is_dashboard_path(&path) {
+    let Some(methods) = dashboard_methods(request.uri().path()) else {
         return next.run(request).await;
-    }
+    };
+    let method_is_allowed = |method: &str| methods.split(", ").any(|allowed| allowed == method);
     let origin_matches = request
         .headers()
         .get(header::ORIGIN)
@@ -150,7 +152,7 @@ pub async fn layer(State(cors): State<DashboardCors>, request: Request, next: Ne
             add_origin_headers(response.headers_mut(), &cors);
             response.headers_mut().insert(
                 header::ACCESS_CONTROL_ALLOW_METHODS,
-                HeaderValue::from_static("GET, POST, PATCH, DELETE"),
+                HeaderValue::from_static(methods),
             );
             response.headers_mut().insert(
                 header::ACCESS_CONTROL_ALLOW_HEADERS,
@@ -321,16 +323,40 @@ mod tests {
     }
 
     #[test]
-    fn covers_only_website_list_and_detail_paths() {
-        assert!(is_dashboard_path("/websites"));
-        assert!(is_dashboard_path(
-            "/websites/0b6f1a4e-7c2d-4a1b-9f3e-1d2c3b4a5f60"
-        ));
-        assert!(!is_dashboard_path("/websites/"));
-        assert!(!is_dashboard_path("/websites/x/seo/audits"));
-        assert!(!is_dashboard_path("/websites/x/analytics/property"));
-        assert!(!is_dashboard_path("/forms/submit"));
-        assert!(!is_dashboard_path("/websites-extra"));
+    fn covers_website_and_exact_saved_audit_routes() {
+        let site = "00000000-0000-0000-0000-000000000001";
+        let run = "00000000-0000-0000-0000-000000000002";
+        assert!(dashboard_methods("/websites").is_some());
+        assert!(dashboard_methods(&format!("/websites/{site}")).is_some());
+        let audits = format!("/websites/{site}/seo/audits");
+        assert_eq!(dashboard_methods(&audits), Some("GET"));
+        assert_eq!(dashboard_methods(&format!("{audits}/{run}")), Some("GET"));
+        for path in [
+            "/websites/",
+            "/websites/x/seo/audits",
+            "/websites/x/analytics/property",
+            "/forms/submit",
+            "/websites-extra",
+            &format!("{audits}/import"),
+            &format!("{audits}/{run}/work"),
+        ] {
+            assert!(dashboard_methods(path).is_none(), "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn saved_audit_preflight_allows_only_get() {
+        let path = "/websites/00000000-0000-0000-0000-000000000001/seo/audits";
+        for (method, allowed) in [("GET", Some("GET")), ("POST", None)] {
+            let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                .oneshot(preflight(path, ORIGIN, method))
+                .await
+                .unwrap();
+            assert_eq!(
+                header_value(&response, header::ACCESS_CONTROL_ALLOW_METHODS),
+                allowed
+            );
+        }
     }
 
     // --- preflight ---
