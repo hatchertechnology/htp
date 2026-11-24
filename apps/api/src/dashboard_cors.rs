@@ -109,6 +109,19 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
     }
     let (site, resource) = rest.split_once('/')?;
     uuid::Uuid::parse_str(site).ok()?;
+    if resource == "forms" {
+        return Some("GET");
+    }
+    if let Some(inbox) = resource.strip_prefix("forms/") {
+        let (form, responses) = inbox.split_once('/')?;
+        uuid::Uuid::parse_str(form).ok()?;
+        return match responses.strip_prefix("responses")? {
+            "" => Some("GET"),
+            response => uuid::Uuid::parse_str(response.strip_prefix('/')?)
+                .ok()
+                .map(|_| "GET"),
+        };
+    }
     match resource.strip_prefix("seo/audits")? {
         "" => Some("GET"),
         run => uuid::Uuid::parse_str(run.strip_prefix('/')?)
@@ -356,6 +369,35 @@ mod tests {
                 header_value(&response, header::ACCESS_CONTROL_ALLOW_METHODS),
                 allowed
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn forms_inbox_preflight_allows_only_exact_get_routes() {
+        let site = "00000000-0000-0000-0000-000000000001";
+        let form = "00000000-0000-0000-0000-000000000002";
+        let response = "00000000-0000-0000-0000-000000000003";
+        let forms = format!("/websites/{site}/forms");
+        let responses = format!("{forms}/{form}/responses");
+        for path in [&forms, &responses, &format!("{responses}/{response}")] {
+            for (method, allowed) in [("GET", Some("GET")), ("POST", None)] {
+                let result = app(Arc::new(AtomicUsize::new(0)), cors())
+                    .oneshot(preflight(path, ORIGIN, method))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    header_value(&result, header::ACCESS_CONTROL_ALLOW_METHODS),
+                    allowed,
+                    "{method} {path}"
+                );
+            }
+        }
+        for path in [
+            format!("{forms}/host-verifications"),
+            format!("{forms}/invalid/responses"),
+            format!("{responses}/{response}/extra"),
+        ] {
+            assert!(dashboard_methods(&path).is_none(), "{path}");
         }
     }
 
