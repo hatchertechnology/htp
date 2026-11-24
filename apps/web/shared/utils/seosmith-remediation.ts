@@ -1,13 +1,27 @@
-import type { AuditEvaluation, AuditReport } from '../types/seosmith'
+import type { AuditDetail, AuditEvaluation, AuditReport } from '../types/seosmith'
+import { safeAuditUrl } from './seosmith'
 
 /** Only the unique explicit failed evaluation for this exact saved finding is attributed. */
 export function findingEvaluation(report: AuditReport, index: number): AuditEvaluation | undefined {
   const finding = report.findings[index]
   if (!finding) return undefined
-  if ((report.evidence_contract?.version != null && report.evidence_contract.version !== 1) || !Array.isArray(report.evidence_contract?.evaluations)) return undefined
+  // Missing provenance is not schema 1 evidence. Only an exact supported
+  // contract version can support an attributed evaluation.
+  if (report.evidence_contract?.version !== 1 || !Array.isArray(report.evidence_contract.evaluations)) return undefined
   const matches = report.evidence_contract.evaluations.filter(item =>
-    item.finding_key === finding.key && item.source_locator === `/findings/${index}` && item.outcome === 'fail') ?? []
+    item.finding_key === finding.key && item.source_locator === `/findings/${index}` && item.outcome === 'fail')
   return matches.length === 1 ? matches[0] : undefined
+}
+
+function evaluationProvenance(evaluation: AuditEvaluation): boolean {
+  return [evaluation.rule, evaluation.rule_version, evaluation.validator_version, evaluation.source_locator]
+    .every(value => typeof value === 'string' && value.length > 0)
+}
+
+/** Confidence is certified only by an exact high-confidence, fully attributed failed evaluation. */
+export function findingConfidence(report: AuditReport, index: number): 'high' | undefined {
+  const evaluation = findingEvaluation(report, index)
+  return evaluation && evaluationProvenance(evaluation) && evaluation.confidence === 'high' ? 'high' : undefined
 }
 
 /**
@@ -41,24 +55,60 @@ function severityInput(finding: AuditReport['findings'][number] | undefined, ind
   return { key: 'severity', label: 'Technical severity', state: 'known', value: finding.severity, basis: `Technical severity recorded by the producer for rule ${finding.rule}.` }
 }
 
-function confidenceInput(evaluation: AuditEvaluation | undefined, index: number): PriorityInput {
-  if (!evaluation) return { key: 'confidence', label: 'Evidence confidence', state: 'unknown', value: null, basis: `No unique explicit failed evaluation points to saved finding /findings/${index}; legacy or ambiguous evidence.` }
+function confidenceInput(report: AuditReport, index: number): PriorityInput {
+  const evaluation = findingEvaluation(report, index)
+  if (!evaluation) return { key: 'confidence', label: 'Evidence confidence', state: 'unknown', value: null, basis: `No unique explicit failed evaluation points to saved finding /findings/${index}; legacy, missing provenance or ambiguous evidence.` }
+  if (!evaluationProvenance(evaluation)) return { key: 'confidence', label: 'Evidence confidence', state: 'unknown', value: null, basis: `The evaluation for /findings/${index} lacks complete rule, validator or source provenance, so its confidence is not certified.` }
   const basis = `Unique explicit failed ${evaluation.rule} evaluation (${evaluation.rule_version}, validator ${evaluation.validator_version}) at ${evaluation.source_locator}.`
-  if (evaluation.confidence !== 'unknown') return { key: 'confidence', label: 'Evidence confidence', state: 'known', value: evaluation.confidence, basis }
-  return { key: 'confidence', label: 'Evidence confidence', state: 'unknown', value: null, basis: `The unique explicit failed ${evaluation.rule} evaluation records confidence as unknown (${evaluation.rule_version}, validator ${evaluation.validator_version}).` }
+  if (findingConfidence(report, index) === 'high') return { key: 'confidence', label: 'Evidence confidence', state: 'known', value: 'high', basis }
+  const recorded = typeof evaluation.confidence === 'string' && evaluation.confidence ? evaluation.confidence : 'missing'
+  return { key: 'confidence', label: 'Evidence confidence', state: 'unknown', value: null, basis: `The unique explicit failed ${evaluation.rule} evaluation records confidence as ${recorded}, not exact high (${evaluation.rule_version}, validator ${evaluation.validator_version}); confidence is not certified.` }
 }
 
-function reachInput(report: AuditReport, finding: AuditReport['findings'][number] | undefined, index: number): PriorityInput {
+function coverageLabel(value: boolean | null | undefined): string {
+  return value === true ? 'complete' : value === false ? 'incomplete' : 'unknown'
+}
+
+/**
+ * Use only the receiver-derived coverage stored on AuditDetail.summary. A raw
+ * legacy report claim is not enough, and an unsupported evidence contract does
+ * not expose a summary coverage decision.
+ */
+function savedCoverage(detail: AuditDetail): { complete: boolean; basis: string } {
+  const { report, summary } = detail
+  if (report.schema_version === 1) {
+    return summary.coverage_complete === true
+      ? { complete: true, basis: 'saved receiver summary reports complete crawl coverage' }
+      : { complete: false, basis: `saved receiver summary reports crawl coverage ${coverageLabel(summary.coverage_complete)}` }
+  }
+  if (report.schema_version === 2 && report.evidence_contract?.version === 1) {
+    const crawl = summary.crawl_coverage_complete
+    const evaluation = summary.evaluation_coverage_complete
+    return crawl === true && evaluation === true
+      ? { complete: true, basis: 'saved receiver summary reports complete crawl and evaluation coverage' }
+      : { complete: false, basis: `saved receiver summary reports crawl coverage ${coverageLabel(crawl)} and evaluation coverage ${coverageLabel(evaluation)}` }
+  }
+  return { complete: false, basis: `saved receiver summary has no crawl or evaluation coverage decision for report schema ${report.schema_version ?? 'unknown'}` }
+}
+
+function reachInput(detail: AuditDetail, finding: AuditReport['findings'][number] | undefined, index: number): PriorityInput {
   if (!finding) return { key: 'reach', label: 'Affected reach', state: 'unknown', value: null, basis: `No saved finding exists at /findings/${index}.` }
-  const observed = new Set(report.findings.filter(item => item.rule === finding.rule).map(item => item.url)).size
-  const contract = report.evidence_contract
-  // A saved finding set establishes reach only when the run reports complete
-  // coverage and any versioned evaluation coverage is explicitly complete,
-  // untruncated and accounted for.
-  const complete = report.coverage_complete === true
-    && (!contract || (contract.version === 1 && contract.evaluation_coverage_complete === true && contract.truncated === false))
-  if (complete) return { key: 'reach', label: 'Affected reach', state: 'known', value: String(observed), basis: `${observed} distinct saved URL(s) share rule ${finding.rule}, and the run reports complete coverage.` }
-  return { key: 'reach', label: 'Affected reach', state: 'unknown', value: null, basis: `Coverage or evaluation coverage is incomplete; ${observed} saved URL(s) share rule ${finding.rule}, which is a lower bound only. Site-wide reach is unknown.` }
+  const observed = new Set<string>()
+  let invalid = 0
+  for (const item of detail.report.findings) {
+    if (item.rule !== finding.rule) continue
+    const url = typeof item.url === 'string' ? safeAuditUrl(item.url) : undefined
+    if (url) observed.add(url)
+    else invalid += 1
+  }
+  const count = observed.size
+  const coverage = savedCoverage(detail)
+  const countBasis = `${count} distinct observed saved URL(s) share rule ${finding.rule}`
+  const invalidBasis = invalid ? `; ${invalid} matching saved finding(s) have an invalid or missing URL and are excluded` : ''
+  if (coverage.complete && invalid === 0) {
+    return { key: 'reach', label: 'Affected reach', state: 'known', value: String(count), basis: `${countBasis}, and the ${coverage.basis}. This is an observed saved-report count, not a website-wide total.` }
+  }
+  return { key: 'reach', label: 'Affected reach', state: 'unknown', value: null, basis: `${coverage.basis}. ${countBasis}${invalidBasis}. This observed count is a lower bound only; website-wide reach is unknown.` }
 }
 
 function policyInput(report: AuditReport): PriorityInput {
@@ -77,11 +127,12 @@ function policyInput(report: AuditReport): PriorityInput {
   return { key: 'policy', label: 'Intended policy', state: 'unavailable', value: null, basis: 'No owner-intended policy is supplied by this saved report. Intended policy needs H02/S14.' }
 }
 
-export function findingPriority(report: AuditReport, index: number): FindingPriority {
+export function findingPriority(detail: AuditDetail, index: number): FindingPriority {
+  const report = detail.report
   const finding = report.findings[index]
   const severity = severityInput(finding, index)
-  const confidence = confidenceInput(findingEvaluation(report, index), index)
-  const reach = reachInput(report, finding, index)
+  const confidence = confidenceInput(report, index)
+  const reach = reachInput(detail, finding, index)
   const policy = policyInput(report)
   const inputs = [severity, confidence, reach, policy]
   const describe = (input: PriorityInput) => input.state === 'known' ? (input.value ?? 'unknown') : input.state

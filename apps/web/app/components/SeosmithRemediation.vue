@@ -12,7 +12,7 @@ const finding = computed(() => props.audit.report.findings[index.value])
 const rankedFindings = computed(() => props.audit.report.findings.map((item, index) => ({ item, index })).sort((a, b) => ['critical', 'alert', 'warning'].indexOf(a.item.severity) - ['critical', 'alert', 'warning'].indexOf(b.item.severity) || a.index - b.index))
 const current = computed(() => items.value.find(item => item.finding_index === index.value))
 const evaluation = computed(() => findingEvaluation(props.audit.report, index.value))
-const priority = computed(() => findingPriority(props.audit.report, index.value))
+const priority = computed(() => findingPriority(props.audit, index.value))
 const endpoint = computed(() => `/api/websites/${ws.selectedId.value}/seo/audits/${props.audit.delivery_id}/work`)
 const loaded = ref(false)
 let retryPage = 0
