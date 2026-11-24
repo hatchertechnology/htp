@@ -3,11 +3,12 @@ const props = defineProps<{ websiteId: string; fqdn: string }>()
 const { $supabase } = useNuxtApp()
 const auth = useAuth()
 const eligible = ref(false), expanded = ref(false), busy = ref(false), error = ref(''), notice = ref('')
+const creationUncertain = ref(false)
 const challenge = ref<{ host_id: string; txt_name: string; txt_value: string; expires: number } | null>(null)
 let generation = 0
 watch(() => [auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId, props.fqdn] as const, async ([owner, anonymous, websiteId]) => {
   const current = ++generation
-  eligible.value = false; expanded.value = false; challenge.value = null; error.value = ''; notice.value = ''
+  eligible.value = false; expanded.value = false; challenge.value = null; creationUncertain.value = false; error.value = ''; notice.value = ''
   if (!owner || anonymous !== false) return
   try {
     const token = await auth.accessToken()
@@ -17,14 +18,14 @@ watch(() => [auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId
   } catch { /* Visibility fails closed. */ }
 }, { immediate: true })
 async function begin() {
-  if (!eligible.value || busy.value || challenge.value) return
-  const current = generation
+  if (!eligible.value || busy.value || challenge.value || creationUncertain.value) return
+  const current = generation, started = Date.now()
   busy.value = true; error.value = ''; notice.value = ''
   try {
     const { data, error: err } = await $supabase.rpc('begin_form_host_verification', { p_website_id: props.websiteId, p_hostname: props.fqdn })
     if (err || !data?.host_id || !data?.txt_name || !data?.txt_value) throw new Error('Could not create a DNS challenge. Please try again later.')
-    if (current === generation) challenge.value = { ...data, expires: Date.now() + 24 * 60 * 60 * 1000 }
-  } catch { if (current === generation) error.value = 'Could not create a DNS challenge. Please try again later.' }
+    if (current === generation) challenge.value = { ...data, expires: started + 24 * 60 * 60 * 1000 }
+  } catch { if (current === generation) { creationUncertain.value = true; error.value = 'The challenge request may have succeeded, but its value was not received. Do not create another challenge until this is resolved with support.' } }
   finally { busy.value = false }
 }
 async function verify() {
@@ -49,8 +50,8 @@ async function verify() {
     <div v-show="expanded" class="verification-content">
       <h3>Verify {{ fqdn }}</h3>
       <p v-if="error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
-      <template v-if="!challenge"><p>Create a DNS challenge for this exact domain.</p><UButton :loading="busy" :disabled="busy" @click="begin">Create DNS challenge</UButton></template>
-      <div v-else><p>Add this TXT record to your DNS, then verify it. Keep this page open while publishing; the challenge expires after 24 hours.</p><p>Name: <code>{{ challenge.txt_name }}</code></p><p>Value: <code>{{ challenge.txt_value }}</code></p><UButton :loading="busy" :disabled="busy" @click="verify">Verify DNS record</UButton></div>
+      <template v-if="!challenge && !creationUncertain"><p>Create a DNS challenge for this exact domain. Creating one replaces any previous challenge.</p><UButton :loading="busy" :disabled="busy" @click="begin">Create DNS challenge</UButton></template>
+      <div v-else-if="challenge"><p>Add this TXT record to your DNS, then verify it. Keep this page open while publishing; the challenge expires after 24 hours.</p><p>Name: <code>{{ challenge.txt_name }}</code></p><p>Value: <code>{{ challenge.txt_value }}</code></p><UButton :loading="busy" :disabled="busy" @click="verify">Verify DNS record</UButton></div>
     </div>
   </section>
 </template>
