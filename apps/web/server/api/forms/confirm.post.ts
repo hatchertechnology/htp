@@ -1,5 +1,5 @@
 export default defineEventHandler(async (event) => {
-  if (useRuntimeConfig(event).public.rolloutForms !== true || useRuntimeConfig(event).public.rolloutFormsPilot === true) throw createError({ statusCode: 503, message: 'Form notifications are not available yet.' })
+  if (useRuntimeConfig(event).public.rolloutForms !== true || useRuntimeConfig(event).public.rolloutFormsPilot === true || useRuntimeConfig(event).public.rolloutFormsVerification === true) throw createError({ statusCode: 503, message: 'Form notifications are not available yet.' })
   let size = 0
   const chunks: Buffer[] = []
   for await (const chunk of event.node.req) {

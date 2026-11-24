@@ -1,9 +1,9 @@
 import { Readable } from 'node:stream'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 const raw=vi.fn(), status=vi.fn()
-const config={public:{rolloutForms:false,rolloutFormsPilot:false,supabaseUrl:'https://example.test'}}
+const config={public:{rolloutForms:false,rolloutFormsPilot:false,rolloutFormsVerification:false,supabaseUrl:'https://example.test'}}
 beforeEach(()=>{
- config.public.rolloutForms=false;config.public.rolloutFormsPilot=false
+ config.public.rolloutForms=false;config.public.rolloutFormsPilot=false;config.public.rolloutFormsVerification=false
  vi.stubGlobal('defineEventHandler',(handler:unknown)=>handler);vi.stubGlobal('useRuntimeConfig',()=>config);vi.stubGlobal('createError',(v:{statusCode:number,message:string})=>Object.assign(new Error(v.message),v));vi.stubGlobal('setHeader',vi.fn());vi.stubGlobal('setResponseStatus',status);vi.stubGlobal('$fetch',{raw:raw.mockResolvedValue({status:200,_data:{ok:true}})})
 })
 afterEach(()=>{vi.unstubAllGlobals();vi.resetAllMocks();vi.resetModules()})
@@ -12,6 +12,8 @@ it('denies confirmation for held and pilot modes without forwarding',async()=>{
  const handler=(await import('../server/api/forms/confirm.post')).default
  await expect(handler(event() as never)).rejects.toMatchObject({statusCode:503})
  config.public.rolloutForms=true;config.public.rolloutFormsPilot=true
+ await expect(handler(event() as never)).rejects.toMatchObject({statusCode:503});expect(raw).not.toHaveBeenCalled()
+ config.public.rolloutFormsPilot=false;config.public.rolloutFormsVerification=true
  await expect(handler(event() as never)).rejects.toMatchObject({statusCode:503});expect(raw).not.toHaveBeenCalled()
 })
 it('preserves legacy confirmation when the existing rollout is on and pilot mode is off',async()=>{

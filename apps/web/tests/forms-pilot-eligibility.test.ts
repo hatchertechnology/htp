@@ -5,10 +5,10 @@ vi.mock('../server/utils/google',()=>({requireDashboardUser:requireUser}))
 import { pilotEligibility } from '../server/utils/forms-pilot'
 const event={} as H3Event
 const site='10000000-0000-0000-0000-000000000001', otherSite='10000000-0000-0000-0000-000000000002', owner='20000000-0000-0000-0000-000000000001', other='20000000-0000-0000-0000-000000000002'
-const config={formsPilotEnabled:true,formsPilotWebsiteId:site,formsPilotOwnerId:owner,apiBaseUrl:'https://api.example.test',public:{rolloutFormsPilot:true}}
+const config={formsPilotEnabled:true,formsPilotWebsiteId:site,formsPilotOwnerId:owner,apiBaseUrl:'https://api.example.test',public:{rolloutFormsPilot:true,rolloutFormsVerification:false}}
 const raw=vi.fn(), query=vi.fn(), header=vi.fn()
 beforeEach(()=>{
- config.formsPilotEnabled=true;config.public.rolloutFormsPilot=true;config.formsPilotWebsiteId=site;config.formsPilotOwnerId=owner
+ config.formsPilotEnabled=true;config.public.rolloutFormsPilot=true;config.public.rolloutFormsVerification=false;config.formsPilotWebsiteId=site;config.formsPilotOwnerId=owner
  vi.stubGlobal('useRuntimeConfig',()=>config);vi.stubGlobal('getQuery',query.mockReturnValue({website_id:site}));vi.stubGlobal('setHeader',header);vi.stubGlobal('$fetch',{raw:raw.mockResolvedValue({status:200,_data:{id:site}})})
  requireUser.mockResolvedValue({id:owner,authorization:'Bearer synthetic-token'})
 })
@@ -37,4 +37,9 @@ it('fails closed for ownership denial, malformed requests and upstream failures'
 it('does not allow an invalid, expired or anonymous dashboard session',async()=>{
  requireUser.mockRejectedValue(Object.assign(new Error('session ended'),{statusCode:401}))
  await expect(pilotEligibility(event)).rejects.toMatchObject({statusCode:401});expect(raw).not.toHaveBeenCalled()
+})
+
+it('allows the verification-only switch with the same private binding',async()=>{
+ config.public.rolloutFormsPilot=false;config.public.rolloutFormsVerification=true
+ expect(await pilotEligibility(event)).toEqual({eligible:true})
 })

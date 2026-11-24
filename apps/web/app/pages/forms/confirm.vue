@@ -1,6 +1,6 @@
 <script setup lang="ts">
 useHead({title:'Confirm form notifications',meta:[{name:'referrer',content:'no-referrer'}]})
-const formsEnabled = useRuntimeConfig().public.rolloutForms === true && useRuntimeConfig().public.rolloutFormsPilot !== true
+const formsEnabled = useRuntimeConfig().public.rolloutForms === true && useRuntimeConfig().public.rolloutFormsPilot !== true && useRuntimeConfig().public.rolloutFormsVerification !== true
 const recipient = ref(''), token = ref(''), busy = ref(false), done = ref(false), error = ref('')
 onMounted(() => { const parts=location.hash.slice(1).split(':'); recipient.value=parts[0] || ''; token.value=parts[1] || ''; history.replaceState(null,'',location.pathname) })
 async function confirm() {
