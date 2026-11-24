@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Access, Operation, PlaygroundResponse, Transport } from '../../shared/types/api'
+import { playgroundTarget } from '../../shared/utils/playground-client'
 const props = defineProps<{ transport: Transport }>()
 const config = useRuntimeConfig()
 const auth = useAuth()
@@ -47,13 +48,18 @@ async function sendRequest() {
       error.value = 'Your session has ended. Sign in again to send this request.'
       return
     }
-    const result = await $fetch.raw<PlaygroundResponse>('/api/playground', {
-      method: 'POST', body: { transport: props.transport, access: access.value, operation: operation.value },
+    const staticDashboard = config.public.staticDashboard === true
+    const target = playgroundTarget({ transport: props.transport, access: access.value, operation: operation.value }, staticDashboard, config.public.apiBaseUrl)
+    const started = performance.now()
+    const result = await $fetch.raw<PlaygroundResponse>(target.url, {
+      method: 'POST', body: target.body,
       headers: token ? { Authorization: `Bearer ${token}` } : {},
+      ...(staticDashboard ? { redirect: 'error' as const, credentials: 'omit' as const } : {}),
       signal: controller.signal, timeout: 50_000, retry: 0, ignoreResponseError: true,
     })
     if (current !== generation) return
-    if (result._data && typeof result._data.status === 'number') response.value = result._data
+    if (staticDashboard) response.value = { status: result.status, statusText: result.statusText || (result.ok ? 'OK' : 'Request failed'), durationMs: Math.round(performance.now() - started), contentType: result.headers.get('content-type') || 'application/json', body: result._data ?? null }
+    else if (result._data && typeof result._data.status === 'number') response.value = result._data
     else error.value = result.status === 502 ? 'The API is taking longer than expected.' : 'The request could not be completed.'
   } catch (cause) {
     if (current === generation && !(cause instanceof Error && cause.name === 'AbortError')) error.value = 'Could not connect to the API. Check your connection.'
