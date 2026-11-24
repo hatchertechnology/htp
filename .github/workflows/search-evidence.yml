@@ -29,7 +29,7 @@ jobs:
           npm ci --prefix supabase
           npm ci --prefix apps/web
       - name: Search and combined migration tests
-        run: node --test supabase/tests/search-{crawl-evidence,exact-snapshot,inspection}.test.mjs supabase/tests/seosmith-lifecycle-index.test.mjs supabase/tests/independent-audit.test.mjs
+        run: node --test supabase/tests/search-{crawl-evidence,exact-snapshot,inspection}.test.mjs supabase/tests/seosmith-lifecycle-index.test.mjs supabase/tests/independent-audit.test.mjs supabase/tests/comparison-pilot-scope.test.mjs
       - name: Search collector tests
         run: deno test --allow-env supabase/functions/google-sync/google_test.ts supabase/functions/google-sync/search-analysis_test.ts
       - name: API search and authorization tests
