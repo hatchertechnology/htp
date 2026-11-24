@@ -79,10 +79,21 @@ retained producer successor bundle. It reads an operator-supplied producer
 - the agreed `42`-case `url42.json` pin `65b7160a...`: all six `in_scope`, nine
   `out_of_scope`, fifteen `reject` and twelve `reject_noncanonical` labels are
   preserved and compared with the receiver decision;
-- the four finding-coverage positives and their byte pins, including every
-  per-rule status: complete `88/0`, complete `88/0`, partial `0/88`, and partial
+- the four finding-coverage positives, anchored to the independent producer
+  commit `d2a9257` and the exact coverage manifest pin `926290f4...`, with each
+  declared case independently pinned before use. Every per-rule status is
+  compared: complete `88/0`, complete `88/0`, partial `0/88`, and partial
   `63/25` with `missing_h1` complete. Producer `partial` is reported as receiver
   `unknown`; no partial claim is promoted to complete.
+
+The coverage manifest's `base_fixture` is producer-relative
+(`../../policies/v3-local-complete.json`, outside the passed
+`fixtures/contracts` tree). Its declared path and SHA-256 `90d500ca...` are
+pinned, and the actual bytes are verified whenever the surrounding producer tree
+provides the file; the vendored test copy intentionally omits it. The ordinary
+`tests/conformance.rs` byte-pins the checked-in `url-cases-r2.json`, coverage
+manifest and catalogue against the same constants, so accidental drift fails the
+normal suite without the external tree.
 
 The conformance entry takes the contracts directory:
 

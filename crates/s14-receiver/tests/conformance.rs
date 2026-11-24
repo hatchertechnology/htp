@@ -9,16 +9,21 @@
 use htp_s14_receiver::{
     Coverage,
     conformance::{
-        URL_CASE_COUNT, coverage_label, verify_coverage_positives, verify_successor_contracts,
-        verify_url_corpus,
+        CATALOGUE_SHA256, COVERAGE_MANIFEST_SHA256, URL_CASE_COUNT, URL_CORPUS_SHA256,
+        coverage_label, verify_coverage_positives, verify_successor_contracts, verify_url_corpus,
     },
 };
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     env, fs,
     path::{Path, PathBuf},
     time::Duration,
 };
+
+fn sha256(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
@@ -59,6 +64,17 @@ fn url_corpus_preserves_historical_labels_and_matches_receiver_decisions() {
 }
 
 #[test]
+fn checked_in_conformance_fixtures_are_byte_pinned() {
+    let url = fs::read(fixtures().join("url-cases-r2.json")).unwrap();
+    assert_eq!(sha256(&url), URL_CORPUS_SHA256);
+    let coverage_manifest =
+        fs::read(fixtures().join("s14-finding-coverage-v1/manifest.json")).unwrap();
+    assert_eq!(sha256(&coverage_manifest), COVERAGE_MANIFEST_SHA256);
+    let catalogue = fs::read(fixtures().join("s14-finding-coverage-v1/catalogue-v1.json")).unwrap();
+    assert_eq!(sha256(&catalogue), CATALOGUE_SHA256);
+}
+
+#[test]
 fn coverage_positives_match_every_producer_rule_and_preserve_partial_unknown() {
     let evidence = verify_coverage_positives(
         &fixtures().join("s14-finding-coverage-v1"),
@@ -66,6 +82,18 @@ fn coverage_positives_match_every_producer_rule_and_preserve_partial_unknown() {
     )
     .unwrap();
     assert_eq!(evidence.len(), 4);
+    assert_eq!(
+        evidence
+            .iter()
+            .map(|case| case.case.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "complete-missing-h1.json",
+            "complete-clean-h1.json",
+            "partial-missing-h1.json",
+            "partial-clean-h1.json",
+        ]
+    );
 
     let complete_missing = coverage(&evidence, "complete-missing-h1.json");
     assert_eq!(complete_missing.historical_audit, "complete");

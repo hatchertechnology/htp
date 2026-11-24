@@ -55,6 +55,44 @@ pub const CATALOGUE_RULE_COUNT: usize = 88;
 /// SHA-256 of the pinned finding-coverage catalogue.
 pub const CATALOGUE_SHA256: &str =
     "eaf832c1c0f087f46aec4d5fd62df35c43a52c2d773886912178a1ed12956ea8";
+/// SHA-256 of the retained finding-coverage producer manifest.
+pub const COVERAGE_MANIFEST_SHA256: &str =
+    "926290f48b3ad00d676f4a3a2b5ef0d377274d8807a2a949d213717bd2134b0b";
+/// Independent approved producer commit that froze the finding-coverage
+/// fixtures, catalogue and manifest.
+pub const COVERAGE_MANIFEST_COMMIT: &str = "d2a925723dcb4b03dd2063483ab9462bdf0af3a9";
+/// Exact number of declared finding-coverage cases.
+pub const COVERAGE_CASE_COUNT: usize = 4;
+/// SHA-256 of the finding-coverage base fixture the manifest was generated
+/// from. It lives outside the passed `fixtures/contracts` tree.
+pub const COVERAGE_BASE_FIXTURE_SHA256: &str =
+    "90d500ca38451e3d9470a5973b501d0c4d86bde33364b99cbf92e1b21a596e71";
+
+/// Independently pinned finding-coverage cases: exact declared file name,
+/// byte length and SHA-256, in retained manifest order. The coverage manifest
+/// must declare exactly these cases before any of them is consumed.
+const COVERAGE_CASES: [(&str, usize, &str); COVERAGE_CASE_COUNT] = [
+    (
+        "complete-missing-h1.json",
+        26567,
+        "2443936d93da699595bdb135995e3d1d1503b96d973f5be4f3b82d9f243f4342",
+    ),
+    (
+        "complete-clean-h1.json",
+        26282,
+        "1f4b0889b2477397f129eaaa59d3d9c3451fe83bbd8c2ae50e039cf7f7fd87ff",
+    ),
+    (
+        "partial-missing-h1.json",
+        25999,
+        "d3c2ebd72e6632c5e9f654e7675a13b3a6850841e4f685d5e032dade1137200d",
+    ),
+    (
+        "partial-clean-h1.json",
+        26829,
+        "e95085661f1cbddc165e3acf47fb05a69e47bbe6c4be4dbffe480b385f15902e",
+    ),
+];
 
 const ORIGINAL_MANIFEST_PATH: &str = "../s14-wire-1-candidate/manifest.json";
 const ORIGINAL_FILE_PREFIX: &str = "../s14-wire-1-candidate/";
@@ -62,6 +100,7 @@ const URL_PROFILE: &str = "s14-url-candidate-1 revision 2";
 const ORIGINAL_MANIFEST_COMMIT: &str = "67c57510d45bf3be68a14d00d44818377d57928f";
 const URL_CORPUS_COMMIT: &str = "a7505a5231457379c93eedf555df90bc7fcc95b1";
 const URL_NORMALIZATION_FILE: &str = "v4-candidate-url-normalization.json";
+const COVERAGE_BASE_FIXTURE_PATH: &str = "../../policies/v3-local-complete.json";
 
 /// One URL corpus row with its preserved historical label and receiver decision.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -376,23 +415,60 @@ fn coverage_checks<'a>(
 
 /// Verify the four finding-coverage positive fixtures against producer claims.
 ///
+/// The coverage manifest is anchored to the independent approved producer
+/// commit `d2a9257` and its exact SHA-256 before any declared case is used, and
+/// its declared files must match the four independently fixed case identities.
+/// The producer-relative `base_fixture` metadata is pinned, and its bytes are
+/// verified when the surrounding producer tree provides the file.
 /// Every rule state is compared, not just the aggregate counts. A producer
 /// `partial` claim must remain partially unknown, and a retained finding stays
 /// visible regardless of coverage.
 ///
 /// # Errors
-/// Rejects a changed fixture/catalogue digest, an incomplete catalogue, a
-/// malformed claim, or any per-rule, audit or finding disagreement.
+/// Rejects a changed manifest/fixture/catalogue digest, a manifest that does
+/// not declare the exact retained cases, an incomplete catalogue, a malformed
+/// claim, or any per-rule, audit or finding disagreement.
 #[allow(clippy::too_many_lines)]
 pub fn verify_coverage_positives(
     directory: &Path,
     timeout: Duration,
 ) -> Result<Vec<CoverageEvidence>, ConformanceError> {
     let manifest_bytes = read(&directory.join("manifest.json"))?;
+    check_pin(
+        &sha256(&manifest_bytes),
+        COVERAGE_MANIFEST_SHA256,
+        "coverage manifest",
+    )?;
     let manifest = parse(&manifest_bytes, "coverage manifest")?;
     let status = string(&manifest, "status", "coverage manifest")?;
     if status != "proposed-local-only-not-frozen" {
         return fail(format!("coverage manifest: unexpected status {status}"));
+    }
+    let wire = manifest
+        .get("wire")
+        .ok_or_else(|| ConformanceError::new("coverage manifest: missing wire"))?;
+    if integer(wire, "version", "coverage manifest")? != 1 {
+        return fail("coverage manifest: wire version changed");
+    }
+    let base_entry = manifest
+        .get("base_fixture")
+        .ok_or_else(|| ConformanceError::new("coverage manifest: missing base_fixture"))?;
+    if string(base_entry, "path", "coverage manifest")? != COVERAGE_BASE_FIXTURE_PATH
+        || string(base_entry, "sha256", "coverage manifest")? != COVERAGE_BASE_FIXTURE_SHA256
+    {
+        return fail("coverage manifest: base fixture metadata changed");
+    }
+    // The base fixture is producer-relative and sits outside the passed
+    // `fixtures/contracts` tree. The vendored copy intentionally omits it, so
+    // absence is allowed; when the producer tree provides it, verify the exact
+    // bytes as well as the declared metadata.
+    let base_fixture = directory.join(COVERAGE_BASE_FIXTURE_PATH);
+    if base_fixture.is_file() {
+        check_pin(
+            &sha256(&read(&base_fixture)?),
+            COVERAGE_BASE_FIXTURE_SHA256,
+            "coverage base fixture",
+        )?;
     }
     let catalogue_entry = manifest
         .get("catalogue")
@@ -434,11 +510,23 @@ pub fn verify_coverage_positives(
         previous = Some(rule);
     }
     let cases = array(&manifest, "cases", "coverage manifest")?;
-    if cases.len() != 4 {
+    if cases.len() != COVERAGE_CASE_COUNT {
         return fail(format!(
-            "coverage manifest: {} cases, expected 4",
+            "coverage manifest: {} cases, expected {COVERAGE_CASE_COUNT}",
             cases.len()
         ));
+    }
+    for (index, (entry, pinned)) in cases.iter().zip(COVERAGE_CASES).enumerate() {
+        let (name, expected_bytes, expected_sha256) = pinned;
+        let context = format!("coverage case {name}");
+        if string(entry, "path", &context)? != name
+            || usize::try_from(integer(entry, "bytes", &context)?).ok() != Some(expected_bytes)
+            || string(entry, "sha256", &context)? != expected_sha256
+        {
+            return fail(format!(
+                "coverage manifest: declared case {index} is not the pinned {name}"
+            ));
+        }
     }
     let mut evidence = Vec::with_capacity(cases.len());
     for entry in cases {
