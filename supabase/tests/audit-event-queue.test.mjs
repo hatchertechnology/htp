@@ -67,6 +67,9 @@ test('queue is gated and atomic; reads enforce owner and hostname', async () => 
   await db.exec('reset role'); await db.query("update public.websites set fqdn='new.example.com' where id=$1",[site])
   await db.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({sub:owner,is_anonymous:false})]); await db.exec('set role authenticated')
   result=(await db.query('select public.audit_event_history($1) h',[site])).rows[0].h; assert.deepEqual(result.events,[])
+  await db.exec('reset role'); await db.exec(await readFile(new URL('../rollbacks/20261203000000_audit_notifications_disable.sql',import.meta.url),'utf8'))
+  assert.deepEqual((await db.query('select enqueue_enabled,processing_enabled,operations_enabled from public.audit_event_config')).rows[0],{enqueue_enabled:false,processing_enabled:false,operations_enabled:false})
+  assert.equal((await db.query('select count(*)::int n from public.audit_events')).rows[0].n,2,'rollback retains events')
  } finally {await db.close()}
 })
 
@@ -79,7 +82,7 @@ test('real receiver and import keep immutable receipts and enqueue worker once',
    create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
    create function auth.uid() returns uuid language sql stable as $$select (auth.jwt()->>'sub')::uuid$$;
    grant usage on schema auth,public to authenticated,anon,service_role; alter default privileges grant execute on functions to anon,authenticated;`)
-  for(const name of ['20261028142440_create_websites.sql','20261031053344_seosmith_audits.sql','20261031053413_seosmith_history.sql','20261031053524_seosmith_explicit_function_privileges.sql','20261101054016_seosmith_expanded_evidence.sql','20261101060006_seosmith_policy_exclusions.sql','20261116210550_seosmith_versioned_receiver.sql','20261116221958_seosmith_summary_target_lookup.sql','20261116223631_h01_scanner_budget.sql','20261116224641_seosmith_summary_compact_input.sql']) await db.exec(await readFile(new URL('../migrations/'+name,import.meta.url),'utf8'))
+  for(const name of ['20261028142440_create_websites.sql','20261031053344_seosmith_audits.sql','20261031053413_seosmith_history.sql','20261031053524_seosmith_explicit_function_privileges.sql','20261101054016_seosmith_expanded_evidence.sql','20261101060006_seosmith_policy_exclusions.sql','20261116210550_seosmith_versioned_receiver.sql','20261116221958_seosmith_summary_target_lookup.sql','20261116223631_h01_scanner_budget.sql','20261116224641_seosmith_summary_compact_input.sql','20261121130000_seosmith_rfc3339_intervals.sql']) await db.exec(await readFile(new URL('../migrations/'+name,import.meta.url),'utf8'))
   if (process.env.HTP_LIFECYCLE_MIGRATION_PATH) await db.exec(await readFile(process.env.HTP_LIFECYCLE_MIGRATION_PATH,'utf8'))
   await db.exec(await readFile(new URL('../migrations/20261203000000_audit_event_queue.sql',import.meta.url),'utf8'))
   await db.query('insert into auth.users values($1)',[owner])
@@ -111,13 +114,33 @@ test('real receiver and import keep immutable receipts and enqueue worker once',
     await db.exec('begin');await db.query('select public.audit_event_snapshot_lock()')
     assert.equal((await db.query('select public.audit_event_process($1,$2) r',[next.request.request_id,second.lease_token])).rows[0].r,'processed');await db.exec('commit')
     assert.equal((await db.query('select count(*)::int n from public.audit_events')).rows[0].n,0)
+    // Derive a valid pass→fail report from the shared receiver fixture. The
+    // receiver still validates source pointers, entity identity and coverage.
+    const changed=structuredClone(next)
+    changed.request.request_id='00000000-0000-4000-8000-000000000007'
+    changed.started_at='2026-11-18T12:00:00Z'; changed.finished_at='2026-11-18T12:01:00Z'
+    changed.evidence_contract.observed_at.started_at=changed.started_at; changed.evidence_contract.observed_at.finished_at=changed.finished_at
+    const evaluation=changed.evidence_contract.evaluations.find(e=>e.rule==='missing_title' && e.outcome==='pass')
+    const observation=changed.evidence_contract.observations.find(o=>o.entity_id===evaluation.entity_id)
+    const pageIndex=Number(observation.source_locator.split('/').at(-1)); changed.pages[pageIndex].title=''
+    const index=changed.findings.length, key='f'.repeat(64)
+    changed.findings.push({key,rule:'missing_title',severity:'alert',url:changed.pages[pageIndex].url,evidence:'Empty title'})
+    Object.assign(evaluation,{outcome:'fail',finding_key:key,source_locator:`/findings/${index}`,actual:{state:'source',source_locator:`/findings/${index}/evidence`}})
+    const coverage=changed.evidence_contract.coverage.find(c=>c.rule==='missing_title'); coverage.passed--;coverage.failed++
+    const changedRaw=JSON.stringify(changed)
+    await db.exec('set role anon');await db.query('select public.ingest_seosmith_audit($1,$2,$3,$4)',[token,changed.request.request_id,hash(changedRaw),changedRaw]);await db.exec('reset role')
+    const third=(await db.query('select public.audit_event_claim() c')).rows[0].c
+    await db.exec('begin');await db.query('select public.audit_event_snapshot_lock()')
+    assert.equal((await db.query('select public.audit_event_process($1,$2) r',[changed.request.request_id,third.lease_token])).rows[0].r,'processed');await db.exec('commit')
+    const events=(await db.query('select kind,rule,severity from public.audit_events')).rows
+    assert.deepEqual(events,[{kind:'new',rule:'missing_title',severity:'alert'}])
   }
   assert.equal((await db.query('select raw_report_json from public.seosmith_audits where delivery_id=$1',[id])).rows[0].raw_report_json,raw)
   report.request.request_id='00000000-0000-4000-8000-000000000009'
   await db.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({sub:owner,is_anonymous:false})]);await db.exec('set role authenticated')
   await db.query('select public.import_seosmith_audit($1,$2)',[report.request.website_id,JSON.stringify(report)])
   await db.exec('reset role')
-  assert.equal((await db.query('select count(*)::int n from public.audit_event_jobs')).rows[0].n,process.env.HTP_LIFECYCLE_MIGRATION_PATH?2:1)
+  assert.equal((await db.query('select count(*)::int n from public.audit_event_jobs')).rows[0].n,process.env.HTP_LIFECYCLE_MIGRATION_PATH?3:1)
  } finally {await db.close()}
 })
 
@@ -160,5 +183,58 @@ test('processor requires lock and lease and holds missing or ambiguous evidence'
   await db.exec('begin'); await db.query('select public.audit_event_snapshot_lock()')
   assert.equal((await db.query('select public.audit_event_process($1,$2) r',[tied,third.lease_token])).rows[0].r,'held'); await db.exec('commit')
   assert.equal((await db.query('select hold_reason from public.audit_event_jobs where delivery_id=$1',[tied])).rows[0].hold_reason,'late_or_tied')
+  // Delivery is an explicit, inert sink: a substantive event never auto-enqueues
+  // a send, and repeated enqueue for the same event/destination/channel deduplicates
+  // through the normal unique constraint without advancing state.
+  assert.equal((await db.query('select count(*)::int n from public.audit_event_deliveries')).rows[0].n,0,'processor never auto-enqueues delivery')
+  const eventId=(await db.query('select id from public.audit_events limit 1')).rows[0].id
+  const destination='00000000-0000-0000-0000-0000000000aa'
+  const enqueue=()=>db.query("insert into public.audit_event_deliveries(event_id,destination_id,channel) values($1,$2,'email') on conflict do nothing",[eventId,destination])
+  await enqueue(); await enqueue()
+  assert.deepEqual((await db.query('select state,attempt_count,lease_token,leased_until from public.audit_event_deliveries')).rows,[{state:'pending',attempt_count:0,lease_token:null,leased_until:null}],'deduplicated sink stays inert')
+  await db.exec('set role authenticated')
+  await assert.rejects(()=>db.query('select * from public.audit_event_deliveries'),/permission denied/)
+  await db.exec('reset role')
+ } finally {await db.close()}
+})
+
+test('actual producer pass/fail pair is accepted and evaluated through the frozen lifecycle index', async (t) => {
+ if (!process.env.HTP_LIFECYCLE_MIGRATION_PATH) return t.skip('requires H03 index migration')
+ const {createHash}=await import('node:crypto'), hash=s=>createHash('sha256').update(s).digest('hex')
+ const db=new PGlite(),owner='00000000-0000-0000-0000-000000000001',token='x'.repeat(64)
+ try {
+  const passRaw=await readFile(new URL('./fixtures/contracts/h15-producer/pass.json',import.meta.url),'utf8')
+  const failRaw=await readFile(new URL('./fixtures/contracts/h15-producer/fail.json',import.meta.url),'utf8')
+  assert.equal(hash(passRaw),'a9f952a327d467fc5c632d6b4ae6799146bfaa323fae1c3624b9018a918c214f')
+  assert.equal(hash(failRaw),'4d504b4c6e0c8228ed8a8f253ae3eb90075bd70479932f1e17aec08413a5ed29')
+  const pass=JSON.parse(passRaw),fail=JSON.parse(failRaw),site=pass.request.website_id
+  assert.equal(site,fail.request.website_id);assert.equal(pass.request.binding_generation,7)
+  await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;create schema auth;create table auth.users(id uuid primary key);
+   create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
+   create function auth.uid() returns uuid language sql stable as $$select (auth.jwt()->>'sub')::uuid$$;
+   grant usage on schema auth,public to authenticated,anon,service_role;alter default privileges grant execute on functions to anon,authenticated;`)
+  for(const name of ['20261028142440_create_websites.sql','20261031053344_seosmith_audits.sql','20261031053413_seosmith_history.sql','20261031053524_seosmith_explicit_function_privileges.sql','20261101054016_seosmith_expanded_evidence.sql','20261101060006_seosmith_policy_exclusions.sql','20261116210550_seosmith_versioned_receiver.sql','20261116221958_seosmith_summary_target_lookup.sql','20261116223631_h01_scanner_budget.sql','20261116224641_seosmith_summary_compact_input.sql','20261121130000_seosmith_rfc3339_intervals.sql']) await db.exec(await readFile(new URL('../migrations/'+name,import.meta.url),'utf8'))
+  await db.exec(await readFile(process.env.HTP_LIFECYCLE_MIGRATION_PATH,'utf8'))
+  await db.exec(await readFile(new URL('../migrations/20261203000000_audit_event_queue.sql',import.meta.url),'utf8'))
+  await db.query('insert into auth.users values($1)',[owner])
+  await db.query("insert into public.websites(id,owner_id,fqdn) values($1,$2,'example.com')",[site,owner])
+  await db.query('insert into public.seosmith_bindings(website_id,token_sha256,generation) values($1,$2,7)',[site,hash(token)])
+  await db.exec('update public.audit_event_config set enqueue_enabled=true,processing_enabled=true; set role anon')
+  for(const [report,raw] of [[pass,passRaw],[fail,failRaw]]) {
+   const receipt=(await db.query('select public.ingest_seosmith_audit($1,$2,$3,$4) r',[token,report.request.request_id,hash(raw),raw])).rows[0].r
+   assert.equal(receipt.accepted,true)
+  }
+  await db.exec('reset role')
+  assert.deepEqual((await db.query('select raw_report_json from public.seosmith_audits order by scan_at')).rows.map(r=>hash(r.raw_report_json)),[hash(passRaw),hash(failRaw)])
+  // The older item is held because the later receipt already exists. The newer
+  // item may be processed only if all relevant prior checks are explicit.
+  let job=(await db.query('select public.audit_event_claim() c')).rows[0].c
+  await db.exec('begin');await db.query('select public.audit_event_snapshot_lock()')
+  assert.equal((await db.query('select public.audit_event_process($1,$2) r',[job.delivery_id,job.lease_token])).rows[0].r,'held');await db.exec('commit')
+  job=(await db.query('select public.audit_event_claim() c')).rows[0].c
+  await db.exec('begin');await db.query('select public.audit_event_snapshot_lock()')
+  const state=(await db.query('select public.audit_event_process($1,$2) r',[job.delivery_id,job.lease_token])).rows[0].r;await db.exec('commit')
+  assert.equal(state,'processed')
+  assert.ok((await db.query("select 1 from public.audit_events where delivery_id=$1 and rule='missing_title' and kind='new'",[fail.request.request_id])).rows.length)
  } finally {await db.close()}
 })
