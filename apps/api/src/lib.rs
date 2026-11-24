@@ -9,6 +9,7 @@ mod form_inbox;
 mod form_ingress;
 mod form_save;
 mod form_verification;
+mod independent_audit;
 mod insights;
 mod mcp;
 mod oauth;
@@ -58,12 +59,17 @@ pub struct RolloutCapabilities {
     pub search_evidence: bool,
     pub lifecycle: bool,
     pub remediation: bool,
+    pub comparisons: bool,
+    pub comparisons_read_only: bool,
 }
 impl RolloutCapabilities {
     fn from_env() -> Self {
         Self {
             search_evidence: std::env::var("HTP_ROLLOUT_SEARCH_EVIDENCE").as_deref() == Ok("true"),
             lifecycle: std::env::var("HTP_ROLLOUT_LIFECYCLE").as_deref() == Ok("true"),
+            comparisons: std::env::var("HTP_ROLLOUT_COMPARISONS").as_deref() == Ok("true"),
+            comparisons_read_only: std::env::var("HTP_ROLLOUT_COMPARISONS_READ_ONLY").as_deref()
+                == Ok("true"),
             remediation: std::env::var("HTP_ROLLOUT_REMEDIATION").as_deref() == Ok("true"),
         }
     }
@@ -97,6 +103,7 @@ pub fn app_with_capabilities(
             websites.clone(),
             search::SearchClient::default(),
         ))
+        .merge(independent_audit::router(websites.clone()))
         .merge(insights::router(websites.clone()))
         .merge(bing::router(websites.clone()))
         .merge(seosmith::read_router(websites.clone()))
@@ -151,6 +158,27 @@ async fn rollout_gate(
     use axum::response::IntoResponse;
     let path: Vec<_> = request.uri().path().split('/').collect();
     let held = match path.as_slice() {
+        [
+            "",
+            "websites",
+            _,
+            "independent-audits" | "independent-comparisons",
+        ]
+        | [
+            "",
+            "websites",
+            _,
+            "independent-audits" | "independent-comparisons",
+            _,
+        ]
+        | ["", "websites", _, "independent-evidence"]
+        | ["", "websites", _, "independent-evidence", "fingerprint"] => {
+            if request.method() == axum::http::Method::GET {
+                !(capabilities.comparisons || capabilities.comparisons_read_only)
+            } else {
+                !capabilities.comparisons || capabilities.comparisons_read_only
+            }
+        }
         ["", "websites", _, "search", "dataset" | "crawl-evidence"] => {
             !capabilities.search_evidence
         }
@@ -258,6 +286,7 @@ mod gated_evidence_tests {
                         search_evidence: enabled == Some(0),
                         lifecycle: enabled == Some(1),
                         remediation: enabled == Some(2),
+                        ..Default::default()
                     };
                     let app = Router::new()
                         .route(&path, any(|| async { "synthetic" }))

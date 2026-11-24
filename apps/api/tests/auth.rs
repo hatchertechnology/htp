@@ -53,6 +53,7 @@ impl TestAuth {
                 search_evidence: true,
                 lifecycle: true,
                 remediation: true,
+                ..Default::default()
             },
         );
         Self {
@@ -2470,6 +2471,24 @@ async fn held_rollout_routes_do_not_call_the_data_api_and_keep_authentication() 
     for (method, path) in [("GET", &work), ("POST", &work), ("POST", &attempt)] {
         assert_eq!(
             website_request(&auth, method, path, json!({}))
+                .await
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+    for (method, resource) in [
+        ("GET", "independent-audits".to_owned()),
+        ("POST", "independent-audits".to_owned()),
+        ("GET", format!("independent-audits/{id}")),
+        ("GET", "independent-comparisons".to_owned()),
+        ("POST", "independent-comparisons".to_owned()),
+        ("GET", format!("independent-comparisons/{id}")),
+        ("GET", "independent-evidence/fingerprint".to_owned()),
+        ("DELETE", "independent-evidence".to_owned()),
+    ] {
+        let path = format!("/websites/{id}/{resource}");
+        assert_eq!(
+            website_request(&auth, method, &path, json!({}))
                 .await
                 .status(),
             StatusCode::SERVICE_UNAVAILABLE

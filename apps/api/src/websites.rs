@@ -161,6 +161,28 @@ impl WebsiteStore {
                 started.elapsed().as_millis()
             );
         }
+        if crate::independent_audit::is_rpc(name) && response.status() == StatusCode::BAD_REQUEST {
+            let value: Value = response
+                .json()
+                .await
+                .map_err(|_| WebsiteError::Unavailable)?;
+            return Err(WebsiteError::Invalid(
+                crate::independent_audit::validation_message(&value)
+                    .unwrap_or("Invalid independent evidence request."),
+            ));
+        }
+        if crate::independent_audit::is_rpc(name)
+            && !response.status().is_success()
+            && !matches!(
+                response.status(),
+                StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+            )
+        {
+            return Err(WebsiteError::Independent(
+                response.status(),
+                "Independent evidence request failed.",
+            ));
+        }
         match response.status() {
             StatusCode::UNAUTHORIZED => return Err(WebsiteError::Unauthorized),
             StatusCode::FORBIDDEN => return Err(WebsiteError::Forbidden),
@@ -552,6 +574,7 @@ fn one(rows: Vec<Website>) -> Result<Website, WebsiteError> {
 pub(crate) enum WebsiteError {
     GitHub(&'static str),
     Invalid(&'static str),
+    Independent(StatusCode, &'static str),
     Unauthorized,
     Forbidden,
     Conflict,
@@ -563,6 +586,7 @@ pub(crate) enum WebsiteError {
 impl IntoResponse for WebsiteError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
+            Self::Independent(status, message) => (status, message),
             Self::GitHub(message) => (StatusCode::BAD_GATEWAY, message),
             Self::Invalid(message) => (StatusCode::BAD_REQUEST, message),
             Self::Unauthorized => (
