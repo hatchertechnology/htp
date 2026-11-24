@@ -391,6 +391,30 @@ struct InspectUrlInput {
     url: String,
 }
 
+// Shared REST/MCP owner operation. The target is always Nitro's original proxy,
+// never the owner adapter or the raw API route.
+pub(crate) async fn owner_inspection_call(
+    headers: &axum::http::HeaderMap,
+    website_id: uuid::Uuid,
+    site_url: String,
+    url: String,
+) -> CallToolResult {
+    if site_url.is_empty() || url.is_empty() || site_url.len() > 2048 || url.len() > 2048 {
+        let mut result = CallToolResult::structured(serde_json::json!({
+            "code": "invalid_request", "error": "Check the Search Console property and URL.", "status": 400
+        }));
+        result.is_error = Some(true);
+        return result;
+    }
+    web_management_call(
+        headers,
+        reqwest::Method::POST,
+        &format!("/api/websites/{website_id}/search/inspect"),
+        Some(serde_json::json!({"site_url": site_url, "url": url})),
+    )
+    .await
+}
+
 // These operations reuse the HTP web server, which owns encrypted provider grants.
 // The destination is selected from two fixed origins and redirects are disabled.
 // No browser cookies or caller-supplied provider credentials are forwarded.
@@ -608,13 +632,7 @@ impl WebsiteMcp {
             axum::http::request::Parts,
         >,
     ) -> CallToolResult {
-        web_management_call(
-            &parts.headers,
-            reqwest::Method::POST,
-            &format!("/api/websites/{}/search/inspect", input.website_id),
-            Some(serde_json::json!({"site_url":input.site_url,"url":input.url})),
-        )
-        .await
+        owner_inspection_call(&parts.headers, input.website_id, input.site_url, input.url).await
     }
 
     #[tool(
@@ -1579,7 +1597,7 @@ mod management_tests {
                     if uri.path().ends_with("/search/inspect") {
                         assert_eq!(method, Method::POST);
                         let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-                        assert_eq!(body["site_url"], "sc-domain:example.com");
+                        assert_eq!(body, serde_json::json!({"site_url":"sc-domain:example.com","url":"https://example.com/"}));
                         return (
                             StatusCode::OK,
                             HeaderMap::new(),

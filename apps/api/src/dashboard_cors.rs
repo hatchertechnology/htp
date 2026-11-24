@@ -120,6 +120,7 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
     let (site, resource) = rest.split_once('/')?;
     uuid::Uuid::parse_str(site).ok()?;
     match resource {
+        "search/owner-inspect" => return (site.len() == 36).then_some("POST"),
         "search/properties" | "search/dashboard" | "search/inspection-history" => {
             return Some("POST");
         }
@@ -292,6 +293,10 @@ mod tests {
             .route(
                 "/websites/{id}/business/location",
                 axum::routing::put(handler.clone()),
+            )
+            .route(
+                "/websites/{id}/search/owner-inspect",
+                axum::routing::post(handler.clone()),
             )
             .route("/forms/submit", axum::routing::post(handler.clone()))
             .route(
@@ -682,6 +687,7 @@ mod tests {
     async fn report_cors_is_exact_and_preserves_auth() {
         let site = "00000000-0000-0000-0000-000000000001";
         for (resource, expected) in [
+            ("search/owner-inspect", "POST"),
             ("analytics/dashboard", "POST"),
             ("bing/dashboard", "POST"),
             ("insights/report", "POST"),

@@ -14,9 +14,12 @@ export function resolveWorkspaceOwnerPath(path: string, method: unknown, staticD
     return `${websiteApiOrigin(apiBaseUrl)}${path.slice(4)}`
   }
   // Saved Search reads are pure owner proxies. Evidence routes retain an
-  // additional Nitro rollout gate; live inspect needs a server Google bearer.
+  // additional Nitro rollout gate. Live inspection uses the owner bridge.
   if (method === 'POST' && /^\/api\/websites\/[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\/search\/(?:properties|dashboard|inspection-history)$/.test(path)) {
     return `${websiteApiOrigin(apiBaseUrl)}${path.slice(4)}`
+  }
+  if (method === 'POST' && /^\/api\/websites\/[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\/search\/inspect$/.test(path)) {
+    return `${websiteApiOrigin(apiBaseUrl)}${path.slice(4).replace(/\/inspect$/, '/owner-inspect')}`
   }
   const report = REPORT.exec(path)
   if (report && method === (path.endsWith('/business/location') ? 'PUT' : 'POST')) {
