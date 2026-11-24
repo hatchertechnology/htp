@@ -2346,17 +2346,21 @@ async fn search_evidence_requires_auth_and_reads_only_owner_scoped_saved_data() 
     });
     let calls = Arc::new(AtomicUsize::new(0));
     let hits = calls.clone();
-    let saved = Router::new().route("/rest/v1/rpc/read_search_exact_snapshot", axum::routing::post(move |headers: axum::http::HeaderMap, Json(input): Json<Value>| {
+    let saved = Router::new().route("/rest/v1/rpc/read_search_dataset_page", axum::routing::post(move |headers: axum::http::HeaderMap, Json(input): Json<Value>| {
         let hits = hits.clone(); async move {
             hits.fetch_add(1, Ordering::SeqCst);
             assert!(headers["authorization"].to_str().unwrap().starts_with("Bearer "));
             assert!(!headers.contains_key("x-google-access-token"));
             assert_eq!(input["p_kind"], "search");
+            assert_eq!(input["p_dataset"], "query_page_segments");
+            // The database already filtered and bounded the page: only the
+            // matching MOBILE row is returned, with its retained metadata.
             Json(json!({"data":{"query_page_segments":{"rows":[
-                {"keys":["fixture","https://www.example.com/","MOBILE","usa"],"clicks":1,"impressions":5,"ctr":0.2,"position":2},
-                {"keys":["fixture","https://www.example.com/","DESKTOP","usa"],"clicks":2,"impressions":5,"ctr":0.4,"position":2}],
+                {"keys":["fixture","https://www.example.com/","MOBILE","usa"],"clicks":1,"impressions":5,"ctr":0.2,"position":2}],
                 "collection":{"truncated":true,"anonymized_queries":"excluded"}}},
-                "sync":{"exact_range_available":true,"connection_status":"disconnected"}}))
+                "sync":{"exact_range_available":true,"state":"stale"},
+                "daily_sync":{"state":"ready","connection_status":"disconnected"},
+                "page":{"retained_rows":1,"has_more":false,"invalid_rows_omitted":1}}))
         }
     }));
     let auth = TestAuth::with_routes(
@@ -2381,7 +2385,8 @@ async fn search_evidence_requires_auth_and_reads_only_owner_scoped_saved_data() 
     assert_eq!(body["rows"].as_array().unwrap().len(), 1);
     assert_eq!(body["rows"][0]["keys"][2], "MOBILE");
     assert_eq!(body["collection"]["truncated"], true);
-    assert_eq!(body["sync"]["connection_status"], "disconnected");
+    assert_eq!(body["daily_sync"]["connection_status"], "disconnected");
+    assert_eq!(body["invalid_rows_omitted"], 1);
     let other = "/websites/00000000-0000-0000-0000-000000000002/search/dataset";
     assert_eq!(
         analytics_request(&auth, other, Some(&token), None, input)
