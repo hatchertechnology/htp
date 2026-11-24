@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { compareIndependent, parseControlledCsv } from '../shared/utils/independent-audit'
+import { compareIndependent, parseControlledCsv, normalizeProvenance, provenanceEntries, summarizeComparison, sourceByteLength, PROVENANCE_FIELDS } from '../shared/utils/independent-audit'
 
 describe('S15 independent observations', () => {
   const csv = 'url,rule,state\nhttps://example.com/,missing_title,present\nhttps://example.com/,missing_description,absent\nhttps://example.com/,vendor_rule,unknown\n'
@@ -60,5 +60,58 @@ describe('S15 independent observations', () => {
     expect(() => parseControlledCsv(csv + 'https://example.com/,missing_title,absent\n')).toThrow(/Duplicate/)
     expect(() => parseControlledCsv('url,rule,state\n"bad,rule,present')).toThrow(/Malformed/)
     expect(parseControlledCsv('url,rule,state\n"https://example.com/?a=1,b=2",x,unknown')[0]?.url).toContain(',')
+  })
+})
+
+describe('realistic independent-tool export', () => {
+  const raw = readFileSync(new URL('./fixtures/independent-tool-controlled.csv', import.meta.url))
+  const rows = parseControlledCsv(raw.toString('utf8'))
+  const report = JSON.parse(readFileSync(new URL('./fixtures/independent-tool-report.json', import.meta.url), 'utf8'))
+
+  it('preserves the exact original bytes including CRLF and quoted fields', () => {
+    expect(raw.byteLength).toBe(550)
+    expect(raw.toString('utf8')).toContain('\r\n')
+    expect(raw.toString('utf8')).toContain('"https://independent.example/query?a=1,b=2"')
+    expect(sourceByteLength(raw.toString('utf8'))).toBe(raw.byteLength)
+    expect(rows).toHaveLength(9)
+  })
+
+  it('produces complete discrepancy evidence for supported and unknown cases', () => {
+    const result = compareIndependent(rows, report, true)
+    expect(result.map(row => row.category)).toEqual([
+      'agreement', 'agreement', 'unmapped', 'independent_only', 'seosmith_only',
+      'unknown', 'unknown', 'unknown', 'independent_only', 'unknown',
+    ])
+    expect(summarizeComparison(result)).toEqual({ agreement: 2, independent_only: 2, seosmith_only: 1, unknown: 4, unmapped: 1, total: 10 })
+  })
+
+  it('keeps ineligible pages and resource classifications unknown rather than absent', () => {
+    const result = compareIndependent(rows, report, true)
+    expect(result.find(row => row.url === 'https://independent.example/ineligible')).toMatchObject({ seosmith: 'unknown', category: 'unknown' })
+    expect(result.find(row => row.url === 'https://independent.example/resource')).toMatchObject({ seosmith: 'unknown', category: 'unknown' })
+  })
+})
+
+describe('source provenance', () => {
+  it('normalizes supplied fields and leaves missing fields explicit', () => {
+    expect(normalizeProvenance({ tool: '  standalone crawler ', notes: '   ', version: undefined })).toEqual({ tool: 'standalone crawler' })
+    const entries = provenanceEntries({ tool: 'standalone crawler' })
+    expect(entries).toHaveLength(PROVENANCE_FIELDS.length)
+    expect(entries.find(entry => entry.key === 'tool')?.value).toBe('standalone crawler')
+    expect(entries.find(entry => entry.key === 'version')?.value).toBeNull()
+    expect(provenanceEntries(null).every(entry => entry.value === null)).toBe(true)
+  })
+
+  it('preserves legacy free-text provenance instead of hiding it', () => {
+    const entries = provenanceEntries('  Recorded before structured metadata; parser differences unknown.  ')
+    expect(entries).toHaveLength(PROVENANCE_FIELDS.length + 1)
+    expect(entries.find(entry => entry.key === 'legacy')).toMatchObject({ label: 'Legacy source note', value: 'Recorded before structured metadata; parser differences unknown.' })
+    expect(entries.filter(entry => entry.key !== 'legacy').every(entry => entry.value === null)).toBe(true)
+    expect(provenanceEntries('   ').some(entry => entry.key === 'legacy')).toBe(false)
+  })
+
+  it('bounds provenance to the receiver metadata limit', () => {
+    expect(() => normalizeProvenance({ notes: 'x'.repeat(60_001) })).toThrow(/60 KiB/)
+    expect(normalizeProvenance({ notes: 'x'.repeat(59_000) }).notes).toHaveLength(59_000)
   })
 })

@@ -38,12 +38,17 @@ test('independent evidence retains bytes and isolates website ownership', async 
   await importText('url,rule,state\n"https://example.com/?a=1,b=2",x,unknown')
   await importText('url,rule,state\n"https://example.com/line\nbreak",x,unknown')
   await importText(await readFile(new URL('../../apps/web/tests/fixtures/s15-controlled.csv', import.meta.url),'utf8'))
+  const realistic = await readFile(new URL('../../apps/web/tests/fixtures/independent-tool-controlled.csv', import.meta.url),'utf8')
+  const realisticReceipt = (await importText(realistic)).rows[0].import_independent_audit
+  assert.equal(realisticReceipt.source_sha256, createHash('sha256').update(realistic).digest('hex'))
+  const realisticDetail = (await db.query('select public.independent_audit_history($1,$2) as detail',[site, realisticReceipt.id])).rows[0].detail
+  assert.equal(realisticDetail.source_text, realistic)
   await db.exec('reset role');
   await db.query(`insert into public.independent_audit_imports(website_id,fqdn,format,source_text,source_sha256,metadata,created_at) select $1,'example.com','controlled-csv-v1','url,rule,state',repeat('a',64),'{}', '2020-01-01'::timestamptz from generate_series(1,101)`,[site]); await identity(owner)
   const page1=(await db.query('select public.independent_audit_history($1,null) as h',[site])).rows[0].h
   assert.equal(page1.items.length,100); assert(page1.next_cursor)
   const page2=(await db.query('select public.independent_audit_history($1,null,$2,$3) as h',[site,page1.next_cursor.before,page1.next_cursor.before_id])).rows[0].h
-  assert.equal(page2.items.length,5); assert.equal(new Set([...page1.items,...page2.items].map(x=>x.id)).size,105)
+  assert.equal(page2.items.length,6); assert.equal(new Set([...page1.items,...page2.items].map(x=>x.id)).size,106)
   await assert.rejects(()=>db.query('select public.independent_audit_history($1,null,now(),null)',[site]),/invalid_cursor/)
   await db.exec('reset role'); await assert.rejects(()=>db.exec(readFileSyncRollback),/independent_evidence_not_empty/); await db.exec('rollback'); await assert.rejects(()=>db.query('delete from public.websites where id=$1',[site]),/foreign key/); await assert.rejects(()=>db.query('delete from auth.users where id=$1',[owner]),/foreign key/)
   await db.query("update public.websites set fqdn='other.example.com' where id=$1",[site]); await identity(owner)
@@ -57,7 +62,7 @@ test('independent evidence retains bytes and isolates website ownership', async 
   await assert.rejects(()=>db.query('select public.delete_independent_audit_evidence($1,$2,$3)',[site,'DELETE INDEPENDENT EVIDENCE',fingerprint]),/evidence_changed_export_again/)
   const fresh=(await db.query('select public.independent_evidence_fingerprint($1) as f',[site])).rows[0].f
   const deleted=(await db.query('select public.delete_independent_audit_evidence($1,$2,$3) as d',[site,'DELETE INDEPENDENT EVIDENCE',fresh])).rows[0].d
-  assert.equal(deleted.comparisons_deleted,1); assert.equal(deleted.imports_deleted,106)
+  assert.equal(deleted.comparisons_deleted,1); assert.equal(deleted.imports_deleted,107)
   await db.exec('reset role'); await db.query('delete from auth.users where id=$1',[owner]);
   assert.equal((await db.query('select count(*)::int as n from public.websites where id=$1',[site])).rows[0].n,0)
   await db.exec('reset role'); await db.exec(await readFile(new URL('../rollbacks/20261124000000_independent_audit_comparisons.sql', import.meta.url),'utf8'))

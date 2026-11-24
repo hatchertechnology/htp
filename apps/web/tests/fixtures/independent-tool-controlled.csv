@@ -1,0 +1,10 @@
+url,rule,state
+https://independent.example/,missing_title,present
+https://independent.example/,missing_description,absent
+https://independent.example/,missing_h1,present
+https://independent.example/present-only,missing_title,present
+https://independent.example/seo-only,missing_title,absent
+https://independent.example/unknown,missing_title,unknown
+https://independent.example/ineligible,missing_title,present
+https://independent.example/resource,missing_description,absent
+"https://independent.example/query?a=1,b=2",missing_title,present
