@@ -101,6 +101,7 @@ pub fn app_with_capabilities(
         .merge(form_inbox::router(form_inbox::FormInboxState {
             reader: websites.forms_reader(),
             enabled: form_inbox::enabled_from_env(),
+            pilot: form_inbox::pilot_from_env(),
         }))
         .merge(websites::router(websites))
         .layer(middleware::from_fn_with_state(capabilities, rollout_gate))
