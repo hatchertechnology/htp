@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { csvCell } from "../utils/forms-csv"
+import { FORMS_INBOX_PAGE_SIZE, formsInboxPath, formsInboxUrl, staticFormsInboxReads, type FormsInboxPage } from '#shared/utils/forms-inbox-client'
 type Field = { key: string; label: string; kind: 'text'|'email'|'telephone'|'multiline'; required: boolean; max_length: number }
 type Host = { id: string; hostname: string; verified_at: string | null }
 type Form = { id: string; form_key: string; name: string; fields: Field[]; active: boolean }
@@ -10,8 +11,17 @@ const props = defineProps<{ websiteId: string; fqdn: string; mode?: 'legacy' | '
 const { $supabase } = useNuxtApp()
 const auth = useAuth()
 const config = useRuntimeConfig()
+// Optional local typing: the build lane owns the declaration and default of these settings.
+const runtime = config.public as { apiBaseUrl?: unknown; staticDashboard?: boolean; rolloutFormsPilot?: boolean }
 const legacy = computed(() => props.mode === 'legacy')
 const eligible = ref(false)
+// Static pilot reads go through the authenticated API. Nitro/SSR builds keep direct Supabase reads.
+const apiReads = computed(() => !legacy.value && eligible.value && staticFormsInboxReads(runtime.staticDashboard, runtime.rolloutFormsPilot))
+// Static builds have no Nitro server, so eligibility is a read of the pilot-scoped API inbox (fails closed).
+async function staticEligible(websiteId: string, token: string) {
+  const page = await $fetch<FormsInboxPage<unknown>>(formsInboxUrl(formsInboxPath(websiteId), { limit: 1, offset: 0 }, runtime.apiBaseUrl), { headers: { Authorization: `Bearer ${token}` }, retry: 0 })
+  return Array.isArray(page?.items)
+}
 let eligibilityGeneration = 0
 watch(() => [auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId, props.mode] as const, async ([owner, anonymous, websiteId, mode]) => {
   const generation = ++eligibilityGeneration
@@ -20,7 +30,10 @@ watch(() => [auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId
   try {
     const token = await auth.accessToken()
     if (!token) return
-    const result = await $fetch<{ eligible: boolean }>('/api/forms/pilot-eligibility', { query: { website_id: websiteId }, headers: { Authorization: `Bearer ${token}` }, retry: 0 })
+    const staticPilot = staticFormsInboxReads(runtime.staticDashboard, runtime.rolloutFormsPilot)
+    const result = staticPilot
+      ? { eligible: await staticEligible(websiteId, token) }
+      : await $fetch<{ eligible: boolean }>('/api/forms/pilot-eligibility', { query: { website_id: websiteId }, headers: { Authorization: `Bearer ${token}` }, retry: 0 })
     if (generation === eligibilityGeneration && auth.user.value?.id === owner && auth.user.value?.is_anonymous !== true && props.websiteId === websiteId && props.mode === 'pilot') eligible.value = result.eligible === true
   } catch { /* Visibility fails closed on authentication and network failures. */ }
 }, { immediate: true })
@@ -34,12 +47,30 @@ const name = ref(''), formKey = ref(''), enabled = ref(false), chosenHosts = ref
 const fields = ref<Field[]>([{key:'name',label:'Name',kind:'text',required:true,max_length:100},{key:'email',label:'Email',kind:'email',required:true,max_length:254}])
 function fail(cause: unknown) { error.value = cause instanceof Error ? cause.message : 'The request failed. Please try again.' }
 function reset() { editing.value=null; name.value=''; formKey.value=''; enabled.value=false; chosenHosts.value=[]; fields.value=[{key:'name',label:'Name',kind:'text',required:true,max_length:100},{key:'email',label:'Email',kind:'email',required:true,max_length:254}] }
+// One authenticated page of the owner inbox API (static pilot reads only).
+async function inboxPage<T>(path: string, offset: number): Promise<FormsInboxPage<T>> {
+  const token = await auth.accessToken()
+  if (!token) throw new Error('Your session has ended. Sign in again.')
+  return $fetch<FormsInboxPage<T>>(formsInboxUrl(path, { limit: FORMS_INBOX_PAGE_SIZE, offset }, runtime.apiBaseUrl), { headers: { Authorization: `Bearer ${token}` }, retry: 0 })
+}
+async function apiForms(): Promise<{ data: Form[] | null; error: unknown }> {
+  try {
+    const all: Form[] = []
+    for (let offset = 0; ; ) {
+      const page = await inboxPage<Form>(formsInboxPath(props.websiteId), offset)
+      all.push(...page.items)
+      if (!page.has_more || !page.items.length) break
+      offset += page.items.length
+    }
+    return { data: all, error: null }
+  } catch (cause) { return { data: null, error: cause } }
+}
 async function load() {
   const owner = auth.user.value?.id
   error.value=''
   const [hostResult, formResult] = await Promise.all([
     $supabase.from('website_form_hosts').select('id,hostname,verified_at').eq('website_id',props.websiteId).order('hostname'),
-    $supabase.from('website_forms').select('id,form_key,name,fields,active').eq('website_id',props.websiteId).order('name'),
+    apiReads.value ? apiForms() : $supabase.from('website_forms').select('id,form_key,name,fields,active').eq('website_id',props.websiteId).order('name'),
   ])
   if (!owner || auth.user.value?.id !== owner) return
   if (hostResult.error || formResult.error) { error.value='Could not load forms. Please try again.'; return }
@@ -83,9 +114,16 @@ async function save() {
 async function inbox(form:Form, more = false) {
   const owner = auth.user.value?.id
   if (!more) { selected.value=form; submissions.value=[] }; error.value=''
-  const {data,error:err}=await $supabase.from('website_form_responses').select('id,received_at,status,values').eq('website_id',props.websiteId).eq('form_id',form.id).order('received_at',{ascending:false}).order('id').range(submissions.value.length,submissions.value.length + 99)
+  const offset = submissions.value.length
+  let data: unknown, err: unknown, hasMore = false
+  if (apiReads.value) {
+    try { const page = await inboxPage<Submission>(formsInboxPath(props.websiteId, form.id), offset); data = page.items; hasMore = page.has_more } catch (cause) { err = cause }
+  } else {
+    const result = await $supabase.from('website_form_responses').select('id,received_at,status,values').eq('website_id',props.websiteId).eq('form_id',form.id).order('received_at',{ascending:false}).order('id').range(offset,offset + 99)
+    data = result.data; err = result.error; hasMore = (result.data ?? []).length === 100
+  }
   if (!owner || auth.user.value?.id !== owner || selected.value?.id !== form.id) return
-  if(err) { fail(err); return }; const rows=(data ?? []) as Submission[]; submissions.value.push(...rows); moreResponses.value=rows.length===100
+  if(err) { fail(err); return }; const rows=(data ?? []) as Submission[]; submissions.value.push(...rows); moreResponses.value=hasMore
   if (!legacy.value) { recipients.value=[]; deliveries.value=[]; return }
   const result=await $supabase.from('website_form_recipients').select('id,email,verified_at,enabled').eq('website_id',props.websiteId).eq('form_id',form.id)
   if (auth.user.value?.id !== owner || selected.value?.id !== form.id) return
@@ -135,7 +173,15 @@ async function exportCsv() {
   busy.value=true; error.value=''
   try {
     const rows: Submission[]=[]
-    for (let offset=0; ; offset+=500) {
+    if (apiReads.value) {
+      for (let offset=0; ; ) {
+        const page = await inboxPage<Submission>(formsInboxPath(props.websiteId, form.id), offset)
+        if (auth.user.value?.id !== owner) return
+        rows.push(...page.items)
+        if (!page.has_more || !page.items.length) break
+        offset += page.items.length
+      }
+    } else for (let offset=0; ; offset+=500) {
       const {data,error:err}=await $supabase.from('website_form_responses').select('id,received_at,status,values').eq('website_id',props.websiteId).eq('form_id',form.id).order('received_at',{ascending:false}).order('id').range(offset,offset+499)
       if (err) throw err
       if (auth.user.value?.id !== owner) return
