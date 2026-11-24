@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createIndependentAuditClient } from '#shared/utils/independent-audit-client'
 import { compareIndependent, parseControlledCsv, CURRENT_SEMANTICS, PROVENANCE_FIELDS, normalizeProvenance, provenanceEntries, summarizeComparison, sourceByteLength } from '#shared/utils/independent-audit'
 useHead({ title: 'Hatch · Independent audit comparisons' })
 const config = useRuntimeConfig().public
@@ -6,6 +7,7 @@ const readOnly = config.rolloutComparisonsReadOnly === true
 const canWrite = config.rolloutComparisons === true && !readOnly
 const comparisonEnabled = canWrite || readOnly
 const ws = useWorkspace(), supabase = useNuxtApp().$supabase
+const independent = createIndependentAuditClient(config, ws.request, (name, args) => supabase.rpc(name, args))
 const snapshots = ref<any[]>([]), imports = ref<any[]>([]), selected = ref<any>(null), runs = ref<any[]>([]), run = ref(''), report = ref<any>(null)
 const importCursor = ref<any>(null), snapshotCursor = ref<any>(null), runCursor = ref<any>(null)
 const semantics = ref(CURRENT_SEMANTICS), deleteConfirmation = ref(''), exportFingerprint = ref('')
@@ -33,9 +35,9 @@ async function load() {
   if (!comparisonEnabled || !site || !ws.user.value) return
   try {
     const [history, audits, comparisons] = await Promise.all([
-      supabase.rpc('independent_audit_history', { p_website_id: site, p_id: null }),
-      canWrite ? ws.request<any>(`/api/websites/${site}/seo/audits`) : Promise.resolve({ items: [], next_cursor: null }),
-      supabase.rpc('independent_comparison_history', { p_website_id: site }),
+      independent.history(site),
+      canWrite ? ws.request<any>(independent.auditPath(site)) : Promise.resolve({ items: [], next_cursor: null }),
+      independent.comparisons(site),
     ])
     if (gen !== generation) return
     if (history.error) throw history.error
@@ -51,11 +53,10 @@ async function more(kind: 'imports' | 'snapshots' | 'runs') {
   if (!cursor) return
   try {
     if (kind === 'runs') {
-      const result = await ws.request<any>(`/api/websites/${site}/seo/audits`, { query: cursor })
+      const result = await ws.request<any>(independent.auditPath(site), { query: cursor })
       if (gen === generation) { runs.value.push(...result.items); runCursor.value = result.next_cursor }
     } else {
-      const fn = kind === 'imports' ? 'independent_audit_history' : 'independent_comparison_history'
-      const result = await supabase.rpc(fn, { p_website_id: site, ...(kind === 'imports' ? { p_id: null } : {}), p_before: cursor.before, p_before_id: cursor.before_id })
+      const result = await (kind === 'imports' ? independent.history(site, null, cursor) : independent.comparisons(site, cursor))
       if (result.error) throw result.error
       if (gen !== generation) return
       if (kind === 'imports') { imports.value.push(...result.data.items); importCursor.value = result.data.next_cursor }
@@ -67,7 +68,7 @@ async function choose(id: string) {
   const gen = generation, selection = ++selectionGeneration, site = ws.selectedId.value
   selected.value = null; run.value = ''; report.value = null; reportMeta.value = null; asserted.value = false; semantics.value = CURRENT_SEMANTICS
   try {
-    const result = await supabase.rpc('independent_audit_history', { p_website_id: site, p_id: id })
+    const result = await independent.history(site, id)
     if (result.error) throw result.error
     if (gen === generation && selection === selectionGeneration) selected.value = result.data
   } catch (cause) { if (gen === generation && selection === selectionGeneration) { reportMeta.value = null; error.value = failureMessage(cause) } }
@@ -76,7 +77,7 @@ async function chooseRun() {
   const gen = generation, site = ws.selectedId.value, id = run.value; report.value = null; reportMeta.value = null; asserted.value = false; semantics.value = CURRENT_SEMANTICS
   if (!id) return
   try {
-    const detail = await ws.request<any>(`/api/websites/${site}/seo/audits/${id}`)
+    const detail = await ws.request<any>(independent.auditPath(site, id))
     if (gen === generation && id === run.value) { report.value = detail.report; reportMeta.value = { fqdn: detail.fqdn ?? ws.selected.value?.fqdn, sha256: detail.sha256 } }
   } catch (cause) { if (gen === generation && id === run.value) error.value = failureMessage(cause) }
 }
@@ -84,7 +85,7 @@ async function saveComparison() {
   if (!canWrite || !selected.value || !run.value || !report.value || busy.value) return
   const gen = generation; busy.value = true
   try {
-    const result = await supabase.rpc('save_independent_comparison', { p_website_id: ws.selectedId.value, p_import_id: selected.value.id, p_delivery_id: run.value, p_asserted: asserted.value })
+    const result = await independent.save(ws.selectedId.value, selected.value.id, run.value, asserted.value)
     if (result.error) throw result.error
     if (gen === generation) { snapshots.value = [result.data, ...snapshots.value]; notice.value = 'Comparison saved.' }
   } catch (cause) { if (gen === generation) error.value = failureMessage(cause) }
@@ -94,7 +95,7 @@ async function openComparison(item: any) {
   const gen = generation, selection = ++selectionGeneration, site = ws.selectedId.value
   selected.value = null; report.value = null; reportMeta.value = null; asserted.value = false; error.value = ''
   try {
-    const result = await supabase.rpc('independent_comparison_detail', { p_website_id: site, p_comparison_id: item.id })
+    const result = await independent.comparison(site, item.id)
     if (result.error) throw result.error
     if (gen !== generation || selection !== selectionGeneration) return
     if (!result.data) throw new Error('Saved comparison is unavailable.')
@@ -109,24 +110,23 @@ async function exportEvidence() {
   if (busy.value) return
   const site = ws.selectedId.value, gen = generation; busy.value = true; error.value = ''
   try {
-    const first = await supabase.rpc('independent_evidence_fingerprint', { p_website_id: site })
+    const first = await independent.fingerprint(site)
     if (first.error) throw first.error
     const sources: any[] = [], comparisons: any[] = []
     for (const kind of ['sources', 'comparisons']) {
       let cursor: any = null
       do {
-        const fn = kind === 'sources' ? 'independent_audit_history' : 'independent_comparison_history'
-        const page = await supabase.rpc(fn, { p_website_id: site, ...(kind === 'sources' ? { p_id: null } : {}), ...(cursor ? { p_before: cursor.before, p_before_id: cursor.before_id } : {}) })
+        const page = await (kind === 'sources' ? independent.history(site, null, cursor) : independent.comparisons(site, cursor))
         if (page.error) throw page.error
         for (const item of page.data.items) {
-          const detail = await supabase.rpc(kind === 'sources' ? 'independent_audit_history' : 'independent_comparison_detail', kind === 'sources' ? { p_website_id: site, p_id: item.id } : { p_website_id: site, p_comparison_id: item.id })
+          const detail = await (kind === 'sources' ? independent.history(site, item.id) : independent.comparison(site, item.id))
           if (detail.error || !detail.data) throw detail.error || new Error('Evidence changed during export; try again.')
           ;(kind === 'sources' ? sources : comparisons).push(detail.data)
         }
         cursor = page.data.next_cursor
       } while (cursor)
     }
-    const last = await supabase.rpc('independent_evidence_fingerprint', { p_website_id: site })
+    const last = await independent.fingerprint(site)
     if (last.error) throw last.error
     if (first.data !== last.data) throw new Error('Evidence changed during export; try again.')
     if (gen !== generation) return
@@ -142,7 +142,7 @@ async function deleteEvidence() {
   if (!window.confirm('Permanently delete all independent imports and saved comparisons for this website, including prior hostnames? Export and verify them first. SEOsmith reports remain.')) return
   const gen = generation, site = ws.selectedId.value; busy.value = true; error.value = ''
   try {
-    const result = await supabase.rpc('delete_independent_audit_evidence', { p_website_id: site, p_confirmation: deleteConfirmation.value, p_export_fingerprint: exportFingerprint.value })
+    const result = await independent.remove(site, deleteConfirmation.value, exportFingerprint.value)
     if (result.error) throw result.error
     if (gen !== generation) return
     deleteConfirmation.value = ''; exportFingerprint.value = ''; await load(); notice.value = `Deleted ${result.data.imports_deleted} imports and ${result.data.comparisons_deleted} comparisons.`
@@ -165,7 +165,7 @@ async function save() {
   const site = ws.selectedId.value, gen = generation; busy.value = true; error.value = ''; notice.value = ''
   try {
     parseControlledCsv(source.value)
-    const result = await supabase.rpc('import_independent_audit', { p_website_id: site, p_format: 'controlled-csv-v1', p_source: source.value, p_metadata: { filename: sourceName.value, provenance: normalizeProvenance(provenance) } })
+    const result = await independent.import(site, source.value, { filename: sourceName.value, provenance: normalizeProvenance(provenance) })
     if (result.error) throw result.error
     if (gen !== generation) return
     source.value = ''; sourceName.value = ''; for (const field of PROVENANCE_FIELDS) provenance[field.key] = ''; await load(); notice.value = 'Source saved.'

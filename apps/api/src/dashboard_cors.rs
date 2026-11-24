@@ -122,6 +122,22 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
     }
     let (site, resource) = rest.split_once('/')?;
     uuid::Uuid::parse_str(site).ok()?;
+    if site.len() == 36 {
+        match resource {
+            "independent-audits" | "independent-comparisons" => return Some("GET, POST"),
+            "independent-evidence" => return Some("DELETE"),
+            "independent-evidence/fingerprint" => return Some("GET"),
+            _ => {}
+        }
+        if let Some((kind, item)) = resource.split_once('/') {
+            if matches!(kind, "independent-audits" | "independent-comparisons")
+                && item.len() == 36
+                && uuid::Uuid::parse_str(item).is_ok()
+            {
+                return Some("GET");
+            }
+        }
+    }
     match resource {
         "search/dataset" | "search/crawl-evidence" => return (site.len() == 36).then_some("POST"),
         "seo/audits/lifecycle" | "seo/audits/url-lifecycle" => {
@@ -1038,5 +1054,51 @@ mod tests {
             .unwrap();
         assert!(header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
         assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+    #[tokio::test]
+    async fn independent_cors_exact_method_path_matrix() {
+        let id = "00000000-0000-0000-0000-000000000001";
+        for (resource, methods) in [
+            ("independent-audits".to_owned(), "GET, POST"),
+            (format!("independent-audits/{id}"), "GET"),
+            ("independent-comparisons".to_owned(), "GET, POST"),
+            (format!("independent-comparisons/{id}"), "GET"),
+            ("independent-evidence/fingerprint".to_owned(), "GET"),
+            ("independent-evidence".to_owned(), "DELETE"),
+        ] {
+            let path = format!("/websites/{id}/{resource}");
+            assert_eq!(dashboard_methods(&path), Some(methods));
+            for method in ["GET", "POST", "DELETE", "PUT", "PATCH"] {
+                let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                    .oneshot(preflight(&path, ORIGIN, method))
+                    .await
+                    .unwrap();
+                if methods.split(", ").any(|allowed| allowed == method) {
+                    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+                    assert_eq!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                        Some(ORIGIN)
+                    );
+                } else {
+                    assert!(header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+                }
+                assert!(
+                    header_value(&response, header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none()
+                );
+            }
+            let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                .oneshot(preflight(&path, "https://evil.example", "GET"))
+                .await
+                .unwrap();
+            assert!(header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+            for suffix in ["/", "/extra", "/rpc/import_independent_audit"] {
+                assert_eq!(dashboard_methods(&format!("{path}{suffix}")), None);
+            }
+        }
+        assert_eq!(dashboard_methods("/websites/no/independent-audits"), None);
+        assert_eq!(
+            dashboard_methods(&format!("/websites/{id}/rpc/import_independent_audit")),
+            None
+        );
     }
 }
