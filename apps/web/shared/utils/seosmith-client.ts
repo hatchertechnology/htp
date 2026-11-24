@@ -1,8 +1,8 @@
 // Browser-side routing for the saved Seosmith reads: the run history list and one run's detail.
 // Default (staticDashboard false): paths are returned unchanged and the same-origin Nuxt proxy serves them.
 // Static (staticDashboard true): the HTP API origin is called directly with the owner's bearer.
-// Import has a separate exact POST mapping. Lifecycle, url-lifecycle, work and bounded-detail
-// /dashboard calls keep their existing paths; they are not part of the static transport.
+// Import has a separate exact POST mapping. Gated lifecycle/work transport is handled
+// by the workspace gated-evidence client. Bounded /dashboard detail remains separate.
 import { websiteApiOrigin } from './websites-client'
 
 const UUID = '[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'

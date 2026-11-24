@@ -220,3 +220,60 @@ async fn limit_mcp_responses(
     });
     axum::response::Response::from_parts(parts, axum::body::Body::from_stream(stream))
 }
+
+#[cfg(test)]
+mod gated_evidence_tests {
+    use super::*;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+        routing::any,
+    };
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn evidence_routes_require_their_authoritative_capability() {
+        let id = "00000000-0000-0000-0000-000000000001";
+        for (resource, methods, capability) in [
+            ("search/dataset".to_owned(), vec!["POST"], 0),
+            ("search/crawl-evidence".to_owned(), vec!["POST"], 0),
+            ("seo/audits/lifecycle".to_owned(), vec!["GET"], 1),
+            ("seo/audits/url-lifecycle".to_owned(), vec!["GET"], 1),
+            (format!("seo/audits/{id}/work"), vec!["GET", "POST"], 2),
+            (format!("seo/work/{id}/attempts"), vec!["POST"], 2),
+        ] {
+            let path = format!("/websites/{id}/{resource}");
+            for method in methods {
+                for enabled in [None, Some(0), Some(1), Some(2)] {
+                    let caps = RolloutCapabilities {
+                        search_evidence: enabled == Some(0),
+                        lifecycle: enabled == Some(1),
+                        remediation: enabled == Some(2),
+                    };
+                    let app = Router::new()
+                        .route(&path, any(|| async { "synthetic" }))
+                        .layer(middleware::from_fn_with_state(caps, rollout_gate));
+                    let response = app
+                        .oneshot(
+                            Request::builder()
+                                .uri(&path)
+                                .method(method)
+                                .body(Body::empty())
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        response.status(),
+                        if enabled == Some(capability) {
+                            StatusCode::OK
+                        } else {
+                            StatusCode::SERVICE_UNAVAILABLE
+                        },
+                        "{method} {path}"
+                    );
+                }
+            }
+        }
+    }
+}
