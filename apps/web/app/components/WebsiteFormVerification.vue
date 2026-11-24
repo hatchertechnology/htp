@@ -4,15 +4,17 @@ const { $supabase } = useNuxtApp()
 const auth = useAuth()
 const eligible = ref(false), expanded = ref(false), busy = ref(false), error = ref(''), notice = ref('')
 const creationUncertain = ref(false)
+const completed = ref(false), verificationUncertain = ref(false)
 const challenge = ref<{ host_id: string; txt_name: string; txt_value: string; expires: number } | null>(null)
 let generation = 0
-function markerKey(owner: string, site: string) { return `forms-verification-pending:${owner}:${site}` }
+function markerKey(owner: string, site: string) { return `forms-verification-pending:${owner}:${site}:${props.fqdn}` }
 watch(() => [auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId, props.fqdn] as const, async ([owner, anonymous, websiteId]) => {
   const current = ++generation
-  eligible.value = false; expanded.value = false; challenge.value = null; creationUncertain.value = false; busy.value = false; error.value = ''; notice.value = ''
+  eligible.value = false; expanded.value = false; challenge.value = null; creationUncertain.value = false; completed.value = false; verificationUncertain.value = false; busy.value = false; error.value = ''; notice.value = ''
   if (!owner || anonymous !== false) return
   try {
-    creationUncertain.value = localStorage.getItem(markerKey(owner, websiteId)) !== null
+    const marker = localStorage.getItem(markerKey(owner, websiteId))
+    completed.value = marker === 'verified'; creationUncertain.value = marker !== null && marker !== 'verified'
     const token = await auth.accessToken()
     if (!token) return
     const result = await $fetch<{ eligible: boolean }>('/api/forms/pilot-eligibility', { query: { website_id: websiteId }, headers: { Authorization: `Bearer ${token}` }, retry: 0 })
@@ -34,7 +36,7 @@ async function begin() {
 }
 async function verify() {
   const item = challenge.value
-  if (!eligible.value || busy.value || !item) return
+  if (!eligible.value || busy.value || !item || verificationUncertain.value) return
   if (Date.now() >= item.expires) { error.value = 'This challenge may have expired. Contact support before requesting a replacement.'; challenge.value = null; creationUncertain.value = true; return }
   const current = generation
   busy.value = true; error.value = ''; notice.value = ''
@@ -42,8 +44,8 @@ async function verify() {
     const token = item.txt_value.slice('htp-verification='.length)
     const { data, error: err } = await $supabase.functions.invoke('form-verify', { body: { host_id: item.host_id, token } })
     if (err || !data?.ok) throw new Error('verification failed')
-    if (current === generation) { localStorage.removeItem(markerKey(auth.user.value!.id, props.websiteId)); challenge.value = null; notice.value = 'Domain verified.' }
-  } catch { if (current === generation) error.value = 'Could not verify the DNS record yet. Check the value and try again. Challenges expire after 24 hours.' }
+    if (current === generation) { localStorage.setItem(markerKey(auth.user.value!.id, props.websiteId), 'verified'); challenge.value = null; completed.value = true; notice.value = 'Domain verified.' }
+  } catch { if (current === generation) { verificationUncertain.value = true; error.value = 'Verification may have completed. Contact support to check its status before trying again.' } }
   finally { if (current === generation) busy.value = false }
 }
 </script>
@@ -53,9 +55,10 @@ async function verify() {
     <UButton color="neutral" variant="ghost" @click="expanded = !expanded">{{ expanded ? 'Close domain verification' : 'Verify domain' }}</UButton>
     <div v-show="expanded" class="verification-content">
       <h3>Verify {{ fqdn }}</h3>
+      <p v-if="completed && !notice" role="status">Domain verified in this browser.</p>
       <p v-if="creationUncertain && !error" role="alert">A previous challenge may still be active. Contact support before requesting a replacement.</p><p v-if="error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
-      <template v-if="!challenge && !creationUncertain"><p>Create a DNS challenge for this exact domain. Creating one replaces any previous challenge.</p><UButton :loading="busy" :disabled="busy" @click="begin">Create DNS challenge</UButton></template>
-      <div v-else-if="challenge"><p>Add this TXT record to your DNS, then verify it. Keep this page open while publishing; the challenge expires after 24 hours.</p><p>Name: <code>{{ challenge.txt_name }}</code></p><p>Value: <code>{{ challenge.txt_value }}</code></p><UButton :loading="busy" :disabled="busy" @click="verify">Verify DNS record</UButton></div>
+      <template v-if="!challenge && !creationUncertain && !completed"><p>Create a DNS challenge for this exact domain. An active challenge or verified domain cannot be replaced.</p><UButton :loading="busy" :disabled="busy" @click="begin">Create DNS challenge</UButton></template>
+      <div v-else-if="challenge"><p>Add this TXT record to your DNS, then verify it. Keep this page open while publishing; the challenge expires after 24 hours.</p><p>Name: <code>{{ challenge.txt_name }}</code></p><p>Value: <code>{{ challenge.txt_value }}</code></p><UButton :loading="busy" :disabled="busy || verificationUncertain" @click="verify">Verify DNS record</UButton></div>
     </div>
   </section>
 </template>
