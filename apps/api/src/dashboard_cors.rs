@@ -1,6 +1,6 @@
 //! Opt-in, exact-origin CORS for the static dashboard's website API routes.
 //!
-//! Covers explicitly listed website, forms, and provider connection routes.
+//! Covers explicitly listed website, repository, forms, and provider connection routes.
 //! Requests from any origin other than the single configured origin receive no
 //! CORS headers. Preflights are answered before authentication runs, so this
 //! layer must sit outside the auth layer. Credentials are never allowed.
@@ -120,6 +120,8 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
     let (site, resource) = rest.split_once('/')?;
     uuid::Uuid::parse_str(site).ok()?;
     match resource {
+        "repository" => return Some("GET, PUT"),
+        "repository/history" | "repository/issues" => return Some("GET"),
         "forms" => return Some("GET, POST"),
         "forms/pilot-eligibility" | "forms/hosts" | "forms/origins" => return Some("GET"),
         "forms/host-verifications" => return Some("POST"),
@@ -253,6 +255,12 @@ mod tests {
                     .delete(handler.clone()),
             )
             .route("/websites/{id}/seo/audits", get(handler.clone()))
+            .route(
+                "/websites/{id}/repository",
+                get(handler.clone()).put(handler.clone()),
+            )
+            .route("/websites/{id}/repository/history", get(handler.clone()))
+            .route("/websites/{id}/repository/issues", get(handler.clone()))
             .route("/forms/submit", axum::routing::post(handler.clone()))
             .route(
                 "/websites/{id}/analytics/property",
@@ -500,6 +508,57 @@ mod tests {
             "/providers/google/connection/extra",
         ] {
             assert_eq!(dashboard_methods(path), None);
+        }
+    }
+
+    #[tokio::test]
+    async fn repository_cors_matches_implemented_methods_and_preserves_auth() {
+        let base = "/websites/00000000-0000-0000-0000-000000000001/repository";
+        for (suffix, methods) in [("", "GET, PUT"), ("/history", "GET"), ("/issues", "GET")] {
+            let path = format!("{base}{suffix}");
+            assert_eq!(dashboard_methods(&path), Some(methods));
+            for method in ["GET", "PUT", "POST", "PATCH", "DELETE"] {
+                let allowed = methods.split(", ").any(|m| m == method);
+                for origin in [ORIGIN, "https://evil.example"] {
+                    let calls = Arc::new(AtomicUsize::new(0));
+                    let response = app(calls.clone(), cors())
+                        .oneshot(preflight(&path, origin, method))
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_METHODS),
+                        (allowed && origin == ORIGIN).then_some(methods)
+                    );
+                    assert_eq!(calls.load(Ordering::SeqCst), 0);
+                    for auth in [false, true] {
+                        let response = app(calls.clone(), cors())
+                            .oneshot(actual(method, &path, Some(origin), auth))
+                            .await
+                            .unwrap();
+                        assert_eq!(
+                            header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                            (allowed && origin == ORIGIN).then_some(ORIGIN)
+                        );
+                        assert!(
+                            header_value(&response, header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
+                                .is_none()
+                        );
+                        if !auth {
+                            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+                        } else if allowed {
+                            assert_eq!(response.status(), StatusCode::OK);
+                        }
+                    }
+                }
+            }
+        }
+        for path in [
+            format!("{base}/"),
+            format!("{base}/issues/extra"),
+            format!("{base}/other"),
+            "/websites/invalid/repository".into(),
+        ] {
+            assert_eq!(dashboard_methods(&path), None);
         }
     }
 

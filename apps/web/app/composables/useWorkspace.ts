@@ -1,3 +1,4 @@
+import { resolveWorkspaceOwnerPath } from '#shared/utils/workspace-owner-client'
 import { resolveProviderConnectionPath } from '#shared/utils/provider-connection-client'
 import type { Website } from '../../shared/types/websites'
 
@@ -22,7 +23,10 @@ export function useWorkspace() {
     const user = auth.user.value?.id
     const token = await auth.accessToken()
     if (!user || !token || generation !== sessionGeneration.value || auth.user.value?.id !== user) throw new Error('Your session has ended. Sign in again.')
-    return $fetch<T>(resolveProviderConnectionPath(url, options.method ?? 'GET', runtime.staticDashboard === true, runtime.apiBaseUrl), { ...options, headers: { Authorization: `Bearer ${token}` }, retry: 0 })
+    const method = options.method ?? 'GET'
+    const ownerPath = resolveWorkspaceOwnerPath(url, method, runtime.staticDashboard === true, runtime.apiBaseUrl)
+    const path = resolveProviderConnectionPath(ownerPath, method, runtime.staticDashboard === true, runtime.apiBaseUrl)
+    return $fetch<T>(path, { ...options, headers: { Authorization: `Bearer ${token}` }, retry: 0 })
   }
   async function load() {
     if (!auth.user.value || loading.value) return
