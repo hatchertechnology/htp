@@ -11,3 +11,7 @@ Run `npm run fixture:forms:serve`, then `npm run fixture:forms:check` in another
 # API-only cross-origin browser fixture
 
 After installing web dependencies and Playwright Chromium, run `cargo test --locked -p htp-api --lib form_ingress::tests::browser_cors_against_actual_api -- --ignored --nocapture` from the repository root. This starts the actual API handler and a mocked RPC server on loopback; the Node fixture provides disposable loopback TLS and synthetic browser host mapping. OpenSSL is required. It tests preflight and browser-visible responses, not deployed Fly identity or real PostgREST.
+
+# Static pilot owner workflow fixture
+
+With `npm run fixture:forms:serve` running, run `node tests/fixtures/check-forms-static-owner.mjs`. It mounts the static (`static=1`) pilot path with synthetic data and a stand-in owner API. It proves eligible and denied pilot behaviour, begin and confirm with the issued token, create and update saves, origin and host reads, and the unknown and refused outcome handling. It fails if any Supabase table, RPC or Edge Function runs, or if any request leaves the fixture origin.
