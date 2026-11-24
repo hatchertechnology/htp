@@ -1,0 +1,176 @@
+{
+  "status": "candidate-not-frozen",
+  "version": "s14-url-candidate-1",
+  "seed": "https://example.com/",
+  "cases": [
+    {
+      "stored": "https://example.com/a",
+      "expected": "in_scope"
+    },
+    {
+      "stored": "http://example.com/a",
+      "expected": "in_scope"
+    },
+    {
+      "stored": "https://example.com:8443/a",
+      "expected": "out_of_scope"
+    },
+    {
+      "stored": "https://outside.example:8443/a",
+      "expected": "out_of_scope"
+    },
+    {
+      "stored": "https://xn--bcher-kva.example/a",
+      "expected": "reject"
+    },
+    {
+      "stored": "http://127.0.0.1/",
+      "expected": "out_of_scope"
+    },
+    {
+      "stored": "http://[2001:db8::1]:8080/a",
+      "expected": "out_of_scope"
+    },
+    {
+      "stored": "http://[::ffff:c000:201]/",
+      "expected": "out_of_scope"
+    },
+    {
+      "stored": "https://example.com./",
+      "expected": "out_of_scope"
+    },
+    {
+      "stored": "HTTPS://EXAMPLE.COM/a",
+      "expected": "reject_noncanonical"
+    },
+    {
+      "stored": "https://%65xample.com/a",
+      "expected": "reject_noncanonical"
+    },
+    {
+      "stored": "http://127.1/",
+      "expected": "reject_noncanonical"
+    },
+    {
+      "stored": "https://example.com:443/",
+      "expected": "reject_noncanonical"
+    },
+    {
+      "stored": "https://user:pass@example.com/a",
+      "expected": "reject"
+    },
+    {
+      "stored": "https://example.com\\@evil.example/x",
+      "expected": "reject_noncanonical"
+    },
+    {
+      "stored": "https://outside.example:00080/a",
+      "expected": "reject_noncanonical"
+    },
+    {
+      "stored": "https://outside.example:65536/a",
+      "expected": "reject"
+    },
+    {
+      "stored": "https://[2001:db8::zz]/",
+      "expected": "reject"
+    },
+    {
+      "stored": "https://xn--a.example/",
+      "expected": "reject"
+    },
+    {
+      "stored": "http://example.123/",
+      "expected": "reject"
+    },
+    {
+      "stored": "https://bücher.example/",
+      "expected": "reject"
+    },
+    {
+      "stored": "http://[::ffff:192.0.2.1]/",
+      "expected": "reject_noncanonical"
+    },
+    {
+      "stored": "https://outside.example:08080/a",
+      "expected": "reject_noncanonical"
+    },
+    {
+      "stored": "https://example.com/a#part",
+      "expected": "reject"
+    },
+    {
+      "stored": "https://example.com/a#",
+      "expected": "reject"
+    },
+    {
+      "stored": "https://example.com/a?b=2&a=1",
+      "expected": "in_scope"
+    },
+    {
+      "stored": "https://example.com/a%2fb",
+      "expected": "in_scope"
+    },
+    {
+      "stored": "https://example.com/a/../b",
+      "expected": "reject_noncanonical"
+    },
+    {
+      "stored": "https://example.com",
+      "expected": "reject_noncanonical"
+    },
+    {
+      "stored": "ftp://example.com/a",
+      "expected": "reject"
+    },
+    {
+      "stored": "https://example.com:0/a",
+      "expected": "out_of_scope"
+    },
+    {
+      "stored": "https://example.com:65535/a",
+      "expected": "out_of_scope"
+    },
+    {
+      "stored": "https://example.com.evil/a",
+      "expected": "out_of_scope"
+    },
+    {
+      "stored": "https://example.com/@outside.example/path",
+      "expected": "in_scope"
+    },
+    {
+      "stored": " https://example.com/a",
+      "expected": "reject_noncanonical"
+    },
+    {
+      "stored": "https://example.com/é",
+      "expected": "reject_noncanonical"
+    },
+    {
+      "stored": "https://example.com/%C3%A9",
+      "expected": "in_scope"
+    },
+    {
+      "stored": "https://XN--a.example/",
+      "expected": "reject"
+    },
+    {
+      "stored": "https://xn--.example/",
+      "expected": "reject"
+    },
+    {
+      "stored": "https://xn--example-.example/",
+      "expected": "reject"
+    },
+    {
+      "stored": "https://xn--ls8h.example/",
+      "expected": "reject"
+    },
+    {
+      "stored": "https://%78n--a.example/",
+      "expected": "reject"
+    }
+  ],
+  "revision": 2
+}
