@@ -6,7 +6,7 @@ const url=query=>new URL('/tests/fixtures/forms.html'+query,base).href
 try {
  for(const viewport of [{width:1280,height:800},{width:390,height:844}]) {
   for(const scenario of ['no','other-site','foreign','error']) {
-   const page=await browser.newPage({viewport});await page.goto(url(`?mode=pilot&eligible=${scenario}`));await page.waitForTimeout(100)
+   const page=await browser.newPage({viewport});await page.goto(url(`?mode=pilot&eligible=${scenario}`));await page.waitForFunction(()=>Boolean(globalThis.formFixture))
    assert.equal(await page.getByRole('button',{name:'Forms',exact:true}).count(),0,`${scenario} must stay hidden`)
    assert.deepEqual(await page.evaluate(()=>globalThis.formFixture.queries),[]);await page.close()
   }
