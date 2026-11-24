@@ -20,7 +20,8 @@ Validation commands:
 
 ```sh
 node scripts/check-plugin-contract.mjs
-node --test scripts/plugin-contract.test.mjs
+node scripts/check-audit-read-contract.mjs
+node --test scripts/plugin-contract.test.mjs scripts/plugin-contract-versioning.test.mjs
 ```
 
 The default checker checks golden fixture consistency. `--results` requires an
@@ -100,3 +101,23 @@ exact-head reviews, 256MiB/concurrency/failure evidence, deployed endpoint tests
 and schema discovery remain required. Three host source/readiness companions
 must follow canonical merge; none is supplied here. Existing v1/accepted1.1 host
 pins remain historical evidence. Full #34 and runtime gates are not closed.
+
+
+## Audit read profile1.3 definition — producer gated
+
+The additive [1.3 profile](v1.3/README.md) defines owner-scoped stored reads of
+audit events and provider operational episodes with a bounded `limit` and paired
+persisted `before`/`before_id` cursor. Both require discovery: a missing tool is
+unsupported, never an empty history. `availability:producer_unavailable` is
+explicit while the H15 producer gates are disabled and is never a zero count or
+proof that no events or episodes exist; both reads create no collection work.
+The additive operations required a new minor profile, so the frozen 1.0.0
+inventory and the accepted1.1/1.2 bytes and pins are unchanged; the accepted1.2
+source is archived under `v1.3/historical-v1.2-source/` and current source uses
+the1.3 lock.
+
+Offline semantic/mutation tests validate synthetic normalized observations only.
+They do not prove provenance, actual no-collection effects, live auth, deployed
+producer support or host parity. H15 producer/processor activation, deployment
+and all three current-source readiness companions remain gated. Full #34 and
+runtime gates are not closed.
