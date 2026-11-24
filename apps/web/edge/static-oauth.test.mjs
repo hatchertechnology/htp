@@ -1,4 +1,4 @@
-import { test } from 'node:test'
+import { test } from 'vitest'
 import assert from 'node:assert/strict'
 import { handle } from './static-oauth.mjs'
 const origin = 'https://htp.hatchtech.dev'

@@ -1,4 +1,4 @@
-// Run with: node edge/static-oauth.wrangler.test.mjs /path/to/wrangler/bin/wrangler.js
+// Run with: node edge/static-oauth.wrangler-check.mjs /path/to/wrangler/bin/wrangler.js
 // Uses a temporary HOME/cwd/config: never reads workspace .env/.dev.vars or CLI credentials.
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'

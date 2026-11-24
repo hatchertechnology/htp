@@ -48,9 +48,13 @@ external browser/platform logging settings outside this source candidate.
 Local checks (synthetic values only):
 
 ```sh
-node --test apps/web/edge/static-oauth.test.mjs
-node apps/web/edge/static-oauth.wrangler.test.mjs /path/to/wrangler/bin/wrangler.js
+cd apps/web
+npm test -- edge/static-oauth.test.mjs
+node edge/static-oauth.wrangler-check.mjs /path/to/wrangler/bin/wrangler.js
 ```
+
+The unit suite is included in normal `npm test` Vitest discovery. The standalone
+Wrangler CLI check is opt-in and is not a discovered test. Use Wrangler 4.168.0.
 
 The Wrangler check uses temporary HOME/config/assets, local mode, no metrics and
 no dev vars. Four deliberately colliding OAuth assets prove worker-first routing;
