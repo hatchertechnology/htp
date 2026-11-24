@@ -9,6 +9,11 @@ export function resolveWorkspaceOwnerPath(path: string, method: unknown, staticD
   if (method === 'GET' && /^\/api\/websites(?:\?(?:limit|offset)=\d+(?:&(?:limit|offset)=\d+)*)?$/.test(path)) {
     return `${websiteApiOrigin(apiBaseUrl)}${path.slice(4)}`
   }
+  // Saved Search reads are pure owner proxies. Evidence routes retain an
+  // additional Nitro rollout gate; live inspect needs a server Google bearer.
+  if (method === 'POST' && /^\/api\/websites\/[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\/search\/(?:properties|dashboard|inspection-history)$/.test(path)) {
+    return `${websiteApiOrigin(apiBaseUrl)}${path.slice(4)}`
+  }
   const match = REPOSITORY.exec(path)
   if (!match || !(method === 'GET' || (method === 'PUT' && !match[2]))) return path
   return `${websiteApiOrigin(apiBaseUrl)}${match[1]}${match[2] === 'issues' ? '/issues' : ''}`

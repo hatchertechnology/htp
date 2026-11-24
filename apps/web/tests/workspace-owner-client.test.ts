@@ -10,6 +10,7 @@ it('maps only implemented owner operations and preserves legacy paths', () => {
   for (const [path, method, target] of [
     ['/api/websites?limit=100', 'GET', '/websites?limit=100'],
     ['/api/websites?limit=50&offset=100', 'GET', '/websites?limit=50&offset=100'],
+    ...['properties', 'dashboard', 'inspection-history'].map(action => [`/api/websites/${id}/search/${action}`, 'POST', `/websites/${id}/search/${action}`]),
     [repository, 'GET', `/websites/${id}/repository`],
     [repository, 'PUT', `/websites/${id}/repository`],
     [`${repository}/history`, 'GET', `/websites/${id}/repository`],
@@ -20,6 +21,9 @@ it('maps only implemented owner operations and preserves legacy paths', () => {
     expect(() => resolveWorkspaceOwnerPath(path!, method, true, 'https://api.test/path')).toThrow()
   }
   for (const [path, method] of [
+    ...['inspect', 'dataset', 'crawl-evidence', 'unknown', 'dashboard/', 'dashboard/extra', 'dashboard?x=1'].map(action => [`/api/websites/${id}/search/${action}`, 'POST']),
+    ...['GET', 'PUT', 'DELETE', 'post', undefined].map(method => [`/api/websites/${id}/search/dashboard`, method]),
+    ['/api/websites/invalid/search/dashboard', 'POST'],
     [repository, 'POST'], [`${repository}/issues`, 'PUT'], [`${repository}/history`, 'PUT'],
     [`${repository}/other`, 'GET'], [`${repository}/issues/extra`, 'GET'],
     ['/api/websites/invalid/repository', 'GET'], ['/api/websites?target=https://evil.test', 'GET'],
@@ -43,6 +47,7 @@ it.each([true, false])('workspace forwards owner payloads, query, signal and res
     expect(ws.selectedId.value).toBe(id)
     const signal = new AbortController().signal
     for (const [path, options] of [
+      ...['properties', 'dashboard', 'inspection-history'].map(action => [`/api/websites/${id}/search/${action}`, {method: 'POST', body: {site_url: 'sc-domain:example.test', start_date: '2026-10-01', end_date: '2026-10-30', url: 'https://example.test/', before_id: 12}, signal}]),
       [repository, {query: {start_date: '2026-10-01', end_date: '2026-10-30', before_id: 12}, signal}],
       [`${repository}/issues`, {query: {state: 'closed', page: 2}, signal}],
       ...[true, false].map(enabled => [repository, {method: 'PUT', body: {repository_url: enabled ? 'https://github.com/example/site' : null, branch: null, enabled}}]),

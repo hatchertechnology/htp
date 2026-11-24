@@ -120,6 +120,9 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
     let (site, resource) = rest.split_once('/')?;
     uuid::Uuid::parse_str(site).ok()?;
     match resource {
+        "search/properties" | "search/dashboard" | "search/inspection-history" => {
+            return Some("POST");
+        }
         "repository" => return Some("GET, PUT"),
         "repository/history" | "repository/issues" => return Some("GET"),
         "forms" => return Some("GET, POST"),
@@ -376,6 +379,40 @@ mod tests {
         ] {
             assert!(dashboard_methods(path).is_none(), "{path}");
         }
+    }
+
+    #[tokio::test]
+    async fn saved_search_route_matrix() {
+        let site = "00000000-0000-0000-0000-000000000001";
+        for action in ["properties", "dashboard", "inspection-history"] {
+            let path = format!("/websites/{site}/search/{action}");
+            assert_eq!(dashboard_methods(&path), Some("POST"));
+            for method in ["POST", "GET", "PUT", "DELETE"] {
+                let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                    .oneshot(preflight(&path, ORIGIN, method))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    header_value(&response, header::ACCESS_CONTROL_ALLOW_METHODS),
+                    if method == "POST" { Some("POST") } else { None }
+                );
+                let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                    .oneshot(actual(method, &path, Some(ORIGIN), false))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                    if method == "POST" { Some(ORIGIN) } else { None }
+                );
+            }
+            for suffix in ["/", "/extra"] {
+                assert!(dashboard_methods(&format!("{path}{suffix}")).is_none());
+            }
+        }
+        for action in ["inspect", "dataset", "crawl-evidence", "other"] {
+            assert!(dashboard_methods(&format!("/websites/{site}/search/{action}")).is_none());
+        }
+        assert!(dashboard_methods("/websites/invalid/search/dashboard").is_none());
     }
 
     #[tokio::test]

@@ -17,10 +17,10 @@ beforeEach(() => {
   vi.stubGlobal('$fetch', { raw: mocks.raw })
 })
 afterEach(() => { vi.unstubAllGlobals(); vi.resetAllMocks() })
-it('reads saved dashboard reports without refreshing or forwarding Google tokens', async () => {
-  await proxySearch(event, 'dashboard')
+it.each(['properties', 'dashboard', 'inspection-history'] as const)('reads saved %s without refreshing or forwarding Google tokens', async action => {
+  await proxySearch(event, action)
   expect(mocks.token).not.toHaveBeenCalled()
-  expect(mocks.raw).toHaveBeenCalledWith(`https://api.example/websites/${id}/search/dashboard`, expect.objectContaining({ method: 'POST', retry: 0, redirect: 'error', timeout: 35000, headers: { Authorization: 'Bearer app-token' } }))
+  expect(mocks.raw).toHaveBeenCalledWith(`https://api.example/websites/${id}/search/${action}`, expect.objectContaining({ method: 'POST', retry: 0, redirect: 'error', timeout: 35000, headers: { Authorization: 'Bearer app-token' } }))
 })
 it('uses read-only Search consent for inspection and propagates quota failures', async () => {
   mocks.raw.mockResolvedValue({ status: 429, _data: { code: 'google_quota_exceeded' } })
