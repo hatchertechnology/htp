@@ -392,15 +392,38 @@ struct InspectUrlInput {
 }
 
 // These operations reuse the HTP web server, which owns encrypted provider grants.
-// The destination is fixed, redirects are disabled, and no browser cookies or
-// caller-supplied provider credentials are forwarded.
+// The destination is selected from two fixed origins and redirects are disabled.
+// No browser cookies or caller-supplied provider credentials are forwarded.
 pub(crate) async fn web_management_call(
     headers: &axum::http::HeaderMap,
     method: reqwest::Method,
     path: &str,
     body: Option<serde_json::Value>,
 ) -> CallToolResult {
-    web_management_request("https://htp.hatchtech.dev", headers, method, path, body).await
+    let selector = std::env::var_os("HTP_WEB_MANAGEMENT_HOST");
+    web_management_call_with_selector(selector.as_deref(), headers, method, path, body).await
+}
+
+// Exact host selectors only: never interpret configuration as a URL or use request headers.
+fn web_management_origin(selector: Option<&std::ffi::OsStr>) -> Result<&'static str, ()> {
+    match selector.map(std::ffi::OsStr::to_str) {
+        None | Some(Some("htp.hatchtech.dev")) => Ok("https://htp.hatchtech.dev"),
+        Some(Some("htp-web-kerry-hatcher.fly.dev")) => Ok("https://htp-web-kerry-hatcher.fly.dev"),
+        _ => Err(()),
+    }
+}
+
+async fn web_management_call_with_selector(
+    selector: Option<&std::ffi::OsStr>,
+    headers: &axum::http::HeaderMap,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> CallToolResult {
+    let Ok(origin) = web_management_origin(selector) else {
+        return saved_tool_result(Err(crate::websites::WebsiteError::Unavailable));
+    };
+    web_management_request(origin, headers, method, path, body).await
 }
 
 pub(crate) async fn web_management_request(
@@ -1470,6 +1493,66 @@ mod management_tests {
                 .unwrap()
                 .len(),
             130_001
+        );
+    }
+
+    #[test]
+    fn web_management_selector_accepts_only_exact_trusted_hosts() {
+        use std::ffi::OsStr;
+        assert_eq!(web_management_origin(None), Ok("https://htp.hatchtech.dev"));
+        for host in ["htp.hatchtech.dev", "htp-web-kerry-hatcher.fly.dev"] {
+            assert_eq!(
+                web_management_origin(Some(OsStr::new(host))),
+                Ok(format!("https://{host}").as_str())
+            );
+        }
+        for invalid in [
+            "",
+            "dashboard",
+            "fly",
+            "https://htp.hatchtech.dev",
+            "http://htp-web-kerry-hatcher.fly.dev",
+            "HTP.HATCHTECH.DEV",
+            " htp.hatchtech.dev",
+            "htp.hatchtech.dev ",
+            "htp.hatchtech.dev/",
+            "htp.hatchtech.dev:443",
+            "htp.hatchtech.dev.evil.example",
+            "htp.hatchtech.dev@evil.example",
+            "htp.hatchtech.dev?host=evil.example",
+            "127.0.0.1",
+            "https://evil.example",
+        ] {
+            assert!(
+                web_management_origin(Some(OsStr::new(invalid))).is_err(),
+                "{invalid}"
+            );
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            assert!(web_management_origin(Some(OsStr::from_bytes(b"\xff"))).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_web_management_selector_fails_before_bearer_request() {
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer owner-token".parse().unwrap());
+        headers.insert("host", "htp-web-kerry-hatcher.fly.dev".parse().unwrap());
+        headers.insert("origin", "https://htp.hatchtech.dev".parse().unwrap());
+        let result = web_management_call_with_selector(
+            Some(std::ffi::OsStr::new("https://127.0.0.1:1")),
+            &headers,
+            Method::GET,
+            "/api/google/connection",
+            None,
+        )
+        .await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.unwrap()["code"],
+            "data_unavailable"
         );
     }
 
