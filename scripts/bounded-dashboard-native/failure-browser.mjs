@@ -1,0 +1,365 @@
+// Loopback synthetic backend and built Nuxt dashboard. No customer data.
+import http from 'node:http'
+import { spawn } from 'node:child_process'
+import crypto from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import assert from 'node:assert/strict'
+import { chromium } from '../../apps/web/node_modules/playwright/index.mjs'
+const root = process.cwd(),
+  site = '00000000-0000-4000-8000-000000000003',
+  site2 = '00000000-0000-4000-8000-000000000004',
+  user = '00000000-0000-4000-8000-0000000000aa',
+  ids = [
+    '00000000-0000-4000-8000-000000000101',
+    '00000000-0000-4000-8000-000000000102',
+  ]
+const exp = Math.floor(Date.now() / 1000) + 3600,
+  enc = (x) => Buffer.from(JSON.stringify(x)).toString('base64url'),
+  head = enc({ alg: 'HS256', typ: 'JWT' }),
+  payload = enc({ sub: user, exp, aud: 'authenticated' }),
+  token = head + '.' + payload + '.' +
+    crypto.createHmac('sha256', 'synthetic-key').update(head + '.' + payload)
+      .digest('base64url')
+const files = ['seosmith-expanded.json', 'contracts/v2-partial.json'],
+  reports = await Promise.all(
+    files.map(async (f) =>
+      JSON.parse(await readFile(`${root}/supabase/tests/fixtures/${f}`, 'utf8'))
+    ),
+  )
+// Use the repository's isolated PGlite receiver migration chain and real owner RPCs.
+const { PGlite } = await import(
+  '../../supabase/node_modules/@electric-sql/pglite/dist/index.js'
+)
+const db = new PGlite()
+await db.exec(
+  `create role anon;create role authenticated;create role service_role bypassrls;create schema auth;create table auth.users(id uuid primary key);create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;create function auth.uid() returns uuid language sql stable as $$select (auth.jwt()->>'sub')::uuid$$;grant usage on schema auth,public to authenticated,anon,service_role;alter default privileges grant execute on functions to anon,authenticated;`,
+)
+for (
+  const name of [
+    '20261028142440_create_websites.sql',
+    '20261031053344_seosmith_audits.sql',
+    '20261031053413_seosmith_history.sql',
+    '20261031053524_seosmith_explicit_function_privileges.sql',
+    '20261101054016_seosmith_expanded_evidence.sql',
+    '20261101060006_seosmith_policy_exclusions.sql',
+    '20261116210550_seosmith_versioned_receiver.sql',
+    '20261116221958_seosmith_summary_target_lookup.sql',
+    '20261116223631_h01_scanner_budget.sql',
+    '20261116224641_seosmith_summary_compact_input.sql',
+  ]
+) await db.exec(await readFile(`${root}/supabase/migrations/${name}`, 'utf8'))
+await db.query('insert into auth.users values($1)', [user])
+await db.query(
+  "insert into public.websites(id,owner_id,fqdn) values($1,$2,'example.com')",
+  [site, user],
+)
+await db.exec('set role authenticated')
+await db.query("select set_config('request.jwt.claims',$1,false)", [
+  JSON.stringify({ sub: user, is_anonymous: false }),
+])
+const details = []
+for (let i = 0; i < reports.length; i++) {
+  const report = reports[i]
+  if (i === 0) {
+    // Receiver-accepted legacy minimum: preserve absent fields in raw JSON.
+    report.pages[0] = {}
+    delete report.findings[0].key
+    delete report.findings[0].evidence
+  }
+  report.request.website_id = site
+  report.request.request_id = ids[i]
+  const raw = JSON.stringify(report, null, i ? 2 : 1) + '\n'
+  const receipt =
+    (await db.query('select public.import_seosmith_audit($1,$2) r', [
+      site,
+      raw,
+    ])).rows[0].r
+  assert.equal(receipt.accepted, true)
+  const detail =
+    (await db.query('select public.seosmith_audit_detail($1,$2) d', [
+      site,
+      ids[i],
+    ])).rows[0].d
+  assert.equal(detail.report_json, raw)
+  if (i === 0) {
+    assert.deepEqual(detail.report.pages[0], {})
+    assert.equal(Object.hasOwn(detail.report.findings[0], 'key'), false)
+    assert.equal(Object.hasOwn(detail.report.findings[0], 'evidence'), false)
+  }
+  details.push(detail)
+}
+await db.close()
+console.log(
+  'PGlite receiver-generated v1/v2 summaries',
+  details.map((x) => ({
+    id: x.delivery_id,
+    checked: x.summary.pages.checked,
+    schema: x.summary.schema_version,
+  })),
+)
+
+let modes = {}, closed = 0, rejectedClosed = 0, requests = []
+const mock = http.createServer((req, res) => {
+  const path = new URL(req.url, 'http://local').pathname
+  if (req.headers.authorization !== `Bearer ${token}`) {
+    res.writeHead(401)
+    return res.end()
+  }
+  if (path === '/auth/v1/user') {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    return res.end(
+      JSON.stringify({
+        id: user,
+        aud: 'authenticated',
+        role: 'authenticated',
+        is_anonymous: false,
+      }),
+    )
+  }
+  const json = (x) => {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(x))
+  }
+  if (path === '/websites') {
+    return json({ items: [{ id: site, fqdn: 'example.com' }, { id: site2, fqdn: 'other.example.com' }], has_more: false })
+  }
+  if (path === `/websites/${site2}/seo/audits`) {
+    return json({ items: [details[1]], has_more: false, next_cursor: null })
+  }
+  if (path === `/websites/${site}/seo/audits`) {
+    return json({
+      items: details.map(({ report, report_json, ...d }) => d),
+      has_more: false,
+      next_cursor: null,
+    })
+  }
+  const m = path.match(/\/seo\/audits\/([^/]+)$/)
+  if (m) {
+    requests.push(m[1])
+    let d = details.find((x) => x.delivery_id === m[1])
+    if (!d) {
+      res.writeHead(404)
+      return res.end()
+    }
+    const mode = path.includes(site2) ? 'normal' : modes[m[1]] || 'normal'
+    res.writeHead(mode === 'status' ? 503 : 200, {
+      'content-type': mode === 'nonjson' ? 'text/plain' : 'application/json',
+    })
+    if (mode === 'nonjson' || mode === 'status') {
+      res.on('close', () => rejectedClosed++)
+      return res.write('not JSON')
+    }
+    if (mode === 'empty') return res.end()
+    if (mode === 'unsupported') {
+      d = structuredClone(d)
+      d.report.evidence_contract.version = 99
+      return res.end(JSON.stringify(d))
+    }
+    if (mode === 'truncated') {
+      d = structuredClone(d)
+      d.report.evidence_contract.truncated = true
+      d.report.evidence_contract.omitted_observations = 5
+      return res.end(JSON.stringify(d))
+    }
+    if (mode === 'wrong-shape') return res.end(JSON.stringify({ ...d, summary: { ...d.summary, pages: null } }))
+    if (mode === 'cut') {
+      res.write('{"delivery_id":')
+      return setTimeout(() => res.destroy(), 80)
+    }
+    if (mode === 'delay') {
+      res.write('{')
+      res.on('close', () => {
+        closed++
+      })
+      return setTimeout(() => res.end(JSON.stringify(d).slice(1)), 1800)
+    }
+    return res.end(JSON.stringify(d))
+  }
+  return json({ connected: false, configured: false })
+})
+await new Promise((r) => mock.listen(0, '127.0.0.1', r))
+const port = mock.address().port
+const child = spawn(process.execPath, ['.output/server/index.mjs'], {
+  cwd: root + '/apps/web',
+  env: {
+    ...process.env,
+    PORT: '38293',
+    HOST: '127.0.0.1',
+    NUXT_PUBLIC_BOUNDED_SAVED_DETAIL: process.env.H15_LEGACY_ONLY ? 'false' : 'true',
+    NUXT_API_BASE_URL: `http://127.0.0.1:${port}`,
+    NUXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${port}`,
+    NUXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'synthetic',
+  },
+  stdio: 'ignore',
+})
+let browser
+try {
+  for (let i = 0;; i++) {
+    try {
+      await fetch('http://127.0.0.1:38293/')
+      break
+    } catch {
+      if (i > 100) throw Error('startup')
+      await new Promise((r) => setTimeout(r, 100))
+    }
+  }
+  browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage(), errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  await page.route(
+    '**/*',
+    (r) =>
+      new URL(r.request().url()).hostname === '127.0.0.1'
+        ? r.continue()
+        : r.abort(),
+  )
+  await page.addInitScript(
+    ({ token, exp, user }) =>
+      localStorage.setItem(
+        'sb-127-auth-token',
+        JSON.stringify({
+          access_token: token,
+          refresh_token: 'fixture',
+          token_type: 'bearer',
+          expires_in: 3600,
+          expires_at: exp,
+          user: { id: user, aud: 'authenticated', role: 'authenticated' },
+        }),
+      ),
+    { token, exp, user },
+  )
+  await page.goto('http://127.0.0.1:38293/', { waitUntil: 'domcontentloaded' })
+  const select = page.getByLabel('Inspect a run', { exact: true }),
+    panel = page.getByRole('region', { name: 'Evidence and coverage' })
+  await page.waitForFunction(
+    (id) => {
+      let e = document.querySelector('select[aria-label="Inspect a run"]')
+      return e && !e.disabled && e.value === id
+    },
+    ids[0],
+    { timeout: 30000 },
+  )
+  for (let i = 0; i < 2; i++) {
+    if (i) await select.selectOption(ids[i])
+    await page.waitForFunction(
+      (id) =>
+        document.querySelector('select[aria-label="Inspect a run"]')?.value ===
+          id,
+      ids[i],
+    )
+    await panel.waitFor()
+    if (i === 0) {
+      const urls = page.locator('details.seo-pages')
+      await urls.locator('summary').click()
+      await page.getByLabel('Resource type').selectOption('text/html')
+      await page.getByLabel('Resource type').selectOption('all')
+      await page.getByLabel('Find a checked URL').fill('missing')
+      await page.getByLabel('Find a checked URL').fill('')
+      assert.match(await urls.innerText(), /Unavailable/)
+    }
+    assert.match(
+      await page.locator('.seo-summary').innerText(),
+      new RegExp(String(details[i].summary.pages.checked)),
+    )
+    const dl = page.waitForEvent('download')
+    await page.getByRole('button', { name: 'Download run JSON' }).click()
+    const file = await (await dl).path(), bytes = await readFile(file)
+    assert.equal(bytes.toString('utf8'), details[i].report_json)
+    console.log(
+      'download',
+      i,
+      'bytes',
+      bytes.length,
+      'sha256',
+      crypto.createHash('sha256').update(bytes).digest('hex'),
+      'summary_checked',
+      details[i].summary.pages.checked,
+    )
+  }
+  if (!process.env.H15_LEGACY_ONLY) {
+    // Start v1 slowly, then choose v2 via the trend chart while the select is disabled.
+    modes[ids[0]] = 'delay'
+    await select.selectOption(ids[0])
+    await page.getByText('Loading this run’s findings…').waitFor()
+    assert.equal(await page.locator('.seo-summary').count(), 0)
+    const point = page.locator('svg circle[role="button"]').filter({
+      has: page.locator('title'),
+    })
+    const index = await point.count()
+    assert.equal(index, 2)
+    await point.filter({ hasText: new Date(details[1].scan_at).toISOString() })
+      .click()
+    await page.waitForFunction(
+      (id) =>
+        document.querySelector('select[aria-label="Inspect a run"]')?.value ===
+          id,
+      ids[1],
+    )
+    await new Promise((r) => setTimeout(r, 2200))
+    assert.equal(await select.inputValue(), ids[1])
+    assert.match(
+      await page.locator('.seo-summary').innerText(),
+      new RegExp(String(details[1].summary.pages.checked)),
+    )
+    assert.ok(closed > 0, 'cancelled detail must close upstream')
+    console.log('delayed selection isolation passed upstream_closes', closed)
+    for (const mode of ['cut', 'empty', 'nonjson', 'status', 'wrong-shape']) {
+      modes[ids[0]] = mode
+      await select.selectOption(ids[0])
+      await page.getByRole('alert').filter({ hasText: /Seosmith|fetch|JSON/i })
+        .waitFor({ timeout: 10000 })
+      assert.equal(await page.locator('.seo-summary').count(), 0)
+      assert.equal(
+        await page.getByRole('button', { name: 'Download run JSON' }).count(),
+        0,
+      )
+      if (mode === 'nonjson' || mode === 'status') {
+        const expectedCloses = mode === 'nonjson' ? 1 : 2
+        for (let i = 0; rejectedClosed < expectedCloses && i < 100; i++) {
+          await new Promise((r) => setTimeout(r, 20))
+        }
+        assert.equal(rejectedClosed, expectedCloses, 'rejected response must close upstream')
+      }
+      console.log(mode, 'error without stale detail passed')
+      modes[ids[1]] = 'normal'
+      await select.selectOption(ids[1])
+      await panel.waitFor()
+      assert.equal(await page.getByRole('alert').filter({ hasText: /Seosmith|fetch|JSON/i }).count(), 0)
+      assert.match(await page.locator('.seo-summary').innerText(), new RegExp(String(details[1].summary.pages.checked)))
+    }
+    for (const mode of ['unsupported', 'truncated']) {
+      modes[ids[1]] = mode
+      modes[ids[0]] = 'normal'
+      await select.selectOption(ids[0])
+      await panel.waitFor()
+      await select.selectOption(ids[1])
+      await panel.waitFor()
+      if (mode === 'unsupported') {
+        await panel.getByText(/unavailable or unsupported/).waitFor()
+      } else {
+        await panel.getByText(/Evidence was truncated/).waitFor()
+      }
+      assert.equal(await page.getByRole('alert').filter({ hasText: /Seosmith|fetch|JSON/i }).count(), 0)
+      console.log(mode, 'evidence panel passed')
+    }
+    modes[ids[1]] = 'normal'
+    modes[ids[0]] = 'delay'
+    await select.selectOption(ids[0])
+    await page.getByText('Loading this run’s findings…').waitFor()
+    const closesBeforeSiteSwitch = closed
+    await page.getByLabel('Select website').selectOption(site2)
+    await panel.waitFor()
+    await new Promise((r) => setTimeout(r, 2200))
+    assert.equal(await select.inputValue(), ids[1])
+    assert.match(await page.locator('.seo-summary').innerText(), new RegExp(String(details[1].summary.pages.checked)))
+    assert.ok(closed > closesBeforeSiteSwitch, 'site switch must close the old upstream')
+    console.log('cross-site selection isolation passed')
+  }
+  assert.deepEqual(errors, [])
+  console.log('PASS dashboard fixture requests', JSON.stringify(requests))
+} finally {
+  await browser?.close()
+  child.kill()
+  mock.closeAllConnections()
+  await new Promise((r) => mock.close(r))
+}

@@ -1,6 +1,8 @@
 import type { AuditDetail, AuditHistory, AuditRun } from '../../shared/types/seosmith'
+import { isSavedDetail } from '#shared/utils/saved-detail-validation'
 export function useSeosmith() {
   const ws = useWorkspace()
+  const boundedSavedDetail = useRuntimeConfig().public.boundedSavedDetail === true
   const runs = ref<AuditRun[]>([]), selected = ref<AuditDetail | null>(null)
   const busy = ref(false), detailBusy = ref(false), importing = ref(false), error = ref(''), notice = ref('')
   const cursor = ref<AuditHistory['next_cursor']>(null)
@@ -8,9 +10,24 @@ export function useSeosmith() {
   let controller: AbortController | undefined, detailController: AbortController | undefined
   async function select(id: string) {
     const gen = ++detailGeneration, site = ws.selectedId.value
-    detailController?.abort(); detailController = new AbortController(); selected.value = null; detailBusy.value = true; error.value = ''
+    detailController?.abort(); const requestController = new AbortController(); detailController = requestController; selected.value = null; detailBusy.value = true; error.value = ''
     try {
-      const result = await ws.request<AuditDetail>(`/api/websites/${site}/seo/audits/${id}`, { signal: detailController.signal })
+      let result: AuditDetail
+      if (boundedSavedDetail) {
+        const token = await ws.accessToken()
+        if (!token) throw new Error('Your session has ended. Sign in again.')
+        const response = await fetch(`/api/websites/${site}/seo/audits/${id}/dashboard`, { headers: { Authorization: `Bearer ${token}` }, signal: requestController.signal })
+        if (!response.ok || !/^application\/(?:[\w.+-]+\+)?json(?:\s*;|$)/i.test(response.headers.get('content-type') || '')) {
+          requestController.abort()
+          throw new Error('Seosmith reports could not load. Try again.')
+        }
+        // response.json() rejects a truncated transport and malformed or empty JSON.
+        const value: unknown = await response.json()
+        if (!isSavedDetail(value, id)) throw new Error('Seosmith reports could not load. Try again.')
+        result = value
+      } else {
+        result = await ws.request<AuditDetail>(`/api/websites/${site}/seo/audits/${id}`, { signal: requestController.signal })
+      }
       if (gen === detailGeneration && site === ws.selectedId.value) selected.value = result
     } catch (cause) { if (gen === detailGeneration) error.value = failureMessage(cause) }
     finally { if (gen === detailGeneration) detailBusy.value = false }
