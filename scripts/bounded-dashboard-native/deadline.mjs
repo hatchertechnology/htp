@@ -94,6 +94,9 @@ try {
   const authResponse = await authTimeout
   assert.equal(authResponse.status, 504)
   assert.match(authResponse.headers.get('cache-control'), /no-store/)
+  for (let i = 0; authClosed < 2 && i < 100; i++) {
+    await new Promise((r) => setTimeout(r, 20))
+  }
   assert.ok(Date.now() - authStart >= 119000 && authClosed >= 2)
   console.log('hanging auth timeout and upstream closure passed')
 } finally {
