@@ -119,6 +119,14 @@ unsafe inline result may explicitly fail with `EXPORT_REQUIRED`; this is not a
 partial report or a successful read. Use the versioned workflow below only after
 its tools are discovered and deployed backend support is verified.
 
+Use `website_audit_events` and `website_operational_episodes` with the same
+`website_id` and bounded `limit`/paired `before`/`before_id` cursor to read
+stored audit events and provider operational failure episodes. While the H15
+audit notification gates are disabled both return
+`availability:producer_unavailable`; that is not a successful empty history, not
+a zero count, and must not be treated as proof that no events exist. These reads
+never start collection, claim, processing or delivery.
+
 ### Complete audit export (contract 1.2.0; activation gated)
 
 Discover `website_audit_export_start_v1`, `website_audit_export_chunk_v1`, and

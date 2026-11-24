@@ -147,11 +147,13 @@ async fn official_mcp_client_authenticates_every_request() {
         );
         let client = ClientConfig::default().serve(transport).await.unwrap();
         let tools = client.list_tools(None).await.unwrap();
-        assert_eq!(tools.tools.len(), 23);
+        assert_eq!(tools.tools.len(), 25);
         for name in [
             "website_audit_export_start_v1",
             "website_audit_export_chunk_v1",
             "website_audit_export_close_v1",
+            "website_audit_events",
+            "website_operational_episodes",
         ] {
             assert!(tools.tools.iter().any(|tool| tool.name == name));
         }
@@ -164,6 +166,18 @@ async fn official_mcp_client_authenticates_every_request() {
         let export_schema = serde_json::to_string(&export.input_schema).unwrap();
         assert!(export_schema.contains("exportId"));
         assert!(!export_schema.contains("export_id"));
+        for name in ["website_audit_events", "website_operational_episodes"] {
+            let tool = tools.tools.iter().find(|tool| tool.name == name).unwrap();
+            let schema = serde_json::to_string(&tool.input_schema).unwrap();
+            assert!(
+                schema.contains("before_id"),
+                "{name} must expose its persisted cursor id: {schema}"
+            );
+            assert!(
+                !schema.contains("beforeId"),
+                "{name} must not expose camelCase cursor fields: {schema}"
+            );
+        }
         let report = tools
             .tools
             .iter()
@@ -567,6 +581,14 @@ async fn every_website_operation_requires_authentication() {
         (
             "GET",
             "/websites/00000000-0000-0000-0000-000000000001/seo/audits/lifecycle?entity_id=x&rule=missing_title",
+        ),
+        (
+            "GET",
+            "/websites/00000000-0000-0000-0000-000000000001/seo/audit-events",
+        ),
+        (
+            "GET",
+            "/websites/00000000-0000-0000-0000-000000000001/seo/operational-episodes",
         ),
         (
             "GET",
