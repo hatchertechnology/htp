@@ -2466,3 +2466,28 @@ async fn held_rollout_routes_do_not_call_the_data_api_and_keep_authentication() 
     let response = website_request(&auth, "GET", "/secured", Value::Null).await;
     assert_eq!(response.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn provider_connections_require_verified_owner_bearer() {
+    let fixture = TestAuth::new().await;
+    for provider in ["google", "bing"] {
+        for method in ["GET", "DELETE"] {
+            for token in [None, Some("Bearer invalid")] {
+                let mut request = Request::builder()
+                    .method(method)
+                    .uri(format!("/providers/{provider}/connection"));
+                if let Some(token) = token {
+                    request = request.header("authorization", token);
+                }
+                let response = fixture
+                    .app
+                    .clone()
+                    .oneshot(request.body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            }
+        }
+    }
+    assert_eq!(fixture.requests.load(Ordering::SeqCst), 0);
+}

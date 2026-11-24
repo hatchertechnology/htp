@@ -1,6 +1,6 @@
 //! Opt-in, exact-origin CORS for the static dashboard's website API routes.
 //!
-//! Only `GET/POST /websites` and `GET/PATCH/DELETE /websites/{id}` are covered.
+//! Covers explicitly listed website, forms, and provider connection routes.
 //! Requests from any origin other than the single configured origin receive no
 //! CORS headers. Preflights are answered before authentication runs, so this
 //! layer must sit outside the auth layer. Credentials are never allowed.
@@ -100,6 +100,12 @@ impl DashboardCors {
 
 /// The methods exposed to the static dashboard for an exact route shape.
 fn dashboard_methods(path: &str) -> Option<&'static str> {
+    if matches!(
+        path,
+        "/providers/google/connection" | "/providers/bing/connection"
+    ) {
+        return Some("GET, DELETE");
+    }
     if path == "/websites" {
         return Some("GET, POST, PATCH, DELETE");
     }
@@ -450,6 +456,50 @@ mod tests {
                 .await
                 .unwrap();
             assert!(header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_cors_is_exact_and_only_allows_status_and_disconnect() {
+        for path in ["/providers/google/connection", "/providers/bing/connection"] {
+            assert_eq!(dashboard_methods(path), Some("GET, DELETE"));
+            for method in ["GET", "DELETE", "POST"] {
+                for origin in [ORIGIN, "https://evil.example"] {
+                    let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                        .oneshot(preflight(path, origin, method))
+                        .await
+                        .unwrap();
+                    let allowed = origin == ORIGIN && method != "POST";
+                    assert_eq!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                        allowed.then_some(ORIGIN)
+                    );
+                    assert_eq!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_METHODS),
+                        allowed.then_some("GET, DELETE")
+                    );
+                    assert!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none()
+                    );
+                }
+                let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                    .oneshot(actual(method, path, Some(ORIGIN), false))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+                assert_eq!(
+                    header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                    (method != "POST").then_some(ORIGIN)
+                );
+            }
+        }
+        for path in [
+            "/providers/google/connection/",
+            "/providers/bing/connect",
+            "/providers/other/connection",
+            "/providers/google/connection/extra",
+        ] {
+            assert_eq!(dashboard_methods(path), None);
         }
     }
 

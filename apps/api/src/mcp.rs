@@ -394,7 +394,7 @@ struct InspectUrlInput {
 // These operations reuse the HTP web server, which owns encrypted provider grants.
 // The destination is fixed, redirects are disabled, and no browser cookies or
 // caller-supplied provider credentials are forwarded.
-async fn web_management_call(
+pub(crate) async fn web_management_call(
     headers: &axum::http::HeaderMap,
     method: reqwest::Method,
     path: &str,
@@ -403,7 +403,7 @@ async fn web_management_call(
     web_management_request("https://htp.hatchtech.dev", headers, method, path, body).await
 }
 
-async fn web_management_request(
+pub(crate) async fn web_management_request(
     origin: &str,
     headers: &axum::http::HeaderMap,
     method: reqwest::Method,
