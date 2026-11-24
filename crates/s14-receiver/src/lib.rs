@@ -4,6 +4,7 @@ mod advisories;
 mod bindings;
 pub mod budget;
 mod compatibility;
+pub mod conformance;
 mod finding_coverage;
 mod full_population;
 mod projection;

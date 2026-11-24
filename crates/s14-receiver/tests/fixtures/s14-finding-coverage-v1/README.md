@@ -59,3 +59,25 @@ unobserved pages, true server responses, extraction accuracy, authenticity,
 sitemap completeness, authorization or production emission. A receiver that
 lacks a reconstruction for a catalogue rule must leave that check unknown and
 must not accept `audit:complete`.
+
+Deliberate safe-direction limits of this narrow generator (documented, not
+bugs):
+
+- Graph targets must be an observed **2xx HTML** non-resource page
+  (`page_target_observed`). A link to an observed 404 response or to an observed
+  non-HTML internal asset therefore leaves every graph rule unknown, including
+  `broken_internal_link`, even though the retained response is fully observed.
+  This never fabricates completeness, but it means this generator cannot emit
+  "complete with a known broken-link finding". One inadequate page also makes
+  the affected rule unknown for every page, because wire v1 is report-wide per
+  rule.
+- Item-local prerequisites require every retained non-resource page to be
+  observed and every 2xx HTML page to be untruncated. Non-HTML and non-2xx
+  responses are observed but are not evaluated by the item-local HTML rules, so
+  they do not themselves withhold the item-local claim.
+- Policy coverage must account for **every** coverage row for a rule. A rule such
+  as `noindex` or `http_redirect` has an `observation` row and a
+  `policy_violation` row; an omission in either row forces the rule unknown.
+- Sitemap and robots checks are complete only relative to the retained per-page
+  `in_sitemap` and robots flags; there is no retained evidence of the sitemap or
+  `robots.txt` fetch itself.

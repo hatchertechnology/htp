@@ -342,7 +342,9 @@ fn expired_budget_fails_closed_before_work() {
     // the batch verifier before any report-specific work is certified.
     let source =
         fs::read(fixtures().join("s14-finding-coverage-v1/complete-clean-h1.json")).unwrap();
-    let expired = Instant::now() - Duration::from_secs(1);
+    let expired = Instant::now()
+        .checked_sub(Duration::from_secs(1))
+        .expect("one second earlier is representable");
     assert_eq!(
         derive_saved_summary(&source, expired).unwrap_err(),
         InspectionError::Deadline

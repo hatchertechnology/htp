@@ -8,7 +8,7 @@ writer, commit adapter, owner import, direct schema4 RPC, migration or capabilit
 advertisement is added. Existing deployed contracts are unchanged.
 
 The receiver-owned crate checks exact raw byte cap, UTF-8/JSON syntax, decoded
-unique keys,64-container depth, string bounds (64KiB only at the exact embedded
+unique keys, 64-container depth, string bounds (64KiB only at the exact embedded
 policy path), typed metadata/unsigned integer spellings, bound canonical policy,
 request bounds and the chosen URL profile. It uses bounded sequence decoders and
 retains opaque source as RawValue, including legal numbers beyond f64, without
@@ -17,11 +17,12 @@ applying a global count/status key heuristic. Fixture bytes are hashed/pinned.
 `inspect` returns only InspectedCandidate. It intentionally does NOT certify
 page-field/source completeness, registered catalog equality, record predicates/
 facts, source pointers, scope/entity/manifest digests, omitted-state reconstruction,
-coverage or compatibility projections. Some source fields are ignored in this
-inspection phase. `validate_for_admission` always returns
+coverage or compatibility projections; those are separate local check functions
+described below, not inspection or admission. Some source fields are ignored in
+this inspection phase. `validate_for_admission` always returns
 SemanticValidationNotImplemented after inspection. ValidatedS14 has no public
-constructor; nothing can issue a proof or acceptance receipt. Independent full
-receiver semantics and raw typed-path coverage are the next implementation phase.
+constructor; nothing can issue a proof or acceptance receipt. The `conformance`
+module verifies the retained successor bundle offline; admission remains closed.
 
 The role/deadline modules are standalone decision models, not SQL grants, RLS,
 triggers, session pinning or measured cancellation. They model current worker/
@@ -30,8 +31,6 @@ writer/operator separation and remaining global time. No native DB is installed
 or contacted by this phase's tests.
 
 ## Sol r2 findings incorporated before candidate review
-
-Review: coordination/reviews/wave1-s14-worker-api-r2-sol-9aeb02fa-458e5020.md.
 
 1. Grants alone do not establish access for new nonowner NOBYPASSRLS owners. The
    role model denies when either the SQL grant or explicit RLS row access is
@@ -58,15 +57,68 @@ need real native tests; this matrix and Boolean model are not proof they work.
    future was dropped. Shared slot acquisition/release, SQL cancellation and
    retained CPU occupancy require later controlled native tests.
 
-## Next bounded phases (not implemented)
+## Successor bundle conformance
 
-Complete independent receiver semantic equality against a successor consistent
-URL bundle; then implement static private role/RLS/proof/commit SQL and session/
-body/gate adapters in a disposable native DB. Retain default-off API/operator DB
-admission, concurrency1/queue0 and reserved cleanup budget. Implement only one
-owned stored detail path; broad owner/history/UI/lifecycle and producer emission
-stay outside scope. No production migration version is reserved. No push or gate
-activation is authorized by this skeleton.
+`conformance::verify_successor_contracts` is a local, cooperative checker for the
+retained producer successor bundle. It reads an operator-supplied producer
+`fixtures/contracts` directory, passed as the example argument or set in
+`S14_SUCCESSOR_CONTRACTS`; there is no default path. It verifies:
+
+- the successor manifest pin `03c31ee3...` and original manifest pin `249168...`;
+- all `61` files in order, exact byte length and SHA-256, against the pinned
+  original manifest, not only against the successor manifest itself;
+- the only agreed relabel: original `accept` for
+  `v4-candidate-url-normalization.json` becomes `reject_url_profile_idn`; every
+  other historical label is unchanged. The `13` reference, `20` reject and one
+  IDN-reject entries are preserved but not exercised;
+- the `27` historical `accept` reports through `inspect`,
+  `check_source_bindings`, `check_consistency`, `check_reconstructed_rules`,
+  `check_scalar_advisories`, `check_compatibility_findings` and
+  `finding_coverage_batch`. These reports have no coverage extension, so every
+  rule and the audit must remain `unknown`, never clean;
+- the agreed `42`-case `url42.json` pin `65b7160a...`: all six `in_scope`, nine
+  `out_of_scope`, fifteen `reject` and twelve `reject_noncanonical` labels are
+  preserved and compared with the receiver decision;
+- the four finding-coverage positives and their byte pins, including every
+  per-rule status: complete `88/0`, complete `88/0`, partial `0/88`, and partial
+  `63/25` with `missing_h1` complete. Producer `partial` is reported as receiver
+  `unknown`; no partial claim is promoted to complete.
+
+The conformance entry takes the contracts directory:
+
+```sh
+cargo run --offline --locked -p htp-s14-receiver --example successor_conformance -j1 -- \
+  /path/to/producer/fixtures/contracts
+```
+
+The historical inventory entry is unchanged and still accepts a successor
+manifest path:
+
+```sh
+cargo run --offline --locked -p htp-s14-receiver --example successor_positives -j1 -- \
+  /path/to/s14-worker-slice-r2/manifest.json
+```
+
+`tests/conformance.rs` runs the checked-in URL and coverage vectors in the
+ordinary suite. The external 61-file bundle test is ignored and opt-in:
+
+```sh
+S14_SUCCESSOR_CONTRACTS=/path/to/producer/fixtures/contracts \
+  cargo test --offline --locked -p htp-s14-receiver -j1 --test conformance -- --ignored
+```
+
+This is normal-fixture conformance only: it is not a freeze, it does not
+exercise historical negative/reference vectors, and it creates no admission
+authority.
+
+## Next bounded phases
+
+Implement static private role/RLS/proof/commit SQL and session/body/gate adapters
+in a disposable native DB. Retain default-off API/operator DB admission,
+concurrency1/queue0 and reserved cleanup budget. Implement only one owned stored
+detail path; broad owner/history/UI/lifecycle and producer emission stay outside
+scope. No production migration version is reserved. No push or gate activation is
+authorized by this skeleton.
 
 ### Local consistency experiment
 
@@ -134,9 +186,9 @@ The retained schema-4 producer reports have no summary field. The historical
 `seosmith_legacy_summary` SQL defines counts and other summary fields for schema 1,
 and the version-4 summary wrapper accepts only schemas 1 and 2. Schema 4 now has a
 separate receiver-owned derivation, described below; it does not reuse or change
-the schema-1/2 version-4 adapters. Full source validation, legacy finding
-reconstruction, authorization, provenance, service resources and independent
-exact-head review remain open.
+the schema-1/2 version-4 adapters. Full source validation, the remaining
+inherited finding populations, authorization, provenance, service resources and
+independent exact-head review remain open.
 
 ## Schema-4 finding coverage
 
