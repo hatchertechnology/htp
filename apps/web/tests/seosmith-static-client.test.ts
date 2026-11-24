@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, ref, watch } from 'vue'
 import { useSeosmith } from '../app/composables/useSeosmith'
-import { JSON_CONTENT_TYPE, resolveSeosmithReadPath } from '../shared/utils/seosmith-client'
+import { JSON_CONTENT_TYPE, SAVED_DETAIL_DEADLINE_MS, SAVED_DETAIL_MAX_BYTES, readBoundedJson, resolveSeosmithReadPath } from '../shared/utils/seosmith-client'
 
 const base = 'https://api.example.test'
 const SITE = '00000000-0000-4000-8000-000000000001'
@@ -127,5 +127,40 @@ describe('useSeosmith transport', () => {
     await vi.waitFor(() => expect(model.selected.value?.delivery_id).toBe(RUN))
     expect(fetchMock).toHaveBeenCalledWith(`${detailPath}/dashboard`, expect.objectContaining({ headers: { Authorization: 'Bearer tok' } }))
     expect(fetchMock.mock.calls[0]![1]).not.toHaveProperty('redirect', 'error')
+  })
+
+  it('static: a detail read that never finishes fails at the deadline with the typed message', async () => {
+    vi.useFakeTimers()
+    try {
+      fetchMock.mockImplementation((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+        init.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+      }))
+      const model = setup({ staticDashboard: true, boundedSavedDetail: false, apiBaseUrl: base })
+      await vi.advanceTimersByTimeAsync(SAVED_DETAIL_DEADLINE_MS + 1)
+      expect(model.error.value).toBe('Seosmith reports could not load. Try again.')
+      expect(model.selected.value).toBeNull()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('static: refuses a detail whose declared Content-Length exceeds the cap before reading the body', async () => {
+    const body = JSON.stringify(detail())
+    fetchMock.mockResolvedValueOnce(new Response(body, { headers: { 'content-type': 'application/json', 'content-length': String(SAVED_DETAIL_MAX_BYTES + 1) } }))
+    const model = setup({ staticDashboard: true, boundedSavedDetail: false, apiBaseUrl: base })
+    await vi.waitFor(() => expect(model.error.value).toMatch(/could not load/))
+    expect(model.selected.value).toBeNull()
+  })
+
+  it('static: refuses a streamed detail body that grows past the cap without a Content-Length', async () => {
+    const chunk = new Uint8Array(SAVED_DETAIL_MAX_BYTES / 2 + 1)
+    const stream = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(chunk); c.enqueue(chunk); c.close() } })
+    fetchMock.mockResolvedValueOnce(new Response(stream, { headers: { 'content-type': 'application/json' } }))
+    const model = setup({ staticDashboard: true, boundedSavedDetail: false, apiBaseUrl: base })
+    await vi.waitFor(() => expect(model.error.value).toMatch(/could not load/))
+    expect(model.selected.value).toBeNull()
+  })
+
+  it('readBoundedJson: returns the parsed body at or under the cap and rejects malformed JSON', async () => {
+    await expect(readBoundedJson(new Response('{"a":1}'), 100)).resolves.toEqual({ a: 1 })
+    await expect(readBoundedJson(new Response('{"a":'), 100)).rejects.toThrow()
   })
 })

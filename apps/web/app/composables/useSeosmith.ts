@@ -1,6 +1,6 @@
 import type { AuditDetail, AuditHistory, AuditRun } from '../../shared/types/seosmith'
 import { isSavedDetail } from '#shared/utils/saved-detail-validation'
-import { JSON_CONTENT_TYPE, resolveSeosmithReadPath } from '#shared/utils/seosmith-client'
+import { JSON_CONTENT_TYPE, SAVED_DETAIL_DEADLINE_MS, SAVED_DETAIL_MAX_BYTES, readBoundedJson, resolveSeosmithReadPath } from '#shared/utils/seosmith-client'
 export function useSeosmith() {
   const ws = useWorkspace()
   const boundedSavedDetail = useRuntimeConfig().public.boundedSavedDetail === true
@@ -17,11 +17,27 @@ export function useSeosmith() {
     detailController?.abort(); const requestController = new AbortController(); detailController = requestController; selected.value = null; detailBusy.value = true; error.value = ''
     try {
       let result: AuditDetail
-      if (boundedSavedDetail || staticDashboard) {
+      if (staticDashboard) {
         const token = await ws.accessToken()
         if (!token) throw new Error('Your session has ended. Sign in again.')
-        const url = staticDashboard ? resolveSeosmithReadPath(`/api/websites/${site}/seo/audits/${id}`, true, apiBaseUrl) : `/api/websites/${site}/seo/audits/${id}/dashboard`
-        const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, redirect: staticDashboard ? 'error' : 'follow', signal: requestController.signal })
+        // Static has no Nitro proxy: bound the whole read (headers and body) by a deadline, and cap the body size.
+        const deadline = setTimeout(() => requestController.abort(), SAVED_DETAIL_DEADLINE_MS)
+        try {
+          const url = resolveSeosmithReadPath(`/api/websites/${site}/seo/audits/${id}`, true, apiBaseUrl)
+          const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: requestController.signal })
+          if (!response.ok || !JSON_CONTENT_TYPE.test(response.headers.get('content-type') || '')) throw new Error('Seosmith reports could not load. Try again.')
+          const value = await readBoundedJson(response, SAVED_DETAIL_MAX_BYTES)
+          if (!isSavedDetail(value, id)) throw new Error('Seosmith reports could not load. Try again.')
+          result = value
+        } catch {
+          // Timeouts, aborts, transport errors, oversize, and malformed bodies all surface as the same typed message.
+          requestController.abort()
+          throw new Error('Seosmith reports could not load. Try again.')
+        } finally { clearTimeout(deadline) }
+      } else if (boundedSavedDetail) {
+        const token = await ws.accessToken()
+        if (!token) throw new Error('Your session has ended. Sign in again.')
+        const response = await fetch(`/api/websites/${site}/seo/audits/${id}/dashboard`, { headers: { Authorization: `Bearer ${token}` }, redirect: 'follow', signal: requestController.signal })
         if (!response.ok || !JSON_CONTENT_TYPE.test(response.headers.get('content-type') || '')) {
           requestController.abort()
           throw new Error('Seosmith reports could not load. Try again.')
@@ -58,7 +74,7 @@ export function useSeosmith() {
     const gen = generation, site = ws.selectedId.value, user = ws.user.value?.id
     importing.value = true; error.value = ''; notice.value = ''
     try {
-      if (file.size > 4_952_756) throw new Error('Choose a JSON report at most 4,952,756 bytes.')
+      if (file.size > SAVED_DETAIL_MAX_BYTES) throw new Error('Choose a JSON report at most 4,952,756 bytes.')
       const report_json = await file.text()
       try { JSON.parse(report_json) } catch { throw new Error('This file is not a valid JSON report.') }
       const receipt = await ws.request<{delivery_id: string}>(`/api/websites/${site}/seo/audits/import`, { method: 'POST', body: { report_json } })

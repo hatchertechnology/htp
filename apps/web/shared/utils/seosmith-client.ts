@@ -19,3 +19,33 @@ export function resolveSeosmithReadPath(path: string, staticDashboard: boolean, 
   const [, site, run] = match
   return `${websiteApiOrigin(apiBaseUrl)}/websites/${site}/seo/audits${run ? `/${run}` : ''}`
 }
+
+// Static detail bounds. The size matches the import limit the API enforces on report_json; the deadline matches the bounded server proxy.
+export const SAVED_DETAIL_MAX_BYTES = 4_952_756
+export const SAVED_DETAIL_DEADLINE_MS = 120_000
+
+// Reads a response body as JSON text, refusing a declared or streamed body above maxBytes.
+// Throws on any transport error, cap breach or malformed JSON. Callers own the deadline via the signal.
+export async function readBoundedJson(response: Response, maxBytes: number): Promise<unknown> {
+  const declared = Number(response.headers.get('content-length'))
+  if (response.headers.get('content-length') !== null && (!Number.isFinite(declared) || declared > maxBytes)) throw new Error('Saved detail exceeds the size limit.')
+  const chunks: Uint8Array[] = []
+  let total = 0
+  if (response.body) {
+    const reader = response.body.getReader()
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel()
+        throw new Error('Saved detail exceeds the size limit.')
+      }
+      chunks.push(value)
+    }
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
+  return JSON.parse(new TextDecoder().decode(bytes))
+}
