@@ -9,6 +9,9 @@
   "scripts": {
     "dev": "nuxt dev --host 127.0.0.1 --port 3001",
     "build": "nuxt build",
+    "build:static": "node scripts/build-static-dashboard.mjs",
+    "static:serve": "npx --yes wrangler@4.168.0 dev --config wrangler.jsonc --ip 127.0.0.1 --port 8788",
+    "static:smoke": "node tests/static-dashboard/smoke.mjs",
     "start": "node .output/server/index.mjs",
     "preview": "nuxt preview --port 3001",
     "postinstall": "nuxt prepare",

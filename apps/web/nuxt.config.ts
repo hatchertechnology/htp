@@ -1,7 +1,11 @@
 const apiBaseUrl = 'https://htp-api-kerry-hatcher.fly.dev'
+// Opt-in static dashboard build (Cloudflare Workers Static Assets). Default
+// builds keep SSR and the Nitro server for the Fly deployment.
+const staticDashboardBuild = process.env.HTP_WEB_BUILD_TARGET === 'static'
 
 export default defineNuxtConfig({
   compatibilityDate: '2026-10-28',
+  ssr: !staticDashboardBuild,
   modules: ['@nuxt/ui'],
   css: ['~/assets/css/main.css'],
   devtools: { enabled: false },
@@ -28,6 +32,9 @@ export default defineNuxtConfig({
       rolloutComparisons: false,
       rolloutComparisonsReadOnly: false,
       boundedSavedDetail: false,
+      // Selects the static dashboard client path (NUXT_PUBLIC_STATIC_DASHBOARD).
+      // Default false keeps the Fly/SSR behavior unchanged.
+      staticDashboard: false,
       rolloutLifecycle: false,
       rolloutRemediation: false,
       apiBaseUrl,
