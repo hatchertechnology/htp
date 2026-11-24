@@ -8,6 +8,7 @@ const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
 // This route has a different contract from the generic proxy: a late upstream
 // failure terminates the response. The dashboard must consume and validate it.
 export async function streamSavedDetail(event: H3Event) {
+  setHeader(event, 'Cache-Control', 'no-store')
   if (useRuntimeConfig(event).public.boundedSavedDetail !== true) throw createError({ statusCode: 404 })
   const user = await requireDashboardUser(event)
   const id = getRouterParam(event, 'id'), run = getRouterParam(event, 'run')
@@ -16,13 +17,12 @@ export async function streamSavedDetail(event: H3Event) {
   const res = event.node.res
   const onClose = () => { if (!res.writableFinished) abort.abort() }
   res.once('close', onClose)
-  const timer = setTimeout(() => abort.abort(), 30_000)
+  // Bound both header wait and a stalled body; late expiry terminates the stream.
+  const timer = setTimeout(() => abort.abort(), 120_000)
   try {
     const upstream = await fetch(`${useRuntimeConfig(event).apiBaseUrl.replace(/\/$/, '')}/websites/${id}/seo/audits/${run}`, {
       headers: { Authorization: user.authorization }, redirect: 'error', signal: abort.signal,
     })
-    clearTimeout(timer) // Match the existing proxy's header timeout.
-    setHeader(event, 'Cache-Control', 'no-store')
     setHeader(event, 'Content-Type', upstream.headers.get('content-type') || 'application/octet-stream')
     setResponseStatus(event, upstream.status)
     if (!upstream.body) { res.end(); return }

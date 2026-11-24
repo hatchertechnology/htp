@@ -1,6 +1,7 @@
 import type { AuditDetail, AuditHistory, AuditRun } from '../../shared/types/seosmith'
 export function useSeosmith() {
   const ws = useWorkspace()
+  const boundedSavedDetail = useRuntimeConfig().public.boundedSavedDetail === true
   const runs = ref<AuditRun[]>([]), selected = ref<AuditDetail | null>(null)
   const busy = ref(false), detailBusy = ref(false), importing = ref(false), error = ref(''), notice = ref('')
   const cursor = ref<AuditHistory['next_cursor']>(null)
@@ -11,11 +12,11 @@ export function useSeosmith() {
     detailController?.abort(); const requestController = new AbortController(); detailController = requestController; selected.value = null; detailBusy.value = true; error.value = ''
     try {
       let result: AuditDetail
-      if (useRuntimeConfig().public.boundedSavedDetail === true) {
+      if (boundedSavedDetail) {
         const token = await ws.accessToken()
         if (!token) throw new Error('Your session has ended. Sign in again.')
         const response = await fetch(`/api/websites/${site}/seo/audits/${id}/dashboard`, { headers: { Authorization: `Bearer ${token}` }, signal: requestController.signal })
-        if (!response.ok) throw new Error('Seosmith reports could not load. Try again.')
+        if (!response.ok || !/^application\/(?:[\w.+-]+\+)?json(?:\s*;|$)/i.test(response.headers.get('content-type') || '')) throw new Error('Seosmith reports could not load. Try again.')
         // response.json() rejects a truncated transport and malformed or empty JSON.
         const value: unknown = await response.json()
         if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Seosmith reports could not load. Try again.')
