@@ -192,7 +192,7 @@ impl FormVerifier {
         let status = response.status();
         let body = response.bytes().await.map_err(|_| BEGIN_UNKNOWN)?;
         if status == StatusCode::OK {
-            return begin_result(&body, &input.hostname).ok_or(UNAVAILABLE);
+            return begin_result(&body, &input.hostname).ok_or(BEGIN_UNKNOWN);
         }
         Err(map_begin_error(status, &body))
     }
@@ -621,7 +621,7 @@ mod tests {
                     &begin_input("www.example.com")
                 )
                 .await,
-            Err(UNAVAILABLE)
+            Err(BEGIN_UNKNOWN)
         );
     }
 

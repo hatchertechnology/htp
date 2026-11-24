@@ -17,7 +17,7 @@ Both run as the signed-in owner. The caller's bearer is forwarded with the publi
 
 ## Gate
 
-`HTP_FORMS_VERIFICATION_MCP=true` enables both entry points. Any other value, or unset, fails closed. Disabled REST returns 404 and never calls upstream. Disabled MCP tools are absent from the listing and return `forms_verification_disabled` if called directly.
+`HTP_FORMS_VERIFICATION_MCP=true` enables both entry points. Any other value, or unset, fails closed. Disabled REST returns 404 and never calls upstream. Disabled MCP tools are unregistered and absent from the listing.
 
 The database grants are still the authority. If `begin_form_host_verification` or `form_host_challenge` is not granted to `authenticated` for the site, the call fails as not found. The server flag cannot grant access.
 
