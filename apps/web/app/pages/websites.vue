@@ -8,6 +8,7 @@ const toast = useToast()
 const workspace = useWorkspace()
 const formsConfig = useRuntimeConfig().public
 const formsPilotEnabled = formsConfig.rolloutFormsPilot === true
+const formsVerificationEnabled = formsConfig.rolloutFormsVerification === true
 const formsEnabled = formsConfig.rolloutForms === true
 const propertySite = ref<Website | null>(null)
 const propertyId = ref('')
@@ -91,7 +92,8 @@ watch(() => user.value?.id, () => { cancelEdit(); removing.value = null })
                 <div class="website-form-actions"><UButton type="submit" :loading="propertyBusy">Save property</UButton><UButton variant="outline" color="neutral" :disabled="propertyBusy" @click="propertySite = null">Cancel</UButton></div>
               </form>
               <RepositorySettings :website-id="website.id" :fqdn="website.fqdn" />
-              <WebsiteForms v-if="formsEnabled || formsPilotEnabled" :website-id="website.id" :fqdn="website.fqdn" :mode="formsPilotEnabled ? 'pilot' : 'legacy'" />
+              <WebsiteFormVerification v-if="formsVerificationEnabled" :website-id="website.id" :fqdn="website.fqdn" />
+              <WebsiteForms v-if="!formsVerificationEnabled && (formsEnabled || formsPilotEnabled)" :website-id="website.id" :fqdn="website.fqdn" :mode="formsPilotEnabled ? 'pilot' : 'legacy'" />
               <div v-if="removing?.id === website.id" class="website-delete" role="group" :aria-label="`Confirm deletion of ${website.fqdn}`"><p>Delete <strong>{{ website.fqdn }}</strong>? This removes the website record and any empty form configuration. Websites with saved form responses or independent audit evidence cannot be deleted until those records are explicitly removed. If a notification is sending, try again after delivery.</p><div><UButton color="neutral" variant="outline" :disabled="saving" @click="removing = null">Cancel</UButton><UButton color="error" :loading="saving" @click="remove">Delete record</UButton></div></div>
             </li>
           </ul>
