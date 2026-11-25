@@ -20,16 +20,19 @@ production origin, run signed-in checks on the production hostname. Set
 `NUXT_PUBLIC_ROLLOUT_PROVIDER_CONNECT=true` on the production build after both
 registered Fly callbacks and the Rust provider flow have been verified.
 
+The hostname cutover below was completed on 2026-11-25, and the Nitro Fly web
+app `htp-web-kerry-hatcher` was then retired. `HTP_WEB_MANAGEMENT_HOST` now
+accepts only `htp.hatchtech.dev`. The steps are kept as a historical record.
+Routine dashboard releases only rebuild and deploy the static assets (step 3's
+`wrangler deploy`) and run the checks in step 4.
+
 1. Record the current Fly release, API origin and provider rollout settings,
    and the dashboard build flags. Configure
    `HTP_DASHBOARD_CORS_ORIGIN=https://htp.hatchtech.dev` on Fly and
-   verify the production-origin preflights. Keep
-   `HTP_WEB_MANAGEMENT_HOST=htp-web-kerry-hatcher.fly.dev` for any held
-   compatibility operations. Check that those operations still reach Fly.
+   verify the production-origin preflights.
 2. Select the Kerry Personal Cloudflare account containing the active
-   `hatchtech.dev` zone. Keep the healthy Fly web deployment and its hostname
-   certificate available for rollback. Record the existing CNAME target, proxy
-   status and TTL. Lower its TTL in advance and allow the previous TTL to expire.
+   `hatchtech.dev` zone. Record the existing CNAME target, proxy status and
+   TTL. Lower its TTL in advance and allow the previous TTL to expire.
 3. During cutover, remove the existing CNAME for `htp.hatchtech.dev` and deploy
    with `npx --yes wrangler@4.168.0 deploy --config wrangler.production.jsonc`.
    The deployment attaches the custom domain. A dry run checks the asset
@@ -39,12 +42,8 @@ registered Fly callbacks and the Rust provider flow have been verified.
    DNS and certificate changes can take time to propagate.
 
 For an asset regression, roll back the Cloudflare deployment to its previous
-working version. For a failed hostname cutover, remove `htp.hatchtech.dev`
-from the dashboard Worker’s Domains & Routes settings, then recreate the
-recorded Fly CNAME with its prior proxy setting and TTL. Verify public HTTPS
-and signed-in behavior on Fly. Restore the API origin and rollout settings
-from the pre-cutover snapshot if they changed. The Fly management selector
-can continue to point at the direct Fly web hostname.
+working version. The Fly web dashboard is retired, so rolling the hostname
+back to Fly is no longer possible.
 
 Owner Forms notification management is separately default-off:
 `NUXT_PUBLIC_ROLLOUT_FORMS_NOTIFICATIONS=true` must be explicitly baked into the
