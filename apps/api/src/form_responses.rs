@@ -297,7 +297,7 @@ struct DeleteResponseInput {
 #[tool_router(router = forms_response_tool_router, vis = "pub(crate)")]
 impl crate::mcp::WebsiteMcp {
     #[tool(
-        description = "Permanently delete exactly one explicitly selected pilot form response. Requires explicit user intent and confirm_delete=true. No bulk deletion. Unknown outcomes require inbox reconciliation before another explicit attempt. Default-off; signed-in pilot owner only.",
+        description = "Permanently delete exactly one explicitly selected pilot form response. Requires explicit user intent and confirm_delete=true. No bulk deletion. Unknown outcomes require inbox reconciliation before another explicit attempt. Default-off; visible to signed-in users when configured, executable only by the pilot owner.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,

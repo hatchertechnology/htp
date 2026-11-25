@@ -386,3 +386,109 @@ async fn delete_busy_and_uncertain_outcomes_remain_errors_without_retry() {
     assert_eq!(seen.lock().unwrap().len(), 2);
     task.abort();
 }
+
+#[tokio::test]
+async fn forms_result_preserves_error_status_and_unknown_success() {
+    use axum::response::IntoResponse;
+    for status in [
+        StatusCode::BAD_REQUEST,
+        StatusCode::UNAUTHORIZED,
+        StatusCode::NOT_FOUND,
+        StatusCode::CONFLICT,
+        StatusCode::BAD_GATEWAY,
+        StatusCode::SERVICE_UNAVAILABLE,
+    ] {
+        let result = forms_result(
+            (
+                status,
+                Json(json!({"code":"synthetic","error":"Public message"})),
+            )
+                .into_response(),
+        )
+        .await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.unwrap(),
+            json!({"code":"synthetic","error":"Public message","status":status.as_u16()})
+        );
+    }
+    // A successful HTTP status cannot establish a known write result if its
+    // public envelope cannot be read. Never turn this into a retryable success.
+    for body in [
+        Body::from("invalid json"),
+        Body::from(" ".repeat(8 * 1024 * 1024 + 1)),
+    ] {
+        let result = forms_result((StatusCode::OK, body).into_response()).await;
+        assert_eq!(result.is_error, Some(true));
+        let value = result.structured_content.unwrap();
+        assert_eq!(value["code"], "forms_result_unavailable");
+        assert_eq!(value["status"], 200);
+        assert!(value["error"].as_str().unwrap().contains("Reconcile"));
+    }
+}
+
+#[tokio::test]
+async fn forms_save_payload_bound_rejects_before_upstream() {
+    let (origin, seen, task) = fixture().await;
+    let result = call(
+        app(server(&origin, [true; 3], true)),
+        "save_website_form",
+        json!({"website_id":SITE,"form":{"form_key":"contact","name":"Contact",
+            "fields":[{"label":"x".repeat(crate::form_save::MAX_SAVE_BYTES)}],"active":false}}),
+        Some(OWNER),
+        true,
+    )
+    .await;
+    assert_eq!(result["result"]["isError"], true);
+    assert_eq!(
+        result["result"]["structuredContent"]["code"],
+        "invalid_request"
+    );
+    assert_eq!(result["result"]["structuredContent"]["status"], 400);
+    assert!(seen.lock().unwrap().is_empty());
+    task.abort();
+}
+
+#[tokio::test]
+async fn forms_discovery_is_configuration_scoped_not_session_identity() {
+    let service = app(server("http://127.0.0.1:1", [true; 3], true));
+    let owner = rpc(service.clone(), "tools/list", json!({}), Some(OWNER), true).await;
+    let other = rpc(
+        service,
+        "tools/list",
+        json!({}),
+        Some(Uuid::from_u128(99)),
+        true,
+    )
+    .await;
+    assert_eq!(owner["result"]["tools"], other["result"]["tools"]);
+    assert!(
+        other["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "save_website_form")
+    );
+}
+
+#[tokio::test]
+async fn secured_transport_caps_request_body_before_dispatch() {
+    let service = secured_service(crate::websites::WebsiteStore::new(
+        "http://127.0.0.1:1",
+        "synthetic-publishable",
+    ));
+    let response = Router::new()
+        .nest_service("/mcp", service)
+        .oneshot(
+            Request::post("/mcp")
+                .header("host", "localhost")
+                .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream")
+                .header("mcp-protocol-version", "2025-11-25")
+                .body(Body::from(" ".repeat(32 * 1024 * 1024 + 1)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}

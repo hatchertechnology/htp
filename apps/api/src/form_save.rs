@@ -48,6 +48,8 @@ pub(crate) fn enabled_from_env() -> bool {
 /// Shape caps copied from the `save_website_form` contract (see docs/forms).
 const MAX_FIELDS: usize = 32;
 const MAX_HOSTS: usize = 16;
+/// Canonical serialized form cap shared by REST and MCP, before any RPC.
+pub(crate) const MAX_SAVE_BYTES: usize = 2 * 1024 * 1024;
 /// Client deadline for the RPC, the same as the other user-scoped RPCs.
 const RPC_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -110,7 +112,7 @@ fn valid_form_key(key: &str) -> bool {
 
 /// Request body. Unknown fields are refused, so the caller cannot smuggle
 /// extra parameters past the contract. `form_id` absent means create.
-#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+#[derive(Debug, serde::Serialize, Deserialize, rmcp::schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SaveBody {
     #[serde(default)]
@@ -131,6 +133,7 @@ fn validate(body: &SaveBody) -> Result<(), SaveError> {
     if !valid_form_key(&body.form_key)
         || !(1..=MAX_FIELDS).contains(&body.fields.len())
         || body.host_ids.len() > MAX_HOSTS
+        || serde_json::to_vec(body).map_or(true, |bytes| bytes.len() > MAX_SAVE_BYTES)
     {
         return Err(INVALID);
     }
@@ -351,7 +354,7 @@ struct SaveFormInput {
 #[tool_router(router = forms_save_tool_router, vis = "pub(crate)")]
 impl crate::mcp::WebsiteMcp {
     #[tool(
-        description = "Save an inactive or active form for the scoped pilot website. Omit form_id to create; supply it to update. Activation requires verified host grants and database validation. On unknown outcome, list forms to reconcile before any further action; never blindly retry a create. Default-off; signed-in pilot owner only.",
+        description = "Save an inactive or active form for the scoped pilot website. Omit form_id to create; supply it to update. Activation requires verified host grants and database validation. On unknown outcome, list forms to reconcile before any further action; never blindly retry a create. Default-off; visible to signed-in users when configured, executable only by the pilot owner.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -384,6 +387,24 @@ impl crate::mcp::WebsiteMcp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_payload_canonical_byte_boundary() {
+        let mut body: SaveBody = serde_json::from_value(serde_json::json!({
+            "form_key":"contact","name":"","fields":[{}],"active":false
+        }))
+        .unwrap();
+        let overhead = serde_json::to_vec(&body).unwrap().len();
+        body.name = "x".repeat(MAX_SAVE_BYTES - overhead);
+        assert_eq!(serde_json::to_vec(&body).unwrap().len(), MAX_SAVE_BYTES);
+        assert_eq!(validate(&body), Ok(()));
+        body.name.push('x');
+        assert_eq!(validate(&body), Err(INVALID));
+        // Escaping is measured as serialized bytes, not source characters.
+        body.name = "\"".repeat(MAX_SAVE_BYTES / 2);
+        assert_eq!(validate(&body), Err(INVALID));
+    }
+
     use axum::{
         Router,
         body::Body,

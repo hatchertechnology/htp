@@ -1549,19 +1549,23 @@ fn owner_tool_router(
     router
 }
 
-// Convert the fixed typed handler's public envelope, retaining error semantics.
+// Convert the fixed typed handler envelope, preserving REST status on errors.
 pub(crate) async fn forms_result(response: axum::response::Response) -> CallToolResult {
-    let success = response.status().is_success();
+    let status = response.status();
+    let success = status.is_success();
     let bytes = axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024).await;
     let value = bytes.ok().and_then(|b| serde_json::from_slice(&b).ok());
-    let Some(value) = value else {
+    let Some(mut value) = value else {
         return CallToolResult::structured_error(
-            serde_json::json!({"code":"forms_result_unavailable","error":"Outcome unavailable. Reconcile the inbox before any further action."}),
+            serde_json::json!({"code":"forms_result_unavailable","status":status.as_u16(),"error":"Outcome unavailable. Reconcile the inbox before any further action."}),
         );
     };
     if success {
         CallToolResult::structured(value)
     } else {
+        if let Some(object) = value.as_object_mut() {
+            object.insert("status".into(), serde_json::json!(status.as_u16()));
+        }
         CallToolResult::structured_error(value)
     }
 }
