@@ -6,11 +6,10 @@
 //! privileged key is used. The feature is default-off and fails closed.
 //!
 //! Pilot affinity is enforced here too, not only in the dashboard. The API
-//! serves a single website and owner, named by `HTP_FORMS_PILOT_WEBSITE_ID` and
-//! `HTP_FORMS_PILOT_OWNER_ID`, the same pair the dashboard checks through
-//! `formsPilotWebsiteId` and `formsPilotOwnerId`. Any other website, or any
-//! other caller, gets the same not-found as a missing row, before any upstream
-//! call. A missing or malformed pilot pair disables the routes.
+//! serves the existing website/owner pair and an optional explicit second pair.
+//! Each request must match a website and its verified owner together before any
+//! upstream call. Invalid or ambiguous configuration disables the owner routes.
+//! See `docs/forms/second-owner-pilot.md` for configuration and notification limits.
 //!
 //! Projections and caps match the dashboard reads in
 //! `apps/web/app/components/WebsiteForms.vue`: forms and responses only, with
@@ -50,25 +49,64 @@ pub(crate) fn enabled_from_env() -> bool {
 }
 
 pub(crate) fn pilot_from_env() -> Option<PilotScope> {
-    parse_pilot(
-        std::env::var(PILOT_WEBSITE_VAR).ok().as_deref(),
-        std::env::var(PILOT_OWNER_VAR).ok().as_deref(),
+    let read = |name| match std::env::var(name) {
+        Ok(value) => Some(Some(value)),
+        Err(std::env::VarError::NotPresent) => Some(None),
+        Err(std::env::VarError::NotUnicode(_)) => None,
+    };
+    parse_pilots(
+        read(PILOT_WEBSITE_VAR)?.as_deref(),
+        read(PILOT_OWNER_VAR)?.as_deref(),
+        read("HTP_FORMS_SECOND_PILOT_WEBSITE_ID")?.as_deref(),
+        read("HTP_FORMS_SECOND_PILOT_OWNER_ID")?.as_deref(),
     )
 }
 
+/// The second pair is opt-in; partial, invalid or duplicate-site configuration
+/// disables all owner scopes. The same owner may explicitly own both sites.
+pub(crate) fn parse_pilots(
+    website: Option<&str>,
+    owner: Option<&str>,
+    second_website: Option<&str>,
+    second_owner: Option<&str>,
+) -> Option<PilotScope> {
+    let mut scope = parse_pilot(website, owner)?;
+    match (second_website, second_owner) {
+        (None, None) => {}
+        (Some(site), Some(owner)) => {
+            let second = parse_pilot(Some(site), Some(owner))?;
+            if second.website_id == scope.website_id {
+                return None;
+            }
+            scope.second = Some((second.website_id, second.owner_id));
+        }
+        _ => return None,
+    }
+    Some(scope)
+}
+
 /// Both values must be present and parse as UUIDs, or there is no pilot scope.
-fn parse_pilot(website: Option<&str>, owner: Option<&str>) -> Option<PilotScope> {
+pub(crate) fn parse_pilot(website: Option<&str>, owner: Option<&str>) -> Option<PilotScope> {
     Some(PilotScope {
+        second: None,
         website_id: Uuid::parse_str(website?).ok()?,
         owner_id: Uuid::parse_str(owner?).ok()?,
     })
 }
 
-/// The one website and owner this API serves.
+/// First pilot pair and optional second pair, validated together at startup.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PilotScope {
     pub website_id: Uuid,
     pub owner_id: Uuid,
+    pub(crate) second: Option<(Uuid, Uuid)>,
+}
+
+impl PilotScope {
+    pub(crate) fn matches(self, website: Uuid, owner: Uuid) -> bool {
+        (self.website_id == website && self.owner_id == owner)
+            || self.second == Some((website, owner))
+    }
 }
 
 const FORM_COLUMNS: &str = "id,form_key,name,fields,active";
@@ -570,7 +608,7 @@ fn pilot_match(
     ensure_enabled(state)?;
     let caller = caller.ok_or(UNAUTHORIZED)?;
     let pilot = state.pilot.ok_or(NOT_ENABLED)?;
-    Ok(website_id == pilot.website_id && caller.0.id == pilot.owner_id)
+    Ok(pilot.matches(website_id, caller.0.id))
 }
 
 /// Enablement, then pilot affinity. Any website other than the pilot website, or
@@ -759,6 +797,7 @@ mod tests {
 
     fn pilot() -> PilotScope {
         PilotScope {
+            second: None,
             website_id: uuid(SITE),
             owner_id: uuid(OWNER),
         }
@@ -924,6 +963,92 @@ mod tests {
     }
 
     #[test]
+    fn explicit_second_pair_is_complete_unambiguous_and_pairwise() {
+        let legacy = parse_pilots(Some(SITE), Some(OWNER), None, None).unwrap();
+        assert_eq!(legacy, pilot());
+        assert!(legacy.matches(uuid(SITE), uuid(OWNER)));
+        assert!(!legacy.matches(uuid(OTHER_SITE), uuid(OWNER)));
+        for (site, owner) in [
+            (Some(OTHER_SITE), None),
+            (None, Some(OTHER_OWNER)),
+            (Some(""), Some(OTHER_OWNER)),
+            (Some(OTHER_SITE), Some("bad")),
+            (Some(SITE), Some(OWNER)),
+            (Some(SITE), Some(OTHER_OWNER)),
+        ] {
+            assert_eq!(parse_pilots(Some(SITE), Some(OWNER), site, owner), None);
+        }
+        assert_eq!(
+            parse_pilots(None, None, Some(OTHER_SITE), Some(OTHER_OWNER)),
+            None
+        );
+        for owner in [OWNER, OTHER_OWNER] {
+            let scope =
+                parse_pilots(Some(SITE), Some(OWNER), Some(OTHER_SITE), Some(owner)).unwrap();
+            assert!(scope.matches(uuid(SITE), uuid(OWNER)));
+            assert!(scope.matches(uuid(OTHER_SITE), uuid(owner)));
+            assert!(!scope.matches(uuid(MISSING), uuid(owner)));
+            assert!(!scope.matches(uuid(OTHER_SITE), uuid(MISSING)));
+            if owner != OWNER {
+                assert!(!scope.matches(uuid(SITE), uuid(owner)));
+                assert!(!scope.matches(uuid(OTHER_SITE), uuid(OWNER)));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn second_pair_rest_inbox_and_eligibility_remain_pairwise() {
+        let fixture = fixture().await;
+        for owner in [OWNER, OTHER_OWNER] {
+            let scope = parse_pilots(Some(SITE), Some(OWNER), Some(OTHER_SITE), Some(owner));
+            let app = app(true, scope, fixture.reader.clone());
+            for suffix in ["", "/pilot-eligibility"] {
+                let uri = format!("/websites/{OTHER_SITE}/forms{suffix}");
+                let before = fixture.hits.load(Ordering::SeqCst);
+                let (status, _, _) = send(app.clone(), &uri, Some(owner)).await;
+                assert_eq!(status, StatusCode::OK);
+                assert!(fixture.hits.load(Ordering::SeqCst) > before);
+                let before = fixture.hits.load(Ordering::SeqCst);
+                let (status, _, body) = send(app.clone(), &uri, Some(MISSING)).await;
+                if suffix.is_empty() {
+                    assert_eq!(status, StatusCode::NOT_FOUND);
+                } else {
+                    assert_eq!(body, json!({"eligible":false}));
+                }
+                assert_eq!(fixture.hits.load(Ordering::SeqCst), before);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn second_pair_eligibility_requires_rls_and_denies_cross_pairs() {
+        let fixture = fixture().await;
+        let scope = parse_pilots(Some(OTHER_SITE), Some(OTHER_OWNER), Some(SITE), Some(OWNER));
+        let app = app(true, scope, fixture.reader.clone());
+        let uri = format!("/websites/{SITE}/forms/pilot-eligibility");
+        let (status, _, body) = send(app.clone(), &uri, Some(OWNER)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, json!({"eligible":true}));
+        let before = fixture.hits.load(Ordering::SeqCst);
+        for (site, owner) in [(SITE, OTHER_OWNER), (OTHER_SITE, OWNER)] {
+            for suffix in ["", "/pilot-eligibility"] {
+                let (status, _, body) = send(
+                    app.clone(),
+                    &format!("/websites/{site}/forms{suffix}"),
+                    Some(owner),
+                )
+                .await;
+                if suffix.is_empty() {
+                    assert_eq!(status, StatusCode::NOT_FOUND);
+                } else {
+                    assert_eq!(body, json!({"eligible":false}));
+                }
+            }
+        }
+        assert_eq!(fixture.hits.load(Ordering::SeqCst), before);
+    }
+
+    #[test]
     fn pilot_pair_must_be_complete_and_valid() {
         assert_eq!(parse_pilot(None, Some(OWNER)), None);
         assert_eq!(parse_pilot(Some(SITE), None), None);
@@ -931,6 +1056,7 @@ mod tests {
         assert_eq!(
             parse_pilot(Some(SITE), Some(OWNER)),
             Some(PilotScope {
+                second: None,
                 website_id: uuid(SITE),
                 owner_id: uuid(OWNER),
             })
@@ -1202,6 +1328,7 @@ mod tests {
         // The pilot names a site the fixture never shows to the caller.
         let fixture = fixture().await;
         let scope = PilotScope {
+            second: None,
             website_id: uuid(OTHER_SITE),
             owner_id: uuid(OWNER),
         };

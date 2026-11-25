@@ -3,6 +3,8 @@
 //! Exact `true` in `HTP_FORMS_OWNER_NOTIFICATION_API` plus the existing pilot pair
 //! permits these authenticated routes. Caller RLS governs reads; the existing
 //! write RPCs enforce current ownership and pilot approval transactionally.
+//! Notifications deliberately ignore the optional second owner pair: live catalog
+//! guards currently support only the first scoped website.
 //! Request/retry success means queued work, never delivery or verification.
 //! `uncertain` is preserved for owner reconciliation: a response resend can
 //! duplicate delivery, while an uncertain verification needs a fresh request.
@@ -110,7 +112,14 @@ pub(crate) fn state_from_env(
         client,
         reader,
         enabled: std::env::var("HTP_FORMS_OWNER_NOTIFICATION_API").as_deref() == Ok("true"),
-        pilot: crate::form_inbox::pilot_from_env(),
+        pilot: crate::form_inbox::parse_pilot(
+            std::env::var(crate::form_inbox::PILOT_WEBSITE_VAR)
+                .ok()
+                .as_deref(),
+            std::env::var(crate::form_inbox::PILOT_OWNER_VAR)
+                .ok()
+                .as_deref(),
+        ),
     }
 }
 #[derive(Clone, Copy, Deserialize)]
@@ -445,6 +454,7 @@ mod tests {
             reader: FormInboxReader::new(url, "publishable-fixture"),
             enabled: true,
             pilot: Some(PilotScope {
+                second: None,
                 website_id: ids().id,
                 owner_id: Uuid::from_u128(4),
             }),
@@ -455,6 +465,26 @@ mod tests {
             id: Uuid::from_u128(4),
         })
     }
+    #[test]
+    fn notifications_stay_on_first_pair_even_with_expanded_owner_scope() {
+        let mut s = state("http://127.0.0.1:1");
+        for owner in [caller().0.id, Uuid::from_u128(9)] {
+            s.pilot.as_mut().unwrap().second = Some((Uuid::from_u128(10), owner));
+            assert!(authorize(&s, Some(caller()), ids()).is_ok());
+            assert_eq!(
+                authorize(
+                    &s,
+                    Some(Extension(AuthenticatedUser { id: owner })),
+                    Ids {
+                        id: Uuid::from_u128(10),
+                        ..ids()
+                    }
+                ),
+                Err(NOT_FOUND)
+            );
+        }
+    }
+
     #[test]
     fn scope_and_default_off() {
         let mut s = state("http://127.0.0.1:1");
@@ -862,6 +892,7 @@ aKpDb+KKizP4pOlKiw3Ov4v43RK43imyuQMfaETyK/spnMZg78WYdE5w
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, jwks).await.unwrap() });
         let pilot = PilotScope {
+            second: None,
             website_id: Uuid::from_u128(1),
             owner_id: Uuid::from_u128(2),
         };

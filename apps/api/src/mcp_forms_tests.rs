@@ -20,6 +20,7 @@ type Seen = Arc<Mutex<Vec<(String, Value)>>>;
 fn server(origin: &str, flags: [bool; 3], scoped: bool) -> WebsiteMcp {
     let store = crate::websites::WebsiteStore::new(origin, "synthetic-publishable");
     let pilot = scoped.then_some(crate::form_inbox::PilotScope {
+        second: None,
         website_id: SITE,
         owner_id: OWNER,
     });
@@ -703,5 +704,58 @@ async fn status_wrong_scope_and_ambiguous_results_are_sanitized_without_retry() 
         assert!(!result.to_string().contains("raw_content"));
     }
     assert_eq!(seen.lock().unwrap().len(), 8);
+    task.abort();
+}
+
+#[tokio::test]
+async fn second_pilot_mcp_uses_shared_pairwise_authorization() {
+    let (origin, seen, task) = fixture().await;
+    let second_site = Uuid::from_u128(10);
+    let stranger = Uuid::from_u128(99);
+    for second_owner in [OWNER, Uuid::from_u128(11)] {
+        let mut mcp = server(&origin, [true; 3], true);
+        let mut scope = mcp.inbox.pilot.unwrap();
+        scope.second = Some((second_site, second_owner));
+        mcp.inbox.pilot = Some(scope);
+        mcp.save.pilot = Some(scope);
+        mcp.responses.pilot = Some(scope);
+        let app = app(mcp);
+        for (name, mut input) in [
+            ("list_form_hosts", json!({})),
+            ("list_website_forms", json!({})),
+            ("list_form_responses", json!({"form_id":FORM})),
+            (
+                "save_website_form",
+                json!({"form":{"form_key":"contact","name":"Contact","fields":[{"key":"name","label":"Name","kind":"text","required":true,"max_length":100}],"active":false,"host_ids":[]}}),
+            ),
+            (
+                "set_form_response_status",
+                json!({"form_id":FORM,"response_id":RESPONSE,"status":"reviewed"}),
+            ),
+            (
+                "delete_form_response",
+                json!({"form_id":FORM,"response_id":RESPONSE,"confirm_delete":true}),
+            ),
+        ] {
+            input["website_id"] = json!(second_site);
+            let before = seen.lock().unwrap().len();
+            let result = call(app.clone(), name, input.clone(), Some(second_owner), true).await;
+            assert_eq!(result["result"]["isError"], false, "{name}: {result}");
+            assert_eq!(seen.lock().unwrap().len(), before + 1);
+            for (site, owner) in [(second_site, stranger), (stranger, second_owner)]
+                .into_iter()
+                .chain((second_owner != OWNER).then_some((SITE, second_owner)))
+                .chain((second_owner != OWNER).then_some((second_site, OWNER)))
+            {
+                input["website_id"] = json!(site);
+                let result = call(app.clone(), name, input.clone(), Some(owner), true).await;
+                assert_eq!(
+                    result["result"]["structuredContent"]["code"], "not_found",
+                    "{name}: {result}"
+                );
+            }
+            assert_eq!(seen.lock().unwrap().len(), before + 1);
+        }
+    }
     task.abort();
 }
