@@ -5,26 +5,32 @@ const props = defineProps<{ websiteId: string; formId: string }>()
 const auth = useAuth(), config = useRuntimeConfig()
 const recipients = ref<Recipient[]>([]), jobs = ref<Delivery[]>([])
 const moreRecipients = ref(false), moreJobs = ref(false), busy = ref(false), unresolved = ref(false), email = ref(''), message = ref(''), error = ref('')
+const offsets = { recipients: 0, 'delivery-jobs': 0 }
+const readError = ref('')
+function appendUnique<T extends { id: string }>(current: T[], incoming: T[]): T[] {
+  return [...new Map([...current, ...incoming].map(row => [row.id, row])).values()]
+}
 let generation = 0
 onBeforeUnmount(() => { generation++ })
 async function page(collection: Collection, more = false) {
   const token = await auth.accessToken()
   if (!token) throw sessionEndedError()
-  const offset = more ? (collection === 'recipients' ? recipients.value.length : jobs.value.length) : 0
+  const offset = more ? offsets[collection] : 0
   const value = await $fetch(notificationUrl(props.websiteId, props.formId, collection, config.public.apiBaseUrl, offset), { headers: { Authorization: `Bearer ${token}` }, retry: 0, redirect: 'error' })
   return notificationPage(value, collection)
 }
-async function read(collection?: Collection, more = false) {
+async function read(collection?: Collection, more = false, preserveFeedback = false) {
   if (busy.value) return
   const ticket = generation
-  busy.value = true; error.value = ''
+  busy.value = true; readError.value = ''
+  if (!preserveFeedback) error.value = ''
   try {
     const [r, j] = await Promise.all([collection === 'delivery-jobs' ? null : page('recipients', more), collection === 'recipients' ? null : page('delivery-jobs', more)])
     if (ticket !== generation) return
-    if (r) { recipients.value = more ? [...recipients.value, ...r.items as Recipient[]] : r.items as Recipient[]; moreRecipients.value = r.has_more }
-    if (j) { jobs.value = more ? [...jobs.value, ...j.items as Delivery[]] : j.items as Delivery[]; moreJobs.value = j.has_more }
+    if (r) { offsets.recipients = (more ? offsets.recipients : 0) + r.items.length; recipients.value = more ? appendUnique(recipients.value, r.items as Recipient[]) : r.items as Recipient[]; moreRecipients.value = r.has_more }
+    if (j) { offsets['delivery-jobs'] = (more ? offsets['delivery-jobs'] : 0) + j.items.length; jobs.value = more ? appendUnique(jobs.value, j.items as Delivery[]) : j.items as Delivery[]; moreJobs.value = j.has_more }
     if (!collection) unresolved.value = false
-  } catch { if (ticket === generation) error.value = 'Could not read notification metadata. Reload before another attempt.' }
+  } catch { if (ticket === generation) readError.value = 'Could not read notification metadata. Reload before another attempt.' }
   finally { if (ticket === generation) busy.value = false }
 }
 async function write(action: 'create' | 'disable' | 'retry', row?: Recipient | Delivery) {
@@ -50,7 +56,7 @@ async function write(action: 'create' | 'disable' | 'retry', row?: Recipient | D
     error.value = unresolved.value ? 'Outcome unknown. The request was not retried. Reload recipients and delivery jobs, and check provider records before another explicit attempt.' : 'Request refused or not sent. Reload notification metadata before trying again.'
   } finally { if (ticket === generation) busy.value = false }
   // Unknown outcomes stay locked until an explicit successful full readback.
-  if (!unresolved.value && ticket === generation) await read()
+  if (!unresolved.value && ticket === generation) await read(undefined, false, true)
 }
 onMounted(() => read())
 </script>
@@ -58,6 +64,7 @@ onMounted(() => read())
   <section class="forms-block" aria-label="Form notifications">
     <h4>Notification recipients and delivery</h4>
     <p>Recipients must verify their address. Queue acceptance does not confirm email delivery. “sent” records provider acceptance, not inbox arrival.</p>
+    <p v-if="readError" role="alert">{{ readError }}</p>
     <p v-if="error" role="alert">{{ error }}</p><p v-if="message" role="status">{{ message }}</p>
     <UButton :disabled="busy" color="neutral" variant="outline" @click="read()">Reload notification metadata</UButton>
     <form @submit.prevent="write('create')"><label>Email address <input v-model="email" type="email" required maxlength="254"></label><UButton type="submit" :disabled="busy || unresolved">Request verification</UButton></form>
