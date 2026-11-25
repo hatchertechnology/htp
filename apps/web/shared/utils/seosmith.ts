@@ -9,8 +9,20 @@ export function severityCount(summary: AuditSummary | null | undefined, severity
 }
 export function auditValue(run: AuditRun, metric: AuditMetric): number | null {
   const s = run.summary
-  const value = metric === 'findings' ? s.findings : metric === 'rate' ? (s.pages.checked ? s.findings / s.pages.checked * 100 : null) : metric === 'checked' || metric === 'http_errors' ? s.pages[metric] : s.severities?.[metric as Severity]
+  const value = metric === 'findings' ? s.findings : metric === 'rate' ? (s.pages.checked ? s.findings / s.pages.checked * 100 : null) : metric === 'checked' || metric === 'http_errors' ? s.pages[metric] : severityCount(s, metric as Severity)
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
+export const evidenceSchema = (version: number | undefined) => version === 2 || version === 4
+// Evidence-path eligibility for the dashboard's compare button: equal evidence
+// schema (2/2 or 4/4, never 2/4) with matching comparison key, engine and ruleset.
+export function sameEvidenceScope(a: AuditRun, b: AuditRun): boolean {
+  return evidenceSchema(a.summary.schema_version) && a.summary.schema_version === b.summary.schema_version
+    && !!a.summary.comparison_key && a.summary.comparison_key === b.summary.comparison_key
+    && !!a.summary.engine_version && a.summary.engine_version === b.summary.engine_version
+    && !!a.summary.ruleset_version && a.summary.ruleset_version === b.summary.ruleset_version
+}
+export function canCompareRuns(a: AuditRun | null | undefined, b: AuditRun | null | undefined): boolean {
+  return !!(a && b && (comparable(a, b) || sameEvidenceScope(a, b)))
 }
 export function comparable(a: AuditRun, b: AuditRun): boolean {
   return [a, b].every(run => (run.summary.schema_version === 1 || run.summary.schema_version === 2)

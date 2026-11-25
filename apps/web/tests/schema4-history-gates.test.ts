@@ -1,10 +1,10 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { lifecycleHistory } from '../shared/utils/seosmith-lifecycle'
 import { urlHistoryDeltas, type UrlHistoryRow } from '../shared/utils/seosmith-url-history'
 import { isSavedDetail } from '../shared/utils/saved-detail-validation'
 import { findingPriority } from '../shared/utils/seosmith-remediation'
-import type { AuditDetail, AuditEvaluation, AuditReport, AuditSummary } from '../shared/types/seosmith'
+import { canCompareRuns, sameEvidenceScope } from '../shared/utils/seosmith'
+import type { AuditRun, AuditDetail, AuditEvaluation, AuditReport, AuditSummary } from '../shared/types/seosmith'
 
 // Schema 4 carries the same optional S01 evidence v1 as schema 2. These cases
 // pin that the display and history gates accept 4/4 and 2/2 and still refuse
@@ -85,19 +85,27 @@ describe('remediation coverage basis', () => {
   })
 })
 
-describe('component gates', () => {
-  const source = (name: string) => readFileSync(new URL(`../app/components/${name}`, import.meta.url), 'utf8')
-  it('lets AuditCoverage read schema-4 evidence', () => {
-    const text = source('AuditCoverage.vue')
-    expect(text.includes("<template v-if=\"(audit.report.schema_version === 2 || audit.report.schema_version === 4) && audit.report.evidence_contract?.version === 1\">")).toBe(true)
-    expect(/report\.schema_version === 2 && /.test(text)).toBe(false)
+describe('dashboard comparison gates (pure predicates the component calls)', () => {
+  const asRun = (d: AuditDetail) => ({ ...d, summary: { ...d.summary, outcome: 'completed', coverage_complete: true, evaluation_coverage_complete: true } }) as unknown as AuditRun
+  const a4 = asRun(run('02', 4, 'pass')), b4 = asRun(run('01', 4, 'fail'))
+  const a2 = asRun(run('02', 2, 'pass')), b2 = asRun(run('01', 2, 'fail'))
+  it('compares 4/4 and 2/2 and refuses 2/4 in both directions', () => {
+    expect(canCompareRuns(a4, b4)).toBe(true)
+    expect(canCompareRuns(a2, b2)).toBe(true)
+    expect(canCompareRuns(a4, b2)).toBe(false)
+    expect(canCompareRuns(a2, b4)).toBe(false)
   })
-  it('lets the dashboard reach schema-4 history, comparison and coverage', () => {
-    const text = source('SeosmithDashboard.vue')
-    expect(/schema_version (===|!==) 2 (\?|\|\| report\.evidence)/.test(text)).toBe(false)
-    expect(text).toContain('report.schema_version !== 2 && report.schema_version !== 4')
-    expect(text).toContain('a.summary.schema_version === b.summary.schema_version')
-    expect(text).toContain('run.summary.schema_version !== current.summary.schema_version')
-    expect(text).toContain('<AuditCoverage v-if="selected.report.schema_version !== 4 || selected.report.evidence_contract?.version === 1"')
+  it('refuses other schemas and mismatched scope', () => {
+    for (const schema of [3, 5]) expect(canCompareRuns(asRun(run('02', schema, 'pass')), asRun(run('01', schema, 'pass')))).toBe(false)
+    expect(canCompareRuns(a4, null)).toBe(false)
+    expect(sameEvidenceScope(a4, { ...b4, summary: { ...b4.summary, comparison_key: 'other' } } as AuditRun)).toBe(false)
+    expect(sameEvidenceScope(a4, { ...b4, summary: { ...b4.summary, engine_version: 'e2' } } as AuditRun)).toBe(false)
+    expect(sameEvidenceScope(a4, { ...b4, summary: { ...b4.summary, ruleset_version: 'r2' } } as AuditRun)).toBe(false)
+  })
+  it('history walk scope stops at a schema change', () => {
+    const history = [a4, asRun(run('00', 2, 'pass')), asRun(run('09', 4, 'pass'))]
+    const taken: AuditRun[] = []
+    for (const r of history.slice(1)) { if (!sameEvidenceScope(r, a4)) break; taken.push(r) }
+    expect(taken).toEqual([])
   })
 })

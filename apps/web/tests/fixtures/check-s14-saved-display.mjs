@@ -81,6 +81,14 @@ const noCoverageSummary = { ...partialSummary }
 delete noCoverageSummary.rule_coverage
 delete noCoverageSummary.severities
 details.push({ ...details[1], delivery_id: noCoverageId, summary: noCoverageSummary, summary_text: undefined, summary_sha256: undefined })
+// Runs P1/P2 are an equal-schema (4/4) pair with a shared comparison key, engine
+// and ruleset; Q is an older schema-2 run with the same key. Selecting P2 must
+// offer no comparison against Q (2/4), while P1 against P2 (4/4) is offered.
+const pairId = ['00000000-0000-4000-8000-000000000014', '00000000-0000-4000-8000-000000000015', '00000000-0000-4000-8000-000000000016']
+const pairSummary = { ...completeSummary, comparison_key: 'sha256:pair' }
+details.push({ ...details[0], delivery_id: pairId[0], scan_at: '2026-11-16T11:40:00Z', summary: { ...pairSummary, finished_at: '2026-11-16T11:40:30Z' } })
+details.push({ ...details[0], delivery_id: pairId[1], scan_at: '2026-11-16T11:39:00Z', summary: { ...pairSummary, finished_at: '2026-11-16T11:39:30Z' } })
+details.push({ ...details[0], delivery_id: pairId[2], scan_at: '2026-11-16T11:38:00Z', summary: { ...pairSummary, schema_version: 2, finished_at: '2026-11-16T11:38:30Z' } })
 const runs = details.map(({ report, report_json, ...run }) => run)
 const ruleTotals = coverage => {
   const claims = Object.values(coverage ?? {}).map(rule => rule.coverage !== 'complete_verified' ? 'unverified' : rule.reported_findings > 0 ? 'findings' : 'clean')
@@ -114,7 +122,7 @@ function installRoutes(target, log) {
 }
 
 const browser = await chromium.launch({ headless: true })
-const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+const page = await browser.newPage({ viewport: { width: 390, height: 844 }, timezoneId: 'America/New_York', locale: 'en-US' })
 const errors = [], calls = []
 page.on('pageerror', error => errors.push(error.message))
 await page.addInitScript(authInit, { token, exp, user })
@@ -292,6 +300,39 @@ try {
   assert.ok(!noCryptoCalls.some(call => call.startsWith('BLOCKED')), noCryptoCalls.join('\n'))
   assert.ok(noCryptoCalls.filter(call => /^(POST|PUT|PATCH|DELETE) /.test(call)).every(call => noCryptoCalls.includes(`ABORTED ${call}`)))
   await noCryptoPage.close()
+
+  // Owner decision: the UI shows viewer-local time with a zone label; the UTC
+  // instant stays in <time datetime>/title. The semantics panel follows it.
+  await page.getByLabel('Inspect a run', { exact: true }).selectOption(ids[0])
+  await panel.getByText(/Complete verified/).waitFor()
+  await panel.locator('summary', { hasText: 'Provenance and raw digests' }).click()
+  const received = panel.locator(`time[datetime="${time}"]`)
+  assert.equal(await received.getAttribute('title'), time)
+  assert.match(await received.innerText(), /^Nov 16, 2026, 7:02 AM EST$/)
+  assert.doesNotMatch(await panel.locator('details').first().innerText(), / UTC\b/)
+
+  // Reconstructed exports are named so; exact retained bytes keep the plain name.
+  const filename = async (target, name) => { const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name, exact: true }).click()]); return download.suggestedFilename() }
+  assert.equal(await filename(page, 'Download run JSON'), `seosmith-${ids[0]}.json`)
+  await page.getByLabel('Inspect a run', { exact: true }).selectOption(ids[5])
+  await panel.getByText(/Complete verified/).waitFor()
+  assert.equal(await filename(page, 'Download run JSON'), `seosmith-${ids[5]}-reconstructed.json`)
+
+  // A zero-critical schema-4 run is a plotted point of 0, not a gap.
+  await page.getByLabel('Audit chart metric').selectOption('critical')
+  const plotted = await page.locator('.seo-trend svg circle').count()
+  assert.equal(plotted, runs.length, 'every run with a scan time plots, including zero-critical schema-4 runs')
+  assert.match(await page.locator('.seo-trend svg circle').first().getAttribute('aria-label'), /: 0 Critical findings/)
+
+  // Comparison gates: 4/4 with matching key is offered; 4 against 2 is not.
+  const compare = page.getByRole('button', { name: 'Compare findings with baseline', exact: true })
+  await page.getByLabel('Inspect a run', { exact: true }).selectOption(pairId[0])
+  await page.getByLabel('Comparison baseline').waitFor()
+  assert.equal(await compare.count(), 1, '4/4 pair offers comparison')
+  await page.getByLabel('Inspect a run', { exact: true }).selectOption(pairId[1])
+  await page.getByLabel('Comparison baseline').waitFor()
+  assert.equal(await compare.count(), 0, '4 against 2 offers no comparison')
+  await page.getByText(/Finding changes are unavailable against the selected baseline because .* schema version/).waitFor()
 
   console.log(`PASS: schema-4 receiver semantics in the normal dashboard (${mode} saved-read transport); complete, mixed partial, omitted and violation runs; future summary explicitly unsupported; retained summary text and retained report downloads verified by SHA-256; JSONB-reordered parsed summary not treated as receiver bytes; absent summary text and summary digest mismatch labeled; reconstructed exports labeled when bytes are absent; missing rule_coverage shown as unavailable instead of all-clean; unavailable digest computation distinct from a mismatch; reads only, no external traffic`)
   console.log(calls.join('\n'))

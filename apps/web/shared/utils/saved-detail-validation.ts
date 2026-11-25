@@ -34,6 +34,10 @@ function isSchema4Summary(value: RecordValue): boolean {
   if (!observationCounts(value.pages) || !optional(value.stop_reason, isString)) return false
   if (!optional(value.severities, isNumberMap) || !optional(value.summary_version, isNumber)) return false
   if (value.summary_version !== 5) return true
+  // The receiver always emits these; a v5 summary without them is malformed, and
+  // display must never turn an absent count into a reported zero.
+  if (!isNumber(value.findings) || !isString(value.started_at) || !isString(value.finished_at)
+    || !isString(value.engine_version) || !isString(value.ruleset_version) || !isNumberMap(value.record_counts)) return false
   return optional(value.audit_coverage, isString)
     && optional(value.wire_contract_version, isString)
     && optional(value.evidence_state, isString)

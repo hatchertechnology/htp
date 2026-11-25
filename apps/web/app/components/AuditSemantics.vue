@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AuditDetail } from '../../shared/types/seosmith'
+import { formatInstant } from '#shared/utils/local-time'
 import {
   SCHEMA4_SUMMARY_VERSION,
   auditCoverageLabel,
@@ -35,7 +36,8 @@ const showAllRules = ref(false)
 // coverage stay visible because those are the claims a reader must weigh.
 const visibleClaims = computed(() => showAllRules.value ? claims.value : claims.value.filter(entry => entry.claim !== 'verified-clean'))
 const omitted = computed(() => (shownSummary.value?.omitted_records ?? 0) + (shownSummary.value?.omitted_observations ?? 0))
-function stamp(value: string | null | undefined) { return value ? `${value.replace('T', ' ').replace('Z', '')} UTC` : 'Unavailable' }
+// Viewer-local time with a zone label (owner decision); the UTC instant stays in title/datetime.
+function stamp(value: string | null | undefined) { return value ? formatInstant(value) : 'Unavailable' }
 // The receiver emits an opaque summary text. We hash those exact bytes when the
 // detail retains them, and separately hash the retained report export. A parsed
 // summary object is not receiver-canonical: JSONB and object handling may
@@ -88,7 +90,7 @@ function downloadSummary() {
       <div><h3 id="audit-semantics-title">Receiver-verified semantics</h3><p class="report-caption">Schema {{ shownSummary?.schema_version }} summary version {{ shownSummary?.summary_version }} · wire contract {{ shownSummary?.wire_contract_version || 'unavailable' }} · evidence state {{ shownSummary?.evidence_state || 'unavailable' }}. Derived by the receiver from the retained report; not a re-crawl.</p></div>
       <button class="refresh-control" @click="downloadSummary">{{ retainedSummary.exact ? 'Download receiver summary' : 'Download reconstructed summary' }}</button>
     </header>
-    <p v-if="shownSummary?.coverage_complete === true" class="form-notice" role="status">Audit coverage: Complete verified. The whole expected finding population was independently reproduced for the retained evidence. A complete audit does not imply every rule is complete, and it does not mean the site is clean.</p>
+    <p v-if="shownSummary?.audit_coverage === 'complete_verified'" class="form-notice" role="status">Audit coverage: Complete verified. The whole expected finding population was independently reproduced for the retained evidence. A complete audit does not imply every rule is complete, and it does not mean the site is clean.</p>
     <p v-else class="form-notice" role="status">Audit coverage: {{ auditCoverageLabel(shownSummary?.audit_coverage) }}. Some checks did not complete, so a missing finding is unknown, not a pass.</p>
     <p v-if="omitted" class="form-notice" role="status">{{ shownSummary?.omitted_records ?? 0 }} records and {{ shownSummary?.omitted_observations ?? 0 }} observations were omitted; omitted evidence is unknown.</p>
     <div class="table-scroll">
@@ -115,7 +117,7 @@ function downloadSummary() {
     </div>
     <details>
       <summary>Provenance and raw digests</summary>
-      <p class="report-caption">Delivery {{ audit.delivery_id }} · {{ audit.ingestion_source === 'import' ? 'Imported report' : audit.ingestion_source === 'worker' ? 'Worker delivery' : 'Source unavailable' }} · received {{ stamp(audit.received_at) }} · engine {{ shownSummary?.engine_version || 'unknown' }} · ruleset {{ shownSummary?.ruleset_version || 'unknown' }} · observed {{ stamp(shownSummary?.started_at) }} to {{ stamp(shownSummary?.finished_at) }} · outcome {{ shownSummary?.stop_reason || shownSummary?.outcome }}.</p>
+      <p class="report-caption">Delivery {{ audit.delivery_id }} · {{ audit.ingestion_source === 'import' ? 'Imported report' : audit.ingestion_source === 'worker' ? 'Worker delivery' : 'Source unavailable' }} · received <time :datetime="audit.received_at ?? undefined" :title="audit.received_at ?? undefined">{{ stamp(audit.received_at) }}</time> · engine {{ shownSummary?.engine_version || 'unknown' }} · ruleset {{ shownSummary?.ruleset_version || 'unknown' }} · observed <time :datetime="shownSummary?.started_at ?? undefined" :title="shownSummary?.started_at ?? undefined">{{ stamp(shownSummary?.started_at) }}</time> to <time :datetime="shownSummary?.finished_at ?? undefined" :title="shownSummary?.finished_at ?? undefined">{{ stamp(shownSummary?.finished_at) }}</time> · outcome {{ shownSummary?.stop_reason || shownSummary?.outcome }}.</p>
       <p class="report-caption">Policy digest {{ shownSummary?.policy_digest || 'Unavailable' }} · manifest digest {{ shownSummary?.manifest_digest || 'Unavailable' }} · scope digest {{ shownSummary?.scope_digest || 'Unavailable' }} · comparison key {{ shownSummary?.comparison_key || 'Unavailable' }}. These SHA-256 digests bind the declared policy, manifest and scope; they do not authenticate the raw source bytes.</p>
       <p v-if="summaryDigest?.exact" class="report-caption">Retained summary text SHA-256 {{ summaryDigest.hex || 'unavailable' }} · {{ summaryDigest.bytes ?? 'unknown' }} bytes computed over the exact opaque summary text stored with this detail. Stored summary binding: {{ audit.summary_sha256 || 'not stored with this detail' }}<template v-if="audit.summary_bytes !== undefined"> · {{ audit.summary_bytes }} bytes</template>. The computed digest {{ summaryDigest.status === 'match' ? 'matches the stored summary digest' : summaryDigest.status === 'mismatch' ? 'does not match the stored summary digest' : summaryDigest.status === 'unavailable' ? 'could not be computed because Web Crypto is unavailable, so the comparison is unknown' : 'has no stored summary digest to compare against' }}. It binds the summary content only and is not the source report digest.</p>
       <p v-else class="report-caption">Retained summary text is {{ summaryDigest?.reason === 'invalid' ? 'present but not a valid summary object' : 'not stored with this detail' }}. The summary SHA-256 {{ summaryDigest?.hex || 'unavailable' }} · {{ summaryDigest?.bytes ?? 'unknown' }} bytes is computed over a reconstructed JSON serialization of the parsed summary, not the receiver's bytes. It is not receiver-canonical and must not be compared with the stored summary digest.</p>
