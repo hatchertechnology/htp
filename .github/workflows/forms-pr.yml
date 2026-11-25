@@ -29,7 +29,7 @@ jobs:
           changed=$(git diff --no-renames --name-only "$(git merge-base "$BASE_SHA" "$HEAD_SHA")" "$HEAD_SHA")
           complete=true
           required_changed=false
-          for required in apps/web/app/components/FormsNotifications.vue apps/web/shared/utils/forms-notification-client.ts apps/web/tests/forms-notification-client.test.ts apps/web/tests/fixtures/check-forms-static-notifications.mjs supabase/functions/_shared/limited_body.ts apps/api/src/form_ingress.rs apps/web/app/components/WebsiteForms.vue apps/web/server/utils/forms-pilot.ts apps/web/server/api/forms/pilot-eligibility.get.ts apps/web/tests/forms-pilot-auth.test.ts apps/web/tests/forms-pilot-eligibility.test.ts apps/web/tests/forms-confirm-gate.test.ts apps/web/tests/fixtures/check-forms-pilot.mjs apps/web/tests/fixtures/check-forms-api-cors.mjs apps/web/tests/fixtures/check-forms-pilot-api-cors.mjs scripts/test-forms-pilot-http.sh supabase/operations/forms-pilot-receipt.sql supabase/tests/fixtures/forms-pilot-scope/receipt-pg17.py supabase/tests/fixtures/forms-pilot-scope/seed.sql supabase/tests/fixtures/forms-pilot-scope/postgrest-check.mjs supabase/tests/website-forms.test.mjs supabase/tests/forms-client-admission.test.mjs supabase/tests/forms-host-challenge-quota.test.mjs supabase/tests/forms-activation-fixture.test.mjs supabase/tests/fixtures/forms-activation/host-proof-regrant.sql supabase/tests/fixtures/forms-activation/host-proof-rollback.sql supabase/migrations/20261201000000_forms_pilot_scope.sql supabase/rollbacks/20261201000000_forms_pilot_scope_disable.sql supabase/tests/forms-pilot-scope.test.mjs; do
+          for required in supabase/tests/forms-notification-integrated-local.py supabase/migrations/20261209000000_forms_notification_producer_fence.sql supabase/migrations/20261210000000_forms_notification_queue_maintenance.sql supabase/tests/forms-notification-producer-local.py supabase/tests/forms-delivery-maintenance-local.py supabase/migrations/20261208000000_forms_notification_claim_fence.sql supabase/tests/forms-delivery-claim-local.py supabase/tests/forms-delivery-scoped-claim-local.py apps/web/app/components/FormsNotifications.vue apps/web/shared/utils/forms-notification-client.ts apps/web/tests/forms-notification-client.test.ts apps/web/tests/fixtures/check-forms-static-notifications.mjs supabase/functions/_shared/limited_body.ts apps/api/src/form_ingress.rs apps/web/app/components/WebsiteForms.vue apps/web/server/utils/forms-pilot.ts apps/web/server/api/forms/pilot-eligibility.get.ts apps/web/tests/forms-pilot-auth.test.ts apps/web/tests/forms-pilot-eligibility.test.ts apps/web/tests/forms-confirm-gate.test.ts apps/web/tests/fixtures/check-forms-pilot.mjs apps/web/tests/fixtures/check-forms-api-cors.mjs apps/web/tests/fixtures/check-forms-pilot-api-cors.mjs scripts/test-forms-pilot-http.sh supabase/operations/forms-pilot-receipt.sql supabase/tests/fixtures/forms-pilot-scope/receipt-pg17.py supabase/tests/fixtures/forms-pilot-scope/seed.sql supabase/tests/fixtures/forms-pilot-scope/postgrest-check.mjs supabase/tests/website-forms.test.mjs supabase/tests/forms-client-admission.test.mjs supabase/tests/forms-host-challenge-quota.test.mjs supabase/tests/forms-activation-fixture.test.mjs supabase/tests/fixtures/forms-activation/host-proof-regrant.sql supabase/tests/fixtures/forms-activation/host-proof-rollback.sql supabase/migrations/20261201000000_forms_pilot_scope.sql supabase/rollbacks/20261201000000_forms_pilot_scope_disable.sql supabase/tests/forms-pilot-scope.test.mjs; do
             if [[ ! -f "$required" ]]; then complete=false; fi
             if grep -Fxq "$required" <<< "$changed"; then required_changed=true; fi
           done
@@ -93,10 +93,14 @@ jobs:
       - name: Test forms migrations and admission
         run: node --test tests/website-forms.test.mjs tests/forms-client-admission.test.mjs tests/forms-host-challenge-quota.test.mjs tests/forms-activation-fixture.test.mjs tests/forms-pilot-scope.test.mjs
       - name: Test notification claim and shutdown in PostgreSQL 17
+        env:
+          FORMS_TEST_POSTGRES_IMAGE: docker.io/library/postgres@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994
         run: |
-          docker pull public.ecr.aws/supabase/postgres:17.11.0.004
+          docker pull "$FORMS_TEST_POSTGRES_IMAGE"
           python3 tests/forms-delivery-claim-local.py
           python3 tests/forms-delivery-scoped-claim-local.py
+          python3 tests/forms-notification-integrated-local.py
+          python3 tests/forms-delivery-maintenance-local.py
 
   api:
     needs: scope

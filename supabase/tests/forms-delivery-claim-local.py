@@ -8,6 +8,7 @@ reuse seed(), sql() and check(), with separately versioned expected behavior.
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import time
@@ -15,7 +16,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'supabase/migrations/20261122000400_forms_notifications.sql'
-IMAGE = 'public.ecr.aws/supabase/postgres:17.11.0.004'
+IMAGE = os.environ.get('FORMS_TEST_POSTGRES_IMAGE', 'public.ecr.aws/supabase/postgres:17.11.0.004')
 # Pin the entire migration, not copied/reimplemented claimant logic.
 SOURCE_SHA256 = '10cd5137acadf4940c55ff0a5a872170455cc035177696a1058861bbdd9fa51c'
 NAME = 'forms-claim-fixture-' + uuid.uuid4().hex[:12]
