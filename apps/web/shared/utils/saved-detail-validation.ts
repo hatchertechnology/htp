@@ -91,7 +91,7 @@ function isReport(value: unknown): boolean {
   if (!value.pages.every(isPage) || !value.findings.every(isFinding)) return false
   const evidence = value.evidence_contract
   // Unknown versions stay available to the existing unsupported-evidence panel.
-  return !(value.schema_version === 2 && isRecord(evidence) && evidence.version === 1)
+  return !((value.schema_version === 2 || value.schema_version === 4) && isRecord(evidence) && evidence.version === 1)
     || isKnownEvidence(evidence)
 }
 

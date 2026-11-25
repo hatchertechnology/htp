@@ -81,7 +81,8 @@ function savedCoverage(detail: AuditDetail): { complete: boolean; basis: string 
       ? { complete: true, basis: 'saved receiver summary reports complete crawl coverage' }
       : { complete: false, basis: `saved receiver summary reports crawl coverage ${coverageLabel(summary.coverage_complete)}` }
   }
-  if (report.schema_version === 2 && report.evidence_contract?.version === 1) {
+  // Schema 4 reads the receiver's v5 summary; other summary versions are not verified here.
+  if ((report.schema_version === 2 || (report.schema_version === 4 && summary.summary_version === 5)) && report.evidence_contract?.version === 1) {
     const crawl = summary.crawl_coverage_complete
     const evaluation = summary.evaluation_coverage_complete
     return crawl === true && evaluation === true

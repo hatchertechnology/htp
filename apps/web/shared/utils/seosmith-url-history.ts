@@ -12,7 +12,7 @@ export function urlHistoryDeltas(rows: UrlHistoryRow[]): UrlHistoryDelta[] {
   return rows.map((current, index) => {
     const before=rows[index+1], now=current.property_digests, old=before?.property_digests
     if (!before || !(Date.parse(current.scan_at)>Date.parse(before.scan_at)) || current.evidence_state!=='available' || before.evidence_state!=='available'
-      || current.schema_version!=='2' || before.schema_version!=='2' || !current.comparison_key || current.comparison_key!==before.comparison_key
+      || (current.schema_version!=='2' && current.schema_version!=='4') || current.schema_version!==before.schema_version || !current.comparison_key || current.comparison_key!==before.comparison_key
       || !current.policy_digest || current.policy_digest!==before.policy_digest || !current.engine_version || current.engine_version!==before.engine_version
       || !current.ruleset_version || current.ruleset_version!==before.ruleset_version || !now || !old) return {state:'not_observed',changed:[],unknown:fields}
     const known=fields.filter(field=>typeof now[field]==='string' && typeof old[field]==='string')
