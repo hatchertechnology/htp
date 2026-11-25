@@ -2,10 +2,14 @@
 
 Rendered polish pass over the integrated static artifact (Forms flags on,
 eligible fixture site, read-only comparisons) at 1280×800 and 390×844, browser
-zone America/New_York, zero page errors. Screenshots:
-`/mnt/storage/worktrees/plans/htp139-evidence/polish/`. Mechanical detector:
-`.impeccable/critique/htp139/detect.json`. Critique re-run:
-`.impeccable/critique/htp139/critique-b2.md`.
+zone America/New_York, zero page errors. Screenshots are **viewport-height
+captures** (not full-page): a full-page shot paints a viewport-pinned sticky
+rail only for the first viewport, which reads as a white gap below the rail
+that does not exist in the live layout (verified by the reviewers' scrolled
+probes and by the sticky-rail assertion in `check-shell-static.mjs`).
+Screenshots: `/mnt/storage/worktrees/plans/htp139-evidence/polish/`.
+Mechanical detector: `.impeccable/critique/htp139/detect.json`. Critique
+re-run: `.impeccable/critique/htp139/critique-b2.md`.
 
 ## Findings — fixed by B in this pass
 
@@ -40,9 +44,12 @@ zone America/New_York, zero page errors. Screenshots:
 - **390px submissions-table column wrapping**
   (`app/components/FormsSubmissionsTable.vue`): the Name and Email columns
   wrapped mid-word ("Robi n Hatc her", "visit o r1@…"). Fixed in the ≤650px
-  block with `table { min-width: 720px }` and a 150px floor on value cells, so
-  the working sticky-column horizontal scroll carries the rows instead.
-  Scoped styles only.
+  block with `table { min-width: 720px }`, a 150px floor on value cells, and
+  `position: relative` on `.table-scroll` so the absolutely positioned
+  sr-only column label clips inside the scroll box instead of widening the
+  document. Scoped styles only; review follow-up verified
+  `document.scrollingElement.scrollWidth = 390` on `/forms` at 390px in the
+  real app (was 717).
 
 ## Findings — deferred (detector advisories, `detect.json`)
 

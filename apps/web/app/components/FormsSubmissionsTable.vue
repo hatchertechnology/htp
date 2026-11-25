@@ -273,7 +273,11 @@ tbody tr:last-child td { border-bottom: 0; }
   th:first-child, td:first-child { position: sticky; left: 0; background: #fff; z-index: 1; }
   table.has-selection th:nth-child(2), table.has-selection td:nth-child(2) { position: sticky; left: 34px; background: #fff; z-index: 1; }
   /* Narrow screens scroll the table instead of squeezing the text columns
-     into mid-word wrapping; the sticky first column stays readable. */
+     into mid-word wrapping; the sticky first column stays readable. The box
+     itself becomes the containing block so the absolutely positioned
+     sr-only column label stays inside its clip instead of widening the
+     document. */
+  .table-scroll { position: relative; }
   table { min-width: 720px; }
   .value-cell { min-width: 150px; max-width: 260px; }
 }

@@ -23,6 +23,9 @@ function chooseSample() {
 }
 watch(() => [ws.selectedId.value, ws.selected.value?.fqdn], () => { target.value = ''; draft.value = ''; targetError.value = ''; samples.value = [] })
 const speed = useInsight<PageSpeedData>('pagespeed', () => performanceSource(device.value, target.value))
+// Display-only: the latest lab observation's collection instant, formatted in
+// the viewer zone with the UTC ISO kept in datetime/title (Q7, §2.7).
+const collectedAt = computed(() => speed.saved.value?.data?.lighthouseResult.fetchTime || speed.saved.value?.sync?.fetched_at || '')
 const crux = useInsight<CruxData>('crux', () => performanceSource(device.value === 'mobile' ? 'PHONE' : 'DESKTOP', target.value))
 const historical = ref<InsightHistory<PageSpeedData> | null>(null)
 const cruxHistorical = ref<InsightHistory<CruxData> | null>(null)
@@ -82,7 +85,7 @@ function googleDate(date?: { year: number; month: number; day: number }) { retur
         <p v-if="speed.error.value" class="form-error" role="alert">{{ speed.error.value }}</p><ReportSyncNotice :sync="speed.saved.value?.sync" />
         <dl class="insight-totals"><div v-for="(category, key) in speed.saved.value?.data?.lighthouseResult.categories" :key="key"><dt>{{ category.title }}</dt><dd>{{ score(category.score) }}<small>/100</small></dd></div></dl>
         <p v-if="!speed.saved.value?.data" class="compact-empty">{{ !ws.user.value ? 'Sign in and choose a website to view its audits.' : 'The first daily audit will appear after collection is configured and Google is connected.' }}</p>
-        <p v-else class="report-caption">Latest {{ device }} lab test · Lighthouse {{ speed.saved.value.data.lighthouseResult.lighthouseVersion }} · {{ speed.saved.value.data.url }}. One Lighthouse run; scores can vary. Collected {{ speed.saved.value.data.lighthouseResult.fetchTime || speed.saved.value.sync.fetched_at }}.</p>
+        <p v-else class="report-caption">Latest {{ device }} lab test · Lighthouse {{ speed.saved.value.data.lighthouseResult.lighthouseVersion }} · {{ speed.saved.value.data.url }}. One Lighthouse run; scores can vary. Collected <time :datetime="collectedAt" :title="collectedAt">{{ formatInstant(collectedAt) }}</time>.</p>
         <p v-if="speed.saved.value?.data?.lighthouseResult.finalDisplayedUrl || speed.saved.value?.data?.lighthouseResult.finalUrl" class="report-caption">Final tested URL: {{ speed.saved.value.data.lighthouseResult.finalDisplayedUrl || speed.saved.value.data.lighthouseResult.finalUrl }}</p>
         <details v-if="speed.saved.value?.data" class="insight-details"><summary>Lab metrics and test environment</summary><p class="report-caption">TBT is a lab measurement and does not measure field INP. Missing metrics are unavailable.</p><dl class="vital-list"><div v-for="(label, id) in { 'largest-contentful-paint': 'LCP (ms)', 'cumulative-layout-shift': 'CLS', 'first-contentful-paint': 'FCP (ms)', 'total-blocking-time': 'TBT (ms)' }" :key="id"><dt>{{ label }}</dt><dd>{{ vitalValue(speed.saved.value.data.lighthouseResult.audits[id]?.numericValue) ?? '—' }}</dd></div></dl><pre class="performance-environment">{{ JSON.stringify({ settings: speed.saved.value.data.lighthouseResult.configSettings ?? 'Unavailable', environment: speed.saved.value.data.lighthouseResult.environment ?? 'Unavailable' }, null, 2) }}</pre></details>
         <details v-if="audits.length" class="insight-details"><summary>Issues to investigate ({{ audits.length }})</summary><ul class="audit-list"><li v-for="[id, audit] in audits" :key="id"><strong>{{ audit.title }}</strong><span v-if="audit.displayValue">{{ audit.displayValue }}</span></li></ul></details>

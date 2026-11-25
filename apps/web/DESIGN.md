@@ -145,7 +145,7 @@ A two-column shell gives the desktop rail 223px and lets the workspace consume t
 
 Report panels use 12–16px gaps; settings tasks use 24px gaps and 20–28px internal padding. Settings pages use one column of ruled white sections, max ≈ 960px, with 24px gaps — no secondary account column anywhere. The dashboard's Search-first composition is documented separately in `.impeccable/surfaces/dashboard.md`.
 
-Public pages (sign-in, OAuth consent, form confirmation) drop the rail: an ivory canvas, the "Hatch." wordmark top-left, and one centered white ruled panel of 400px max width with 30px (16px narrow) gutters.
+Public pages (sign-in, OAuth consent, form confirmation) drop the rail: an ivory canvas, the "Hatch." wordmark top-left, and one centered white ruled panel — 400px for sign-in, up to 640px for wider consent and confirmation content — with 30px (16px narrow) gutters.
 
 At 1279px the rail becomes 190px, gutters become 22px, and report/settings columns tighten. At 960px navigation becomes a horizontal top strip and settings stack; the user menu remains as a monogram button at the end of the strip. At 650px gutters become 16px, navigation wraps, the context bar forms a two-row grid (website full width; range and Last 30 days share row two), report panels stack, and summary measurements become a two-column grid. Date controls use a bounded fixed menu on narrow screens. Tables retain horizontal scrolling when needed.
 
@@ -225,9 +225,3 @@ Errors stay inline with retry or connection actions. Connection and submission s
 - Don't replace actual report values or missing data with illustrative metrics.
 - Don't add prior-period deltas unless the underlying comparison is available.
 - Don't put status pills or account cards in the context bar or page body; account lives in the rail menu.
-
-### Don't:
-
-- Don't introduce gradients, glass, or decorative shadows into report panels.
-- Don't replace actual report values or missing data with illustrative metrics.
-- Don't add prior-period deltas unless the underlying comparison is available.

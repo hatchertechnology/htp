@@ -6,15 +6,22 @@ const toast = useToast()
 const email = computed(() => auth.user.value?.email || '')
 const monogram = computed(() => (email.value || 'H').slice(0, 1).toUpperCase())
 
+// Set before the session clears so the default layout's expiry watch stands
+// down and the explicit sign-out lands on /sign-in with no return path.
+const explicitSignOut = useState('auth:explicit-signout', () => false)
+
 async function signOut() {
-  const result = await auth.signOut()
-  if (result.error) {
-    toast.add({ title: 'Sign out failed', description: result.error, color: 'error', icon: 'i-lucide-alert-triangle' })
-    return
+  explicitSignOut.value = true
+  try {
+    const result = await auth.signOut()
+    if (result.error) {
+      toast.add({ title: 'Sign out failed', description: result.error, color: 'error', icon: 'i-lucide-alert-triangle' })
+      return
+    }
+    await navigateTo(SIGN_IN_PATH, { replace: true })
+  } finally {
+    explicitSignOut.value = false
   }
-  // Explicit sign-out lands on the sign-in page without a return path: the
-  // user chose to leave, so returning to the workspace would surprise them.
-  await navigateTo(SIGN_IN_PATH, { replace: true })
 }
 
 const items = computed(() => [

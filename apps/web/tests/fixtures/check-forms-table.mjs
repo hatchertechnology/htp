@@ -39,6 +39,12 @@ try {
   for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
     const { context, page, errors } = await open(viewport)
 
+    // Only the table may scroll horizontally; the document never does, even
+    // with the 720px table floor and sticky columns at 390px.
+    await page.waitForTimeout(300)
+    const overflow = await page.evaluate(() => ({ scroll: document.scrollingElement.scrollWidth, client: document.scrollingElement.clientWidth }))
+    assert.ok(overflow.scroll <= overflow.client, `document scrolls horizontally: ${JSON.stringify(overflow)}`)
+
     // Local-time display keeps the UTC ISO value in datetime/title.
     const insider = page.locator('time[datetime="2026-11-25T03:00:00Z"]')
     await insider.waitFor()

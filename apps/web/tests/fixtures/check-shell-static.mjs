@@ -20,6 +20,14 @@ const STALE = '00000000-0000-0000-0000-00000000000f'
 const EMAIL1 = 'owner1@example.test'
 const EMAIL2 = 'owner2@example.test'
 const CLOCK_BASE = Date.parse('2026-11-25T03:00:00Z') // local Nov 24, 22:00 in America/New_York
+const FORM1 = '00000000-0000-0000-0000-000000000101'
+const HOST1 = '00000000-0000-0000-0000-000000000201'
+const formRows = Array.from({ length: 6 }, (_, i) => ({
+  id: `00000000-0000-0000-0000-1000000000${String(i).padStart(2, '0')}`,
+  received_at: i % 2 ? '2026-11-24T14:03:00Z' : '2026-11-23T22:15:00Z',
+  status: i % 3 === 0 ? 'spam' : i % 3 === 1 ? 'reviewed' : 'new',
+  values: { name: i % 2 ? 'Robin Hatcher' : 'Avery Ellis', email: `visitor${i}@example.com`, message: 'Call me back about the estimate.' },
+}))
 
 const failures = []
 const pageErrors = []
@@ -30,7 +38,9 @@ function check(name, ok, detail = '') {
 }
 
 function sessionToken(sub, email) {
-  const exp = Math.floor(Date.now() / 1000) + 7 * 86400
+  // Expire relative to the installed fake clock when one is in play (plan §8):
+  // a token that is valid at CLOCK_BASE stays valid under page.clock.
+  const exp = Math.floor(Math.max(Date.now(), CLOCK_BASE) / 1000) + 7 * 86400
   const head = Buffer.from('{}').toString('base64url')
   const body = Buffer.from(JSON.stringify({ sub, exp })).toString('base64url')
   return { token: `${head}.${body}.fake`, exp }
@@ -69,12 +79,17 @@ function intercept(page, owner, email, apiLog) {
     if (url.hostname === 'htp-api-kerry-hatcher.fly.dev') {
       apiLog.push(url.pathname + url.search)
       if (path === '/websites') return json({ items: [{ id: SITE1, fqdn: 'first.example.com' }, { id: SITE2, fqdn: 'second.example.com' }], has_more: false })
+      // Synthetic eligible pilot form, so the Forms page renders its table.
+      if (path === `/websites/${SITE1}/forms/pilot-eligibility`) return json({ eligible: true, notifications_available: true })
+      if (path === `/websites/${SITE1}/forms/hosts`) return json({ items: [{ id: HOST1, hostname: 'first.example.com', verified_at: '2026-11-20T10:00:00Z' }], has_more: false })
+      if (path === `/websites/${SITE1}/forms`) return json({ items: [{ id: FORM1, form_key: 'contact', name: 'Contact form', fields: [{ key: 'name', label: 'Name', kind: 'text', required: true, max_length: 200 }, { key: 'email', label: 'Email', kind: 'email', required: true, max_length: 200 }, { key: 'message', label: 'Message', kind: 'multiline', required: true, max_length: 4000 }], active: true }], has_more: false })
+      if (path === `/websites/${SITE1}/forms/${FORM1}/responses`) return json({ items: formRows, has_more: false })
       // Static owner paths drop the /api prefix (resolveWorkspaceOwnerPath).
       if (path === '/providers/google/connection') return json({ connected: false, configured: true, analytics: false, search: false, business: false, reauthorizationRequired: false })
       if (path === '/providers/bing/connection') return json({ connected: false, configured: true, reauthorizationRequired: false })
       return route.fulfill(apiJson({ error: 'not available in this fixture' }, 404))
     }
-    foreignHosts.push(`${width}px ${url.hostname}${path}`)
+    foreignHosts.push(`${url.hostname}${path}`)
     return route.fulfill(apiJson({ error: 'unexpected host' }, 404))
   })
   return foreign
@@ -88,21 +103,28 @@ function signedInScript(owner, email) {
 async function newPage(browser, { width, height, owner, email, storageSeed, clock } = {}) {
   const context = await browser.newContext({ viewport: { width, height }, timezoneId: 'America/New_York' })
   const apiLog = []
-  const page = await context.newPage()
-  page.on('pageerror', e => pageErrors.push(`${width}px: ${e.message.slice(0, 200)}`))
-  const foreign = intercept(page, owner ?? OWNER1, email ?? EMAIL1, apiLog)
-  if (owner) {
-    const session = signedInScript(owner, email)
-    await page.addInitScript(({ token, exp, user }) => {
-      localStorage.setItem('sb-raxuvdbdfmmtpqjcafcq-auth-token', JSON.stringify({ access_token: token, refresh_token: 'fake', token_type: 'bearer', expires_in: 3600, expires_at: exp, user }))
-    }, { token: session.token, exp: session.exp, user: supabaseUser(owner, email) })
+  // addPage adds a page to the SAME context: localStorage is shared across
+  // its pages, so a second signed-in owner on another page exercises the
+  // per-owner storage key rather than Chromium's per-context isolation.
+  async function addPage({ owner: pageOwner, email: pageEmail } = {}) {
+    const useOwner = pageOwner ?? owner, useEmail = pageEmail ?? email
+    const newTab = await context.newPage()
+    newTab.on('pageerror', e => pageErrors.push(`${width}px: ${e.message.slice(0, 200)}`))
+    intercept(newTab, useOwner ?? OWNER1, useEmail ?? EMAIL1, apiLog)
+    if (useOwner) {
+      const session = signedInScript(useOwner, useEmail)
+      await newTab.addInitScript(({ token, exp, user }) => {
+        localStorage.setItem('sb-raxuvdbdfmmtpqjcafcq-auth-token', JSON.stringify({ access_token: token, refresh_token: 'fake', token_type: 'bearer', expires_in: 3600, expires_at: exp, user }))
+      }, { token: session.token, exp: session.exp, user: supabaseUser(useOwner, useEmail) })
+    }
+    if (storageSeed) {
+      await newTab.addInitScript(({ key, value }) => localStorage.setItem(key, value), storageSeed)
+    }
+    return newTab
   }
-  if (storageSeed) {
-    await page.addInitScript(({ key, value }) => localStorage.setItem(key, value), storageSeed)
-  }
+  const page = await addPage()
   if (clock) await page.clock.install({ time: clock })
-  void foreign
-  return { context, page, apiLog }
+  return { context, page, addPage, apiLog }
 }
 
 const workspaceKey = owner => `htp:workspace:v1:${owner}`
@@ -127,6 +149,21 @@ async function stepSignIn(browser, width, height) {
   await s.page.waitForURL(/\/sign-in/, { timeout: 30000 })
   const url = new URL(s.page.url())
   check(`sign-in redirect (${width})`, url.pathname === '/sign-in' && url.searchParams.get('redirect') === '/websites/?tab=x', s.page.url())
+  // Open-redirect probes through the sign-in FORM itself: signed out, a bad
+  // redirect submits to '/' via safeReturnPath, never to the crafted target.
+  for (const probe of ['//evil.test', 'https://evil.test', '/\\evil.test', 'javascript:alert(1)']) {
+    await s.page.evaluate(() => localStorage.removeItem('sb-raxuvdbdfmmtpqjcafcq-auth-token'))
+    await s.page.goto(`${origin}/sign-in?redirect=${encodeURIComponent(probe)}`, { waitUntil: 'load' })
+    await s.page.getByLabel('Email').fill(EMAIL1)
+    await s.page.getByRole('textbox', { name: 'Password' }).fill('sup3rsecret')
+    await s.page.getByRole('button', { name: 'Sign in', exact: true }).click()
+    check(`form open-redirect blocked (${width}) ${probe}`, (await redirectPath(s.page, '/')).pathname === '/', s.page.url())
+  }
+  // Sign out again so the main flow below starts signed out.
+  await s.page.evaluate(() => localStorage.clear())
+
+  await s.page.goto(`${origin}/websites/?tab=x`)
+  await s.page.waitForURL(/\/sign-in/, { timeout: 30000 })
   await s.page.getByLabel('Email').fill(EMAIL1)
   await s.page.getByRole('textbox', { name: 'Password' }).fill('sup3rsecret')
   await s.page.getByRole('button', { name: 'Sign in', exact: true }).click()
@@ -134,7 +171,7 @@ async function stepSignIn(browser, width, height) {
   const landedUrl = (await landed)
   check(`sign-in submit returns to the requested page (${width})`, landedUrl.pathname.replace(/\/$/, '') === '/websites' && landedUrl.searchParams.get('tab') === 'x', `${landedUrl.href}`)
 
-  // Open-redirect probes: a signed-in visit to /sign-in with a bad redirect lands on '/'.
+  // Signed-in middleware probes: a visit to /sign-in with a bad redirect lands on '/'.
   for (const probe of ['//evil.test', 'https://evil.test', '/\\evil.test', 'javascript:alert(1)']) {
     await s.page.goto(`${origin}/sign-in?redirect=${encodeURIComponent(probe)}`, { waitUntil: 'load' })
     check(`open-redirect blocked (${width}) ${probe}`, (await redirectPath(s.page, '/')).pathname === '/', s.page.url())
@@ -176,14 +213,17 @@ async function stepSelection(browser) {
   check('selection persists across reload', (await select.inputValue()) === SITE2 && parsed?.websiteId === SITE2, stored ?? 'missing')
   check('storage holds only version/websiteId/range', JSON.stringify(Object.keys(parsed ?? {}).sort()) === JSON.stringify(['range', 'version', 'websiteId']), JSON.stringify(parsed))
 
-  // Per-user: owner 2 never inherits owner 1's stored choice.
-  const s2 = await newPage(browser, { width: 1280, height: 800, owner: OWNER2, email: EMAIL2 })
-  await s2.page.goto(`${origin}/`)
+  // Per-user: owner 2 signs in on a second page of the SAME context, so
+  // localStorage is shared and only the per-owner key can separate them.
+  const page2 = await s.addPage({ owner: OWNER2, email: EMAIL2 })
+  await page2.goto(`${origin}/`)
   // Owner 2 has no stored context: the selection falls back to the first site.
-  await s2.page.waitForFunction(site => { const el = document.querySelector('select[aria-label="Select website"]'); return !!el && !el.disabled && el.value === site }, SITE1, { timeout: 30000 })
-  const owner2Stored = await s2.page.evaluate(key => localStorage.getItem(key), workspaceKey(OWNER2))
+  await page2.waitForFunction(site => { const el = document.querySelector('select[aria-label="Select website"]'); return !!el && !el.disabled && el.value === site }, SITE1, { timeout: 30000 })
+  const owner2Stored = await page2.evaluate(key => localStorage.getItem(key), workspaceKey(OWNER2))
+  const owner1Still = await s.page.evaluate(key => localStorage.getItem(key), workspaceKey(OWNER1))
   check('per-user storage: owner 2 falls back to site 1, not owner 1\'s choice', owner2Stored?.includes(SITE1) === true && !owner2Stored.includes(SITE2), owner2Stored ?? 'missing')
-  await s2.context.close()
+  check('per-user storage: owner 1\'s key is untouched by owner 2', owner1Still?.includes(SITE2) === true, owner1Still ?? 'missing')
+  await page2.close()
 
   // Stale stored site: falls back to site 1, storage overwritten, and no API
   // URL ever carries the unknown ID.
@@ -245,15 +285,30 @@ async function stepRemoval(browser, width, height) {
     check(`no Google services pill in header (${width} ${path})`, await s.page.locator('header').getByText('Google services').count() === 0)
     check(`no Your account heading anywhere (${width} ${path})`, await s.page.getByRole('heading', { name: 'Your account' }).count() === 0)
   }
+  // At 1280 the rail is sticky and full-height at every scroll position.
+  if (width === 1280) {
+    await s.page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+    await s.page.waitForTimeout(300)
+    const rail = await s.page.evaluate(() => {
+      const el = document.querySelector('.desk-rail')
+      const rect = el.getBoundingClientRect()
+      return { position: getComputedStyle(el).position, top: rect.top, bottom: rect.bottom, height: window.innerHeight, background: getComputedStyle(el).backgroundColor }
+    })
+    check(`rail stays sticky and full-height while scrolling (${width})`, rail.position === 'sticky' && rail.top <= 1 && rail.bottom >= rail.height - 1 && rail.background === 'rgb(24, 44, 61)', JSON.stringify(rail))
+    await s.page.evaluate(() => window.scrollTo(0, 0))
+    await s.page.waitForTimeout(200)
+  }
   const menuButton = s.page.getByRole('button', { name: `Account menu for ${EMAIL1}` })
   check(`user menu button visible (${width})`, await menuButton.isVisible())
   await menuButton.click()
   const signOut = s.page.getByRole('menuitem', { name: 'Sign out' })
   await signOut.waitFor({ timeout: 15000 })
   await signOut.click()
-  // The layout's expiry watch may attach the page they left as the redirect.
+  // Explicit sign-out goes to /sign-in with no return path (plan §2.4); only
+  // session expiry may keep the page as the redirect.
   const signedOut = redirectPath(s.page, '/sign-in', 30000)
-  check(`sign out returns to sign-in (${width})`, (await signedOut).pathname === '/sign-in', s.page.url())
+  const signedOutUrl = await signedOut
+  check(`sign out returns to sign-in without a redirect (${width})`, signedOutUrl.pathname === '/sign-in' && !signedOutUrl.searchParams.has('redirect'), s.page.url())
   await s.context.close()
 }
 
@@ -278,6 +333,19 @@ async function stepSelectors(browser) {
   for (const path of ['/developer/', '/mcp/']) {
     await s.page.goto(`${origin}${path}`, { waitUntil: 'load' })
     check(`developer page without account panel (${path})`, await s.page.getByText('Your account').count() === 0)
+  }
+  await s.context.close()
+}
+
+// 7b. No document-level horizontal overflow at 390px: only the data table may
+// scroll horizontally, never the page itself.
+async function stepOverflow(browser, width, height) {
+  const s = await newPage(browser, { width, height, owner: OWNER1, email: EMAIL1 })
+  for (const path of ['/', '/websites/', '/connections/', '/forms/']) {
+    await s.page.goto(`${origin}${path}`, { waitUntil: 'load' })
+    await s.page.waitForTimeout(800)
+    const overflow = await s.page.evaluate(() => ({ scroll: document.scrollingElement.scrollWidth, client: document.scrollingElement.clientWidth }))
+    check(`no document horizontal overflow at 390 on ${path}`, overflow.scroll <= overflow.client, JSON.stringify(overflow))
   }
   await s.context.close()
 }
@@ -308,6 +376,7 @@ try {
   await stepSignIn(browser, 390, 844)
   await stepRemoval(browser, 390, 844)
   await stepFormsNav(browser, 390, 844)
+  await stepOverflow(browser, 390, 844)
   await stepZone(browser, 390, 844)
 } finally {
   await browser.close()

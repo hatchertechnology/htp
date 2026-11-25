@@ -22,12 +22,13 @@ America/New_York, and zero `pageerror`s. The launcher build only ships the
 | 5 | Error prevention | 4 | Unknown-outcome locks, inline confirms, read-only gating and held-mode messaging all still behave (unchanged by this work). |
 | 6 | Recognition rather than recall | 4 | Context is remembered per account; timestamps render in the viewer zone with labels; the range label names the active window instead of raw dates only. |
 | 7 | Flexibility and efficiency | 3 | Rolling presets plus a one-click Last 30 days shortcut; the Forms table sorts, filters and searches loaded rows with an explicit partial-data notice; no server-side search exists (stated, not hidden). |
-| 8 | Aesthetic and minimalist design | 3 | The header pill, account panels and duplicate selectors are gone; the world stayed Operations Desk. Remaining noise is C-owned: two full-width rust buttons in the Forms Setup tab and narrow table columns wrapping mid-word at 390px. |
+| 8 | Aesthetic and minimalist design | 4 | The header pill, account panels and duplicate selectors are gone; the world stayed Operations Desk. The Setup-tab button widths and the 390px table column wrapping flagged here were fixed in the reassigned follow-up (see polish.md); only documented-prose detector advisories remain. |
 | 9 | Error recovery | 4 | Inline errors with retry and connection links are consistent across surfaces. |
 | 10 | Help and documentation | 4 | Connections notes, Forms copy and CSV help text stay explicit about limits and UTC conventions. |
 
-**Total: 37/40 — strong.** The two points below 4 are owned by C/D files
-(recorded in polish.md as fix requests); B-owned files are clean.
+**Total: 38/40 — strong.** The score reflects the rendered pass plus the two
+reassigned follow-up fixes (Setup-tab button widths, 390px table columns);
+remaining advisories are documented-prose items in D files (polish.md).
 
 ## Per-surface notes (browser evidence)
 
@@ -39,8 +40,10 @@ America/New_York, and zero `pageerror`s. The launcher build only ships the
   documented; the pill is gone.
 - **Websites:** single column, selected FQDN as subtitle, danger section last.
 - **Forms:** Responses tab is the ruled data table with local-time Received
-  column, status text + dot, checkboxes and View/Actions; Setup tab keeps host
-  verification, form editor and notifications.
+  column, status text + dot, checkboxes and View/Actions, scrolling
+  horizontally at 390px with the sticky first column and no document overflow;
+  Setup tab keeps host verification, form editor and notifications with
+  compact primary actions.
 - **Connections:** single column; subtitle updated; account column gone.
 - **Independent audits:** read-only state renders saved evidence with local
   timestamps; page rhythm improved in polish; empty comparisons state added.
