@@ -68,7 +68,8 @@ if (mode === 'off') {
   await page.getByText(/Compared SEOsmith report: example\.com/).waitFor()
   if (mode === 'read-only' || mode === 'both') {
     await page.getByText(/Read-only: showing/).waitFor()
-    const websiteSelect = page.locator('main.page-shell select').first()
+    // The page select is gone; the header context bar is the only site selector.
+    const websiteSelect = page.getByLabel('Select website')
     await websiteSelect.selectOption(site2)
     await page.getByText('No independent imports found.').waitFor()
     if (await page.getByText(/Compared SEOsmith report/).count()) throw Error('website switch retained prior report metadata')
@@ -104,7 +105,8 @@ if (mode === 'off') {
     for (const name of ['Save import', 'Delete independent evidence', 'Save comparison', 'Export all independent evidence']) {
       if (await page.getByRole('button',{name,exact:true}).count()) throw Error(`read-only exposes ${name}`)
     }
-    if (await page.locator('main.page-shell input[type=file], main.page-shell textarea, main.page-shell input[type=checkbox], main.page-shell select').count() !== 1) throw Error('read-only exposes editing controls')
+    // The page's own website select was removed (the header select lives outside main.page-shell).
+    if (await page.locator('main.page-shell input[type=file], main.page-shell textarea, main.page-shell input[type=checkbox], main.page-shell select').count() !== 0) throw Error('read-only exposes editing controls')
     await page.getByRole('button',{name:/future comparison/}).click()
     await page.getByRole('alert').getByText(/unsupported semantics/).waitFor()
     const allowed = ['independent_audit_history','independent_comparison_history','independent_comparison_detail']
