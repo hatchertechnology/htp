@@ -49,12 +49,15 @@ async function saveDomain() {
   const canonical = normalizeFqdn(domain.value)
   if (!canonical) { domainError.value = FQDN_ERROR; return }
   const updated = await mutate('PATCH', targetId, canonical)
-  if (!current(targetId, epoch)) return
-  if (!updated) { domainError.value = mutationError.value || 'Could not save your changes. Please try again.'; return }
-  domain.value = updated.fqdn
+  if (!updated) {
+    if (current(targetId, epoch)) domainError.value = mutationError.value || 'Could not save your changes. Please try again.'
+    return
+  }
+  // The rename succeeded, so refresh the list even when the header moved; only
+  // the form write-back is gated on this site still being selected.
   await ws.load()
   if (!current(targetId, epoch)) return
-  domain.value = site.value?.fqdn ?? ''
+  domain.value = site.value?.fqdn ?? updated.fqdn
   toast.add({ title: 'Website updated', description: 'Forms, if any, were paused. Verify their hosts again before reactivating them.', color: 'success', icon: 'i-lucide-check' })
 }
 
@@ -67,7 +70,7 @@ async function saveProperty() {
   propertyBusy.value = true; propertyError.value = ''
   try {
     await ws.request(`/api/websites/${targetId}/analytics/property`, { method: 'PUT', body: { property_id: propertyId.value || null } })
-    if (!current(targetId, epoch)) return
+    // Refresh the list even when the header moved; only the form write is gated.
     await ws.load()
     if (!current(targetId, epoch)) return
     propertyId.value = site.value?.ga4_property_id ?? ''
@@ -107,8 +110,10 @@ async function removeWebsite() {
   deleteError.value = ''
   const removed = await mutate('DELETE', targetId, target.fqdn)
   if (!removed) { if (current(targetId, epoch)) deleteError.value = mutationError.value || 'Could not delete this website. Please try again.'; return }
+  confirmingDelete.value = false
+  // The delete succeeded: report it from this outcome and refresh the list even
+  // when the header moved (a fallback selection must not swallow the toast).
   await ws.load()
-  if (!current(targetId, epoch)) return
   if (ws.error.value) {
     deletedId.value = targetId
     toast.add({ title: 'Website deleted', description: 'The website list could not be refreshed.', color: 'success', icon: 'i-lucide-check' })

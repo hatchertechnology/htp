@@ -7,6 +7,7 @@ const TWO = '00000000-0000-0000-0000-000000000002'
 const NEW = '00000000-0000-0000-0000-000000000009'
 const staticMode = new URLSearchParams(location.search).get('static') === '1'
 const calls: { url: string; method: string; body?: unknown; headers?: Record<string, string> }[] = []
+const toasts: { title?: string; description?: string }[] = []
 let holdMethod: string | null = null
 let gate: Promise<void> | null = null
 let releaseGate: (() => void) | null = null
@@ -87,13 +88,14 @@ Object.assign(globalThis, vue, {
   useWebsites,
   useWorkspace: () => workspace,
   useHead: () => undefined,
-  useToast: () => ({ add: () => undefined }),
+  useToast: () => ({ add: (toast: { title?: string; description?: string }) => { toasts.push(toast) } }),
   useAuth: () => ({ user: fixtureUser, ready: ref(true), accessToken: async () => 'fixture-token' }),
   useRuntimeConfig: () => ({ public: { staticDashboard: staticMode, apiBaseUrl: 'https://api.example.test' } }),
   $fetch: transport,
   failureMessage: (cause: unknown) => (cause as { message?: string })?.message ?? 'Something went wrong. Please try again.',
   websitesFixture: {
     calls,
+    toasts,
     select: (id: string) => { selectedId.value = id },
     server: () => copy(),
     holdNext: (method: string) => { holdMethod = method; gate = new Promise(resolve => { releaseGate = resolve }) },

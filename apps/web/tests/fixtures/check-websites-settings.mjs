@@ -80,6 +80,8 @@ try {
     assert.equal(deletes.length, 1)
     assert.ok(deletes[0].url.endsWith('/websites/00000000-0000-0000-0000-000000000009'))
     assert.equal(deletes[0].body, undefined)
+    const deleteToasts = await page.evaluate(() => globalThis.websitesFixture.toasts)
+    assert.ok(deleteToasts.some(toast => toast.title === 'Website deleted'), 'a normal delete keeps its success toast')
 
     // (h) A selection switch mid-request must never write the old site's values
     // into the newly selected site's form (no stale-form-data race).
@@ -128,6 +130,12 @@ try {
     const finalSites = await page.evaluate(() => globalThis.websitesFixture.server())
     assert.equal(finalSites.find(entry => entry.id === TWO).fqdn, 'www.example.com')
     assert.equal(finalSites.find(entry => entry.id === ONE).fqdn, 'changed.example.com')
+    // R2: the completed rename refreshed the list, so returning to that site
+    // shows the server's new name rather than the stale page value.
+    await page.evaluate(id => globalThis.websitesFixture.select(id), ONE)
+    await page.waitForFunction(() => document.querySelector('[data-testid="website-settings-fqdn"]')?.textContent?.trim() === 'changed.example.com')
+    await page.evaluate(id => globalThis.websitesFixture.select(id), TWO)
+    await page.waitForFunction(() => document.querySelector('[data-testid="website-settings-fqdn"]')?.textContent?.trim() === 'www.example.com')
 
     // A save that fails for the previous site must not surface its error on the
     // newly selected site (the guard covers the error write-back too).
@@ -148,11 +156,14 @@ try {
     // site as the editable settings; the retry recovers the list.
     await page.evaluate(() => globalThis.websitesFixture.failNextLoad())
     await page.getByRole('button', { name: 'Delete this website' }).click()
-    await page.getByRole('group', { name: 'Confirm deletion of one.example.com' }).waitFor()
+    const deleteFqdn = (await page.getByTestId('website-settings-fqdn').textContent()).trim()
+    await page.getByRole('group', { name: `Confirm deletion of ${deleteFqdn}` }).waitFor()
     await page.getByRole('button', { name: 'Delete record' }).click()
     await page.getByRole('heading', { name: 'Website deleted' }).waitFor()
     assert.equal(await page.getByTestId('website-settings-fqdn').count(), 0)
     assert.equal(await page.getByRole('heading', { name: 'Domain' }).count(), 0)
+    const staleToasts = await page.evaluate(() => globalThis.websitesFixture.toasts)
+    assert.ok(staleToasts.some(toast => toast.title === 'Website deleted' && toast.description), 'the failed refresh is reported in the delete toast')
     await page.getByRole('button', { name: 'Reload website list' }).click()
     await page.waitForFunction(() => document.querySelector('[data-testid="website-settings-fqdn"]')?.textContent?.trim() === 'www.example.com')
     assert.equal(await page.getByRole('heading', { name: 'Domain' }).count(), 1)
