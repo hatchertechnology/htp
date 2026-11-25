@@ -20,7 +20,9 @@ create table public.seosmith_s14_validators (
   enabled boolean not null default true
 );
 alter table public.seosmith_s14_validators enable row level security;
-revoke all on public.seosmith_s14_validators from public,anon,authenticated;
+-- service_role is revoked too: the provider's default ACL grants ALL on new public
+-- tables to it, and only select/insert/update are wanted (no delete/truncate/trigger).
+revoke all on public.seosmith_s14_validators from public,anon,authenticated,service_role;
 grant select,insert,update on public.seosmith_s14_validators to service_role;
 -- Must equal htp_s14_receiver::VALIDATOR_REVISION (a receiver test ties them).
 insert into public.seosmith_s14_validators(revision,enabled)
@@ -40,7 +42,7 @@ alter table public.seosmith_audits add constraint seosmith_audits_s14_columns ch
 -- table and evidence validator whatever role performs a direct insert.
 create or replace function public.seosmith_prepare_audit() returns trigger
 language plpgsql security definer set search_path='' as $$
-declare s jsonb; compact jsonb;
+declare s jsonb; compact jsonb; rawj jsonb;
 begin
   if tg_op='UPDATE' then raise exception 'audit_is_immutable' using errcode='22023'; end if;
   if new.report->>'schema_version'='4' then
@@ -51,10 +53,20 @@ begin
     end if;
     if new.sha256 is distinct from encode(sha256(convert_to(new.raw_report_json,'UTF8')),'hex')
        or new.summary_sha256 is distinct from encode(sha256(convert_to(new.summary_text,'UTF8')),'hex')
-       or new.raw_report_json::jsonb is distinct from new.report then
+       then
       raise exception 'invalid_s14_binding' using errcode='22023';
     end if;
-    s := new.summary_text::jsonb;
+    -- Malformed JSON maps to the documented 22023 codes, never a raw 22P02.
+    begin rawj := new.raw_report_json::jsonb;
+    exception when data_exception then raise exception 'invalid_s14_binding' using errcode='22023'; end;
+    if rawj is distinct from new.report then
+      raise exception 'invalid_s14_binding' using errcode='22023';
+    end if;
+    if octet_length(new.summary_text)>16384 then
+      raise exception 'invalid_s14_summary' using errcode='22023';
+    end if;
+    begin s := new.summary_text::jsonb;
+    exception when data_exception then raise exception 'invalid_s14_summary' using errcode='22023'; end;
     if jsonb_typeof(s) is distinct from 'object' or s->'summary_version' is distinct from '5'::jsonb
        or s->'schema_version' is distinct from '4'::jsonb
        or s->'findings' is distinct from to_jsonb(jsonb_array_length(new.report->'findings'))
@@ -63,7 +75,10 @@ begin
        or s->>'ruleset_version' is distinct from new.report->>'ruleset_version' then
       raise exception 'invalid_s14_summary' using errcode='22023';
     end if;
-    if not exists (select 1 from public.seosmith_s14_validators v where v.revision=new.validator_revision and v.enabled) then
+    -- FOR SHARE: a concurrent disable waits for this insert, so no row is admitted
+    -- against a revision whose disable has already committed.
+    perform 1 from public.seosmith_s14_validators v where v.revision=new.validator_revision and v.enabled for share;
+    if not found then
       raise exception 'validator_disabled' using errcode='55000';
     end if;
     if new.report ? 'evidence_contract' then
@@ -74,12 +89,13 @@ begin
           'coverage_complete','evidence_contract']) k where new.report ? k;
       begin
         perform public.seosmith_validate_evidence(compact);
-      exception when sqlstate '22023' then
+      exception when data_exception then
         raise exception 'evidence_invalid' using errcode='22023', detail=sqlerrm;
       end;
     end if;
     new.summary := s;
-    new.scan_at := coalesce(nullif(new.report->>'finished_at','')::timestamptz,new.received_at);
+    begin new.scan_at := coalesce(nullif(new.report->>'finished_at','')::timestamptz,new.received_at);
+    exception when data_exception then raise exception 'invalid_s14_binding' using errcode='22023'; end;
     return new;
   end if;
   new.summary:=public.seosmith_summary(new.report);
@@ -92,6 +108,10 @@ revoke all on function public.seosmith_prepare_audit() from public,anon,authenti
 -- schema 4 through PostgREST. Errors (message / SQLSTATE):
 --   report_limit, invalid_delivery, invalid_binding_or_report  22023
 --   invalid_worker 42501; delivery_conflict 23505; validator_disabled 55000
+-- Replay: a delivery that is already committed (same sha256, summary digest and
+-- website as the token's binding) returns its receipt BEFORE any current-state check,
+-- so a disabled revision/token or a bumped generation never strands a lost response.
+-- A different sha256, summary or website for a committed delivery is 23505.
 --   invalid_s14_binding, invalid_s14_summary, evidence_invalid 22023 (from the trigger)
 create function public.commit_seosmith_audit_v4(p_token text,p_delivery_id uuid,p_sha256 text,p_report_json text,p_summary_text text,p_validator_revision text)
 returns jsonb language plpgsql security definer set search_path='' set statement_timeout='20s' as $$
@@ -102,25 +122,31 @@ begin
      or length(p_token)<32 or p_sha256 is distinct from encode(sha256(convert_to(p_report_json,'UTF8')),'hex') then
     raise exception 'invalid_delivery' using errcode='22023';
   end if;
-  select * into b from public.seosmith_bindings where token_sha256=encode(sha256(convert_to(p_token,'UTF8')),'hex') and enabled for share;
+  select * into b from public.seosmith_bindings where token_sha256=encode(sha256(convert_to(p_token,'UTF8')),'hex') for share;
   if not found then raise exception 'invalid_worker' using errcode='42501'; end if;
-  select * into strict w from public.websites where id=b.website_id for share;
-  r := p_report_json::jsonb;
-  if r->'schema_version' is distinct from '4'::jsonb or
-     r#>>'{request,request_id}' is distinct from p_delivery_id::text or
-     r#>>'{request,website_id}' is distinct from b.website_id::text or
-     r#>>'{request,binding_generation}' is distinct from b.generation::text or
-     split_part(split_part(r#>>'{request,url}','://',2),'/',1) is distinct from w.fqdn or
-     coalesce(r->>'outcome','') not in ('completed','partial','cancelled','failed') or
-     jsonb_typeof(r->'pages') is distinct from 'array' or jsonb_typeof(r->'findings') is distinct from 'array' then
-    raise exception 'invalid_binding_or_report' using errcode='22023';
-  end if;
   perform pg_advisory_xact_lock(hashtextextended(p_delivery_id::text,0));
   select * into old from public.seosmith_audits where delivery_id=p_delivery_id;
   if found then
-    if old.sha256<>p_sha256 or old.website_id<>b.website_id then raise exception 'delivery_conflict' using errcode='23505'; end if;
+    if old.sha256<>p_sha256 or old.website_id<>b.website_id
+       or old.summary_sha256 is distinct from encode(sha256(convert_to(p_summary_text,'UTF8')),'hex') then
+      raise exception 'delivery_conflict' using errcode='23505';
+    end if;
   else
-    if not exists (select 1 from public.seosmith_s14_validators v where v.revision=p_validator_revision and v.enabled) then
+    if not b.enabled then raise exception 'invalid_worker' using errcode='42501'; end if;
+    select * into strict w from public.websites where id=b.website_id for share;
+    begin r := p_report_json::jsonb;
+    exception when data_exception then raise exception 'invalid_binding_or_report' using errcode='22023'; end;
+    if r->'schema_version' is distinct from '4'::jsonb or
+       r#>>'{request,request_id}' is distinct from p_delivery_id::text or
+       r#>>'{request,website_id}' is distinct from b.website_id::text or
+       r#>>'{request,binding_generation}' is distinct from b.generation::text or
+       split_part(split_part(r#>>'{request,url}','://',2),'/',1) is distinct from w.fqdn or
+       coalesce(r->>'outcome','') not in ('completed','partial','cancelled','failed') or
+       jsonb_typeof(r->'pages') is distinct from 'array' or jsonb_typeof(r->'findings') is distinct from 'array' then
+      raise exception 'invalid_binding_or_report' using errcode='22023';
+    end if;
+    perform 1 from public.seosmith_s14_validators v where v.revision=p_validator_revision and v.enabled for share;
+    if not found then
       raise exception 'validator_disabled' using errcode='55000';
     end if;
     insert into public.seosmith_audits(delivery_id,website_id,fqdn,generation,sha256,report,raw_report_json,ingestion_source,summary_text,summary_sha256,validator_revision)

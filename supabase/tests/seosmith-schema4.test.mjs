@@ -20,7 +20,10 @@ async function boot(stop) {
     create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
     create function auth.uid() returns uuid language sql stable as $$select (auth.jwt()->>'sub')::uuid$$;
     grant usage on schema auth,public to authenticated,anon,service_role;
-    alter default privileges grant execute on functions to anon,authenticated;`)
+    alter default privileges grant execute on functions to anon,authenticated;
+    -- The provider's default ACL grants ALL on new public tables to these roles; emulate it so
+    -- an under-revoked table (e.g. service_role keeping DELETE/TRUNCATE) is visible here.
+    alter default privileges in schema public grant all on tables to anon,authenticated,service_role;`)
   for (const f of upTo.slice(0, upTo.indexOf(stop ?? '~') < 0 ? undefined : upTo.indexOf(stop))) await db.exec(await readFile(new URL(f, migrations), 'utf8'))
   await db.query('insert into auth.users values($1),($2)', [owner, other])
   await db.query("insert into public.websites(id,owner_id,fqdn) values($1,$2,'example.com'),($3,$2,'other.example')", [site, owner, site2])
@@ -115,6 +118,60 @@ test('a disabled or unknown revision rejects a new row but returns the receipt f
   } finally { await db.close() }
 })
 
+test('replay returns the receipt past a disabled token or bumped generation; a changed summary or sha is 23505', async () => {
+  const db = await boot()
+  try {
+    const f = fixture()
+    await as(db, 'service_role')
+    const receipt = await commit(db, f)
+    const other = fixture({ id: f.id, summary: JSON.stringify({ ...JSON.parse(f.summary), padding: 'x' }) })
+    await assert.rejects(() => commit(db, other), e => e.code === '23505' && /delivery_conflict/.test(e.message))
+    await as(db, 'postgres'); await db.query('update public.seosmith_bindings set enabled=false,generation=2 where website_id=$1', [site]); await as(db, 'service_role')
+    assert.deepEqual(await commit(db, f), receipt)
+    // A token of another website cannot replay it; an unknown token is still refused.
+    await assert.rejects(() => commit(db, f, 'y'.repeat(64)), e => e.code === '23505')
+    await assert.rejects(() => commit(db, f, 'z'.repeat(64)), e => e.code === '42501')
+    // A new delivery with the disabled binding is refused.
+    await assert.rejects(() => commit(db, fixture()), e => e.code === '42501' && /invalid_worker/.test(e.message))
+  } finally { await db.close() }
+})
+
+test('a known-but-disabled revision is refused by the RPC and by a direct insert', async () => {
+  const db = await boot()
+  try {
+    await db.query("insert into public.seosmith_s14_validators(revision,enabled) values('s14-wire-1/disabled',false)")
+    await as(db, 'service_role')
+    const f = fixture({ rev: 's14-wire-1/disabled' })
+    await assert.rejects(() => commit(db, f), e => e.code === '55000' && /validator_disabled/.test(e.message))
+    // Direct insert: the FK passes, so only the trigger's enabled check can refuse it.
+    await assert.rejects(() => db.query(`insert into public.seosmith_audits(delivery_id,website_id,fqdn,generation,sha256,report,raw_report_json,ingestion_source,summary_text,summary_sha256,validator_revision)
+      values($1,$2,'example.com',1,$3,$4::jsonb,$5,'worker',$6,$7,'s14-wire-1/disabled')`, [f.id, site, f.sha, f.raw, f.raw, f.summary, hash(f.summary)]),
+      e => e.code === '55000' && /validator_disabled/.test(e.message))
+    assert.equal((await db.query('select count(*)::int n from public.seosmith_audits')).rows[0].n, 0)
+  } finally { await db.close() }
+})
+
+test('malformed JSON and oversize summaries map to 22023, never a raw 22P02', async () => {
+  const db = await boot()
+  try {
+    await as(db, 'service_role')
+    const f = fixture()
+    const bad = '{"schema_version":4'
+    await assert.rejects(() => commit(db, { ...f, raw: bad, sha: hash(bad) }), e => e.code === '22023' && /invalid_binding_or_report/.test(e.message))
+    await assert.rejects(() => commit(db, { ...f, summary: '{' }), e => e.code === '22023' && /invalid_s14_summary/.test(e.message))
+    const big = JSON.stringify({ ...JSON.parse(f.summary), padding: 'x'.repeat(17000) })
+    await assert.rejects(() => commit(db, { ...f, summary: big }), e => e.code === '22023' && /invalid_s14_summary/.test(e.message))
+    const badTime = structuredClone(f.report); badTime.finished_at = 'not-a-time'; delete badTime.evidence_contract
+    const raw = JSON.stringify(badTime)
+    await assert.rejects(() => commit(db, { ...f, raw, sha: hash(raw), summary: buildSummary(badTime) }), e => e.code === '22023')
+    // Evidence whose embedded canonical JSON is malformed still maps to evidence_invalid.
+    const ev = structuredClone(f.report); ev.evidence_contract.policy = { canonical_json: '{' }
+    const evRaw = JSON.stringify(ev)
+    await assert.rejects(() => commit(db, { ...f, raw: evRaw, sha: hash(evRaw), summary: buildSummary(ev) }), e => e.code === '22023')
+    assert.equal((await db.query('select count(*)::int n from public.seosmith_audits')).rows[0].n, 0)
+  } finally { await db.close() }
+})
+
 test('direct schema-4 inserts need matching sha, summary, raw/report pair, enabled revision and worker source', async () => {
   const db = await boot()
   try {
@@ -129,10 +186,10 @@ test('direct schema-4 inserts need matching sha, summary, raw/report pair, enabl
     await assert.rejects(() => insert(f, { ssha: hash('x') }), /invalid_s14_binding/)
     await assert.rejects(() => insert(f, { report: JSON.stringify({ ...f.report, outcome: 'partial' }) }), /invalid_s14_binding/)
     await assert.rejects(() => insert(f, { raw: f.raw + ' ' }), /invalid_s14_binding/)
-    await assert.rejects(() => insert(f, { rev: 's14-wire-1/unknown' }), /violates foreign key|validator_disabled/)
+    await assert.rejects(() => insert(f, { rev: 's14-wire-1/unknown' }), /validator_disabled|violates foreign key/)
     await assert.rejects(() => insert(f, { summary: '{"summary_version":4}', ssha: hash('{"summary_version":4}') }), /invalid_s14_summary/)
     await assert.rejects(() => insert(f, { summary: '[]', ssha: hash('[]') }), /invalid_s14_summary/)
-    await assert.rejects(() => insert(f, { summary: '{', ssha: hash('{') }), /invalid input syntax|invalid_s14/)
+    await assert.rejects(() => insert(f, { summary: '{', ssha: hash('{') }), e => e.code === '22023' && /invalid_s14_summary/.test(e.message))
     await assert.rejects(() => insert(f, { source: 'import' }), /invalid_s14_binding/)
     // Columns are all-or-nothing and tied to schema 4.
     await assert.rejects(() => db.query(`insert into public.seosmith_audits(delivery_id,website_id,fqdn,generation,sha256,report,raw_report_json)
@@ -201,6 +258,19 @@ test('EXECUTE on the commit RPC is service_role only; the validator table is not
     const p = (await db.query("select prosecdef,proconfig from pg_proc where oid='public.commit_seosmith_audit_v4(text,uuid,text,text,text,text)'::regprocedure")).rows[0]
     assert.equal(p.prosecdef, true)
     assert.ok(p.proconfig.includes('statement_timeout=20s') && p.proconfig.includes('search_path=""'))
+    const t = (await db.query("select prosecdef,proconfig from pg_proc where oid='public.seosmith_prepare_audit()'::regprocedure")).rows[0]
+    assert.equal(t.prosecdef, true)
+    assert.deepEqual(t.proconfig, ['search_path=""'])
+    // Least privilege on the validators table: service_role has exactly select/insert/update.
+    const privs = (await db.query(`select r, p, has_table_privilege(r,'public.seosmith_s14_validators',p) h
+      from unnest(array['anon','authenticated','service_role']) r, unnest(array['select','insert','update','delete','truncate','references','trigger']) p`)).rows
+    for (const { r, p, h } of privs) assert.equal(h, r === 'service_role' && ['select', 'insert', 'update'].includes(p), `${r} ${p}`)
+    const grantees = (await db.query("select distinct grantee from information_schema.role_table_grants where table_name='seosmith_s14_validators' and table_schema='public' and grantee<>'postgres'")).rows
+    assert.deepEqual(grantees, [{ grantee: 'service_role' }])
+    await as(db, 'authenticated')
+    await assert.rejects(() => db.query("insert into public.seosmith_s14_validators(revision) values('x')"), /permission denied/)
+    await assert.rejects(() => db.query('update public.seosmith_s14_validators set enabled=false'), /permission denied/)
+    await assert.rejects(() => db.query('delete from public.seosmith_s14_validators'), /permission denied/)
   } finally { await db.close() }
 })
 
@@ -215,10 +285,17 @@ test('capability, history and detail expose schema 4 to the owner only', async (
     assert.deepEqual(caps.policy_wire_contracts, ['s14-wire-1'])
     assert.equal(caps.max_report_bytes, 4952756)
     assert.deepEqual(caps.evidence_contract_versions, [1])
+    // A schema-2 row through the legacy path still lists with its cached summary.
+    const v2 = JSON.parse(await readFile(new URL('fixtures/contracts/v2-complete.json', import.meta.url), 'utf8'))
+    v2.request.website_id = site; v2.request.request_id = randomUUID()
+    const v2raw = JSON.stringify(v2)
+    await db.query('select public.ingest_seosmith_audit($1,$2,$3,$4)', [TOKEN, v2.request.request_id, hash(v2raw), v2raw])
     await owned(db)
     const history = (await db.query('select public.seosmith_audit_history($1) as h', [site])).rows[0].h
-    assert.equal(history.items.length, 1)
-    assert.deepEqual(history.items[0].summary, JSON.parse(f.summary))
+    assert.equal(history.items.length, 2)
+    const item4 = history.items.find(i => i.delivery_id === f.id), item2 = history.items.find(i => i.delivery_id === v2.request.request_id)
+    assert.deepEqual(item4.summary, JSON.parse(f.summary))
+    assert.ok(item2.summary && item2.summary.summary_version !== 5)
     const d = (await db.query('select public.seosmith_audit_detail($1,$2) as d', [site, f.id])).rows[0].d
     assert.equal(d.summary_text, f.summary)
     assert.equal(d.summary_sha256, hash(f.summary))
