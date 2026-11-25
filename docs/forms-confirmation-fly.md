@@ -1,0 +1,13 @@
+# Static recipient confirmation
+
+Source-only slice. The assets-only `/forms/confirm` page selects Rust `POST /forms/confirm` only when `public.staticDashboard` and the independent `public.rolloutFormsConfirmation` are exactly true. Legacy mode retains `/api/forms/confirm` and its existing gate. The fragment remains `recipient_uuid:lowercase_64_hex_token`; mounting removes the fragment before interaction. Tokens travel only in the JSON request body. Do not capture tokens in screenshots, URLs or request logs.
+
+Rust requires exact `HTP_FORMS_CONFIRM_API=true`, `SUPABASE_URL`, and server-only `FORMS_SERVICE_KEY`. Unset flags stay off. Reuse `HTP_DASHBOARD_CORS_ORIGIN` for the single exact dashboard origin; no credentials or wildcard CORS. No owner bearer is needed: the invitation challenge is the credential. No recipient management or delivery is enabled.
+
+The route accepts only `application/json`, at most 1024 bytes, with exactly `recipient_id` and `token`. It bounds body reads and the RPC to ten seconds (the reqwest request deadline includes response reading); the browser has a twelve-second deadline. There are no automatic retries or redirects. Only database boolean true becomes `{ok:true}`; false is a safe refusal, and any other upstream outcome is unknown. Raw upstream errors are never returned or logged. The page confirms only typed `{ok:true}` and uses fixed failure text.
+
+Migration `20261207000000_forms_confirmation_pilot_fence.sql` follows the inspected repository maximum `20261206000000` and checks legacy function source drift. No live apply is authorized. It preserves `confirm_form_recipient(uuid,text) returns boolean`, service-role-only grants, lowercase token hashing, enabled/unverified/expiry checks and single-use behavior. The existing `forms_pilot_site_allowed` helper locks the exact approval and matching current website owner for the transaction. No approval rows, pilot settings, owner grants or delivery jobs are changed.
+
+Rollback: first disable the Rust flag and static confirmation flag. Review `supabase/rollbacks/20261207000000_forms_confirmation_pilot_fence.sql`: within one transaction it drops only the confirmation function (without CASCADE), restores the exact legacy definition and restores its service-only ACL. This removes the approval fence for legacy callers, so keep confirmation traffic stopped until deliberately approved. Reapply the forward migration to restore the fence. No table or pilot data is dropped.
+
+Local SQL fixture: copy the forward migration to `/tmp/confirm-migration.sql` inside a disposable PostgreSQL container, then run `psql -v ON_ERROR_STOP=1` with `supabase/tests/forms-confirmation-local.sql`. The fixture creates minimal isolated schema/roles; never run it on a shared database.

@@ -27,6 +27,7 @@ export default defineNuxtConfig({
     public: {
       pagePerformanceSamples: false,
       rolloutForms: false,
+      rolloutFormsConfirmation: false,
       rolloutFormsPilot: false,
       rolloutFormsResponses: false,
       rolloutSearchEvidence: false,

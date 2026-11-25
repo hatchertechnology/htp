@@ -1,11 +1,20 @@
 <script setup lang="ts">
+import { confirmationBody, confirmationUrl, confirmed } from '../../../shared/utils/forms-confirm-client'
 useHead({title:'Confirm form notifications',meta:[{name:'referrer',content:'no-referrer'}]})
-const formsEnabled = useRuntimeConfig().public.rolloutForms === true && useRuntimeConfig().public.rolloutFormsPilot !== true
+const config = useRuntimeConfig().public
+const formsEnabled = config.staticDashboard === true
+  ? config.rolloutFormsConfirmation === true
+  : config.rolloutForms === true && config.rolloutFormsPilot !== true
 const recipient = ref(''), token = ref(''), busy = ref(false), done = ref(false), error = ref('')
 onMounted(() => { const parts=location.hash.slice(1).split(':'); recipient.value=parts[0] || ''; token.value=parts[1] || ''; history.replaceState(null,'',location.pathname) })
 async function confirm() {
+  if (!formsEnabled || busy.value || done.value) return
   busy.value=true; error.value=''
-  try { await $fetch('/api/forms/confirm',{method:'POST',body:{recipient_id:recipient.value,token:token.value},retry:0}); done.value=true; token.value='' }
+  try {
+    const result = await $fetch(confirmationUrl(config.staticDashboard === true, config.apiBaseUrl), {method:'POST', body:confirmationBody(recipient.value,token.value), timeout:12_000, retry:0, redirect:'error', credentials:'omit'})
+    if (!confirmed(result)) throw new Error('Unconfirmed')
+    done.value=true; token.value=''
+  }
   catch { error.value='This confirmation link is invalid, expired, or temporarily unavailable. Ask the website owner to send a new invitation.' }
   finally { busy.value=false }
 }
