@@ -42,6 +42,42 @@ pub struct InspectedCandidate {
 pub struct ValidatedS14 {
     _private: (),
 }
+/// Optional S01 evidence cap. It matches the producer-side extension cap
+/// (1 MiB); the envelope byte cap in `MAX_REPORT_BYTES` already bounds the
+/// whole report.
+const MAX_EVIDENCE_BYTES: usize = 1_048_576;
+/// The optional `evidence_contract` carries S01 evidence v1 only.
+///
+/// # Errors
+/// Rejects evidence over `MAX_EVIDENCE_BYTES` (`Bounds`), evidence that is not
+/// a JSON object or carries no `version` (`Shape`), and any version other than
+/// the integer 1 (`UnsupportedSchema`). An explicit `null` reaches this check
+/// as a present member and is rejected here. The evidence content is otherwise
+/// opaque: the receiver crate does not interpret it, SQL does.
+fn check_evidence(evidence: &RawValue) -> Result<(), InspectionError> {
+    if evidence.get().len() > MAX_EVIDENCE_BYTES {
+        return Err(InspectionError::Bounds);
+    }
+    let parsed: serde_json::Value =
+        serde_json::from_str(evidence.get()).map_err(|_| InspectionError::Shape)?;
+    if !parsed.is_object() {
+        return Err(InspectionError::Shape);
+    }
+    match parsed.get("version") {
+        Some(version) if version.as_u64() == Some(1) => Ok(()),
+        Some(_) => Err(InspectionError::UnsupportedSchema),
+        None => Err(InspectionError::Shape),
+    }
+}
+/// Presence-preserving evidence decode. serde maps a JSON `null` onto
+/// `Option<&RawValue>` as `None`, which would silently downgrade a present but
+/// null `evidence_contract` to an absent one; wrapping the value keeps it
+/// `Some` so `check_evidence` rejects it.
+fn present_evidence<'de: 'a, 'a, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<&'a RawValue>, D::Error> {
+    <&'a RawValue as Deserialize<'de>>::deserialize(d).map(Some)
+}
 /// Admission stays fail-closed until independent full semantics are implemented.
 ///
 /// # Errors
@@ -111,6 +147,14 @@ struct Report<'a> {
     #[serde(borrow)]
     #[serde(rename = "finding_coverage")]
     _finding_coverage: Option<&'a RawValue>,
+    // Optional schema-4 evidence extension (S01 v1). Shape-checked here only;
+    // it is opaque to this crate and excluded from the population comparison.
+    // `present_evidence` keeps an explicit `null` visible as `Some`, so a
+    // present member is never mistaken for an absent one.
+    #[serde(default)]
+    #[serde(borrow)]
+    #[serde(deserialize_with = "present_evidence")]
+    evidence_contract: Option<&'a RawValue>,
 }
 #[derive(Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -301,6 +345,25 @@ fn uuid(raw: &str) -> bool {
             }
         })
 }
+/// Bounded collection metadata and the provisional seed URL profile.
+fn check_request(q: &CollectionRequest) -> Result<(), InspectionError> {
+    if !uuid(&q.request_id)
+        || !uuid(&q.website_id)
+        || q.binding_generation > 9_007_199_254_740_991
+        || q.max_pages == 0
+        || q.max_pages > 20000
+        || q.max_resources > 20000
+        || !(10..=7200).contains(&q.max_duration_seconds)
+        || !(1000..=60000).contains(&q.delay_ms)
+    {
+        return Err(InspectionError::Bounds);
+    }
+    let seed = admitted_url(&q.url)?;
+    if seed.port().is_some() || q.url.contains('?') {
+        return Err(InspectionError::Url);
+    }
+    Ok(())
+}
 fn deadline_check(deadline: Instant) -> Result<(), InspectionError> {
     if Instant::now() >= deadline {
         Err(InspectionError::Deadline)
@@ -330,22 +393,11 @@ pub fn inspect(input: &[u8], deadline: Instant) -> Result<InspectedCandidate, In
     if r.schema_version != 4 || r.policy_guidance.get().len() > 1_048_576 {
         return Err(InspectionError::Bounds);
     }
+    if let Some(evidence) = r.evidence_contract {
+        check_evidence(evidence)?;
+    }
     let q = &r.request;
-    if !uuid(&q.request_id)
-        || !uuid(&q.website_id)
-        || q.binding_generation > 9_007_199_254_740_991
-        || q.max_pages == 0
-        || q.max_pages > 20000
-        || q.max_resources > 20000
-        || !(10..=7200).contains(&q.max_duration_seconds)
-        || !(1000..=60000).contains(&q.delay_ms)
-    {
-        return Err(InspectionError::Bounds);
-    }
-    let seed = admitted_url(&q.url)?;
-    if seed.port().is_some() || q.url.contains('?') {
-        return Err(InspectionError::Url);
-    }
+    check_request(q)?;
     let g: Guidance = parse(r.policy_guidance.get())?;
     let p = &g.config;
     if g.version != "s14-wire-1"
