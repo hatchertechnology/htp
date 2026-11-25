@@ -1,4 +1,4 @@
-// Static-build owner Forms client for the inbox-only pilot (REST through the HTP API).
+// Static-build owner Forms client for the gated pilot (REST through the HTP API).
 // Every browser request goes to the HTP API origin with the caller's bearer. Routes are a closed allowlist,
 // bodies are built from allowlisted fields only, and ownership, pilot approval, grants and DNS verification
 // stay in the API and the database. Nothing here reaches Supabase tables, RPCs or Edge Functions.
@@ -8,8 +8,9 @@ const UUID = '[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
 const UUID_RE = new RegExp(`^${UUID}$`, 'i')
 const TOKEN_PREFIX = 'htp-verification='
 const TOKEN_RE = /^[0-9a-f]{64}$/i
-// Exactly the owner routes this client uses. Responses and every other path belong to the inbox client.
+// Closed owner-management routes, including separately gated notifications. Response paths use their own scoped clients.
 const ROUTES = [
+  new RegExp(`^/websites/${UUID}/forms/${UUID}/(?:recipients(?:/${UUID}/disable)?|delivery-jobs(?:/${UUID}/retry)?)$`, 'i'),
   new RegExp(`^/websites/${UUID}/forms(?:/(?:pilot-eligibility|hosts|origins|host-verifications))?$`, 'i'),
   new RegExp(`^/forms/host-verifications/${UUID}/confirm$`, 'i'),
 ]
