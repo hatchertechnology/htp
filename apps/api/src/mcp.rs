@@ -424,7 +424,7 @@ pub(crate) async fn owner_inspection_call(
 }
 
 // These operations reuse the HTP web server, which owns encrypted provider grants.
-// The destination is selected from two fixed origins and redirects are disabled.
+// The destination is one fixed origin and redirects are disabled.
 // No browser cookies or caller-supplied provider credentials are forwarded.
 pub(crate) async fn web_management_call(
     headers: &axum::http::HeaderMap,
@@ -489,7 +489,6 @@ fn native_provider_result(result: Result<serde_json::Value, u16>) -> CallToolRes
 fn web_management_origin(selector: Option<&std::ffi::OsStr>) -> Result<&'static str, ()> {
     match selector.map(std::ffi::OsStr::to_str) {
         None | Some(Some("htp.hatchtech.dev")) => Ok("https://htp.hatchtech.dev"),
-        Some(Some("htp-web-kerry-hatcher.fly.dev")) => Ok("https://htp-web-kerry-hatcher.fly.dev"),
         _ => Err(()),
     }
 }
@@ -1682,17 +1681,17 @@ mod management_tests {
     fn web_management_selector_accepts_only_exact_trusted_hosts() {
         use std::ffi::OsStr;
         assert_eq!(web_management_origin(None), Ok("https://htp.hatchtech.dev"));
-        for host in ["htp.hatchtech.dev", "htp-web-kerry-hatcher.fly.dev"] {
-            assert_eq!(
-                web_management_origin(Some(OsStr::new(host))),
-                Ok(format!("https://{host}").as_str())
-            );
-        }
+        assert_eq!(
+            web_management_origin(Some(OsStr::new("htp.hatchtech.dev"))),
+            Ok("https://htp.hatchtech.dev")
+        );
         for invalid in [
             "",
             "dashboard",
             "fly",
             "https://htp.hatchtech.dev",
+            // Retired Nitro Fly dashboard host; the app no longer exists.
+            "htp-web-kerry-hatcher.fly.dev",
             "http://htp-web-kerry-hatcher.fly.dev",
             "HTP.HATCHTECH.DEV",
             " htp.hatchtech.dev",
@@ -1721,7 +1720,7 @@ mod management_tests {
     async fn invalid_web_management_selector_fails_before_bearer_request() {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer owner-token".parse().unwrap());
-        headers.insert("host", "htp-web-kerry-hatcher.fly.dev".parse().unwrap());
+        headers.insert("host", "htp-api-kerry-hatcher.fly.dev".parse().unwrap());
         headers.insert("origin", "https://htp.hatchtech.dev".parse().unwrap());
         let result = web_management_call_with_selector(
             Some(std::ffi::OsStr::new("https://127.0.0.1:1")),

@@ -2,10 +2,12 @@
 
 MCP provider operations and REST provider connection routes share the web
 management bridge. Set the API process environment variable
-`HTP_WEB_MANAGEMENT_HOST` to exactly one of:
+`HTP_WEB_MANAGEMENT_HOST` to exactly `htp.hatchtech.dev`, or leave it unset
+(the same default). The former Nitro Fly host `htp-web-kerry-hatcher.fly.dev`
+was retired on 2026-11-25 and is now rejected like any other value.
 
-- `htp.hatchtech.dev` (also the default when unset)
-- `htp-web-kerry-hatcher.fly.dev` (existing trusted Nitro Fly host)
+While `HTP_ROLLOUT_PROVIDER_OAUTH=true`, provider connection status, disconnect
+and URL inspection use native provider management and never reach this bridge.
 
 The selector maps to a fixed HTTPS origin. Empty, non-Unicode, URL-shaped,
 whitespace-padded, or any other values fail closed with the existing unavailable

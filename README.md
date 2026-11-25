@@ -246,22 +246,12 @@ npm run build
 PORT=3001 npm start
 ```
 
-The frontend has its own Dockerfile and Fly configuration. Its Docker build
-context is `apps/web`, unlike the API's workspace-root build context:
-
-```sh
-fly apps create htp-web-kerry-hatcher
-fly deploy apps/web --config fly.toml --remote-only --ha=false
-```
-
-`apps/web/fly.toml` is the production configuration: a 512 MB shared-CPU
-machine with `NUXT_PUBLIC_BOUNDED_SAVED_DETAIL=true` for the opt-in H15
-bounded saved-detail dashboard read. The Nuxt default in `nuxt.config.ts`
-remains `false`. To roll the dashboard read back, set `memory = "256mb"`,
-remove that `[env]` line, and deploy the last verified production web image
-(revision `718c674`, manifest
-`sha256:930f0981c653dfec243670c7f04d3cc8d16ac2b5a667937cd5e36195a5be1214`)
-until a fresh qualified image is available.
+Production serves the dashboard as static assets from Cloudflare at
+`htp.hatchtech.dev`; the browser calls the Rust API on Fly. See
+[`apps/web/STATIC-DEPLOYMENT.md`](apps/web/STATIC-DEPLOYMENT.md) for the build,
+deployment and rollback procedure. The former Nitro Fly app
+`htp-web-kerry-hatcher` was retired on 2026-11-25. Its `fly.toml` is removed,
+and the Dockerfile in `apps/web` is no longer deployed.
 
 The Cargo workspace continues to build only the Rust crates. Frontend dependencies
 and build output are excluded from the API's Docker build context.
@@ -464,9 +454,10 @@ and devices. Before the first sync it returns HTTP 202 with
 `code: report_pending`. Set the binding using `PUT /websites/{id}/analytics/property` with
 `{"property_id":"557292489"}` or null to unlink. Both operations enforce ownership.
 
-Deploy the frontend from `apps/web` using `fly deploy --remote-only --ha=false`.
-The Fly app is `htp-web-kerry-hatcher`; its Google server credentials are Fly
-secrets. DNS points `htp.hatchtech.dev` directly to that Fly application.
+Deploy the frontend as static assets with Cloudflare, following
+`apps/web/STATIC-DEPLOYMENT.md`. Google and Bing server credentials are Fly
+secrets on the API app `htp-api-kerry-hatcher`, which also hosts the OAuth
+callbacks. `htp.hatchtech.dev` is a Cloudflare Worker custom domain.
 
 A confirmed test account was created for dashboard verification. Its credentials
 are stored only in the ignored, permission-restricted local file
