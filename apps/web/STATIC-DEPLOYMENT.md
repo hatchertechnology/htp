@@ -13,13 +13,31 @@ npm run static:smoke
 npx --yes wrangler@4.168.0 deploy --config wrangler.production.jsonc --dry-run
 ```
 
-Set `NUXT_PUBLIC_ROLLOUT_PROVIDER_CONNECT=true` on the build after the Rust
-provider endpoints, their production-origin CORS policy, and both registered
-callbacks have been verified. Use `wrangler.jsonc` for the separate preview.
+Use `wrangler.jsonc` for the separate public `workers.dev` preview and its
+version URLs. Test the signed-in workspace there before cutover. Set
+`NUXT_PUBLIC_ROLLOUT_PROVIDER_CONNECT=true` on the production build after both
+registered Fly callbacks and the Rust provider flow have been verified.
 
-The first production deployment attaches the custom domain in
-`wrangler.production.jsonc`. Record the existing hostname and Fly web DNS
-target before replacing the CNAME. Keep the Fly web deployment available for
-rollback. Verify the public production hostname serves the built assets and
-complete the signed-in workspace and provider checks. If cutover fails,
-detach the Cloudflare custom domain and restore the recorded Fly CNAME.
+1. On Fly, configure `HTP_DASHBOARD_CORS_ORIGIN=https://htp.hatchtech.dev` and
+   verify the production-origin preflights. Keep
+   `HTP_WEB_MANAGEMENT_HOST=htp-web-kerry-hatcher.fly.dev` for any held
+   compatibility operations. Check that those operations still reach Fly.
+2. Select the Kerry Personal Cloudflare account containing the active
+   `hatchtech.dev` zone. Keep the healthy Fly web deployment and its hostname
+   certificate available for rollback. Record the existing CNAME target, proxy
+   status and TTL. Lower its TTL in advance and allow the previous TTL to expire.
+3. During cutover, remove the existing CNAME for `htp.hatchtech.dev` and deploy
+   with `npx --yes wrangler@4.168.0 deploy --config wrangler.production.jsonc`.
+   The deployment attaches the custom domain. A dry run checks the asset
+   package. Domain ownership and certificate readiness are checked at cutover.
+4. Verify HTTPS and the exact deployed assets at the production hostname.
+   Check the signed-in workspace, page sampling, provider status and consent.
+   DNS and certificate changes can take time to propagate.
+
+For an asset regression, roll back the Cloudflare deployment to its previous
+working version. For a failed hostname cutover, remove `htp.hatchtech.dev`
+from the dashboard Worker’s Domains & Routes settings, then recreate the
+recorded Fly CNAME with its prior proxy setting and TTL. Verify public HTTPS
+and signed-in behavior on Fly. Restore the API origin and rollout settings
+from the pre-cutover snapshot if they changed. The Fly management selector
+can continue to point at the direct Fly web hostname.
