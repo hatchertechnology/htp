@@ -50,6 +50,24 @@ it('labels a zone with the same short name formatInstant renders', () => {
   }
 })
 
+// zoneLabel resolves the runtime default locale (undefined), so a label next to
+// a timestamp always names the zone the same way formatInstant does. Pin the
+// behaviour under en-GB (which prints short zone names as GMT offsets, unlike
+// en-US's EST/EDT): a hard-coded locale inside zoneLabel would fail this.
+it('keeps following the runtime default locale, pinned to en-GB', () => {
+  const RealDateTimeFormat = Intl.DateTimeFormat
+  class EnGbDateTimeFormat extends RealDateTimeFormat {
+    constructor(locale?: string | string[], options?: Intl.DateTimeFormatOptions) { super(locale === undefined ? 'en-GB' : locale, options) }
+  }
+  const original = Intl.DateTimeFormat
+  Object.defineProperty(Intl, 'DateTimeFormat', { value: EnGbDateTimeFormat, configurable: true, writable: true })
+  try {
+    expect(zoneLabel(NY, new Date('2026-11-24T14:03:00Z'))).toBe('GMT-5')
+    expect(zoneLabel(NY, new Date('2026-07-24T14:03:00Z'))).toBe('GMT-4')
+    expect(zoneLabel(NY, new Date('2026-11-24T14:03:00Z'))).not.toBe('EST')
+  } finally { Object.defineProperty(Intl, 'DateTimeFormat', { value: original, configurable: true, writable: true }) }
+})
+
 it('reads the local calendar day of an instant', () => {
   expect(localDayOf('2026-11-25T03:00:00Z', NY)).toBe('2026-11-24')
   expect(localDayOf('2026-11-25T05:00:00Z', NY)).toBe('2026-11-25')

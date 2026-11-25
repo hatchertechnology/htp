@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { AuditDetail } from '../../shared/types/seosmith'
 import { findingEvaluation, findingPriority } from '#shared/utils/seosmith-remediation'
+import { formatInstant } from '#shared/utils/local-time'
 const props = defineProps<{ audit: AuditDetail }>()
 type Attempt = { id: string; result: string; note: string; created_at: string; delivery_id: string | null }
 type Work = { id: string; finding_index: number; status: string; assignee: string | null; segments: Record<string, string>; exception_note: string | null; notes: string | null; business_exposure: string | null; estimated_effort: string | null; rationale: string | null; attempts: Attempt[]; attempts_more: boolean }
@@ -113,7 +114,7 @@ async function addAttempt() {
         <button class="refresh-control" :disabled="busy">Save work</button>
       </form>
       <template v-if="current"><h4>Verification attempts</h4><p class="report-caption">An attempt records what was checked; it does not automatically resolve the finding.</p>
-        <ul v-if="current.attempts.length"><li v-for="a in current.attempts" :key="a.id">{{ a.created_at }} · {{ a.result }} · {{ a.note }}<span v-if="a.delivery_id"> · audit {{ a.delivery_id }}</span></li></ul><p v-else class="compact-empty">No attempts recorded.</p><div v-if="cursorPage || current.attempts_more" class="seo-pagination"><button class="refresh-control" type="button" :disabled="busy || !cursorPage" @click="newerAttempts">Newer attempts</button><span>Page {{ cursorPage + 1 }}</span><button class="refresh-control" type="button" :disabled="busy || !current.attempts_more" @click="olderAttempts">Older attempts</button></div>
+        <ul v-if="current.attempts.length"><li v-for="a in current.attempts" :key="a.id"><time :datetime="a.created_at" :title="a.created_at">{{ formatInstant(a.created_at) }}</time> · {{ a.result }} · {{ a.note }}<span v-if="a.delivery_id"> · audit {{ a.delivery_id }}</span></li></ul><p v-else class="compact-empty">No attempts recorded.</p><div v-if="cursorPage || current.attempts_more" class="seo-pagination"><button class="refresh-control" type="button" :disabled="busy || !cursorPage" @click="newerAttempts">Newer attempts</button><span>Page {{ cursorPage + 1 }}</span><button class="refresh-control" type="button" :disabled="busy || !current.attempts_more" @click="olderAttempts">Older attempts</button></div>
         <form class="seo-filters" @submit.prevent="addAttempt"><label>Result<select v-model="attemptResult"><option value="unverified">Unverified</option><option value="observed">Observation recorded</option></select></label><label>Related saved audit ID (optional)<input v-model="attemptAudit" /></label><label>What was checked<input v-model="attemptNote" required maxlength="4096" /></label><button class="refresh-control" :disabled="busy || !attemptNote.trim()">Record attempt</button></form>
       </template>
     </template>
