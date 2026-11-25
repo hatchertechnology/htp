@@ -18,6 +18,7 @@ const config = useRuntimeConfig()
 const runtime = config.public as { apiBaseUrl?: unknown; staticDashboard?: boolean; rolloutFormsPilot?: boolean; rolloutFormsResponses?: boolean; rolloutFormsNotifications?: boolean }
 const legacy = computed(() => props.mode === 'legacy')
 const eligible = ref(false)
+const notificationsAvailable = ref(false)
 // Static pilot reads go through the authenticated API. Nitro/SSR builds keep direct Supabase reads.
 const apiReads = computed(() => !legacy.value && eligible.value && staticFormsInboxReads(runtime.staticDashboard, runtime.rolloutFormsPilot))
 const apiResponses = computed(() => !legacy.value && eligible.value && staticResponseEnabled(runtime.staticDashboard, runtime.rolloutFormsPilot, runtime.rolloutFormsResponses))
@@ -25,25 +26,29 @@ const responseControls = computed(() => legacy.value && runtime.staticDashboard 
 const responseUnresolved = ref(false)
 // Static builds have no Nitro server, so eligibility is the API's boolean pilot-eligibility read (fails closed).
 async function staticEligible(websiteId: string, token: string) {
-  const result = await $fetch<{ eligible?: unknown }>(ownerUrl(ownerPath.eligibility(websiteId), runtime.apiBaseUrl), { headers: { Authorization: `Bearer ${token}` }, retry: 0 })
-  return result?.eligible === true
+  const result = await $fetch<{ eligible?: unknown; notifications_available?: unknown }>(ownerUrl(ownerPath.eligibility(websiteId), runtime.apiBaseUrl), { headers: { Authorization: `Bearer ${token}` }, retry: 0 })
+  return result
 }
 let eligibilityGeneration = 0
 let inboxGeneration = 0
 watch(() => [auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId, props.mode] as const, async ([owner, anonymous, websiteId, mode]) => {
   const generation = ++eligibilityGeneration
   eligible.value = false
+  notificationsAvailable.value = false
   if (mode !== 'pilot' || !owner || anonymous === true) return
   try {
     const token = await auth.accessToken()
     if (!token) return
     const staticPilot = staticFormsInboxReads(runtime.staticDashboard, runtime.rolloutFormsPilot)
     const result = staticPilot
-      ? { eligible: await staticEligible(websiteId, token) }
-      : await $fetch<{ eligible: boolean }>('/api/forms/pilot-eligibility', { query: { website_id: websiteId }, headers: { Authorization: `Bearer ${token}` }, retry: 0 })
-    if (generation === eligibilityGeneration && auth.user.value?.id === owner && auth.user.value?.is_anonymous !== true && props.websiteId === websiteId && props.mode === 'pilot') eligible.value = result.eligible === true
+      ? await staticEligible(websiteId, token)
+      : await $fetch<{ eligible: boolean; notifications_available?: unknown }>('/api/forms/pilot-eligibility', { query: { website_id: websiteId }, headers: { Authorization: `Bearer ${token}` }, retry: 0 })
+    if (generation === eligibilityGeneration && auth.user.value?.id === owner && auth.user.value?.is_anonymous !== true && props.websiteId === websiteId && props.mode === 'pilot') {
+      eligible.value = result.eligible === true
+      notificationsAvailable.value = staticPilot && eligible.value && result.notifications_available === true
+    }
   } catch { /* Visibility fails closed on authentication and network failures. */ }
-}, { immediate: true })
+}, { immediate: true, flush: 'sync' })
 const expanded = ref(false), busy = ref(false), error = ref(''), notice = ref('')
 const hosts = ref<Host[]>([]), forms = ref<Form[]>([]), submissions = ref<Submission[]>([])
 const deleting = ref<string|null>(null)
@@ -358,7 +363,7 @@ watch(()=>[auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId, 
         </form>
       </div>
       <div class="forms-block"><h4>Your forms</h4><p v-if="!forms.length">No forms yet.</p><ul><li v-for="form in forms" :key="form.id"><strong>{{ form.name }}</strong> — {{ form.active ? 'Active' : 'Paused' }} <UButton color="neutral" variant="ghost" @click="edit(form)">Edit</UButton><UButton color="neutral" variant="ghost" @click="responseUnresolved = false; inbox(form)">Responses</UButton><p>Submission endpoint: <code>{{ config.public.apiBaseUrl }}/public/forms/{{ form.id }}</code></p></li></ul></div>
-      <FormsNotifications v-if="selected && apiReads && runtime.staticDashboard === true && runtime.rolloutFormsNotifications === true" :key="`${websiteId}:${selected.id}:${auth.user.value?.id}`" :website-id="websiteId" :form-id="selected.id" />
+      <FormsNotifications v-if="selected && notificationsAvailable && apiReads && runtime.staticDashboard === true && runtime.rolloutFormsNotifications === true" :key="`${websiteId}:${selected.id}:${auth.user.value?.id}`" :website-id="websiteId" :form-id="selected.id" />
       <div v-if="selected && legacy && runtime.staticDashboard !== true" class="forms-block"><h4>Notification recipients</h4><p>Each recipient must confirm their address before inquiries are sent. Delivery status records whether the email provider accepted the message.</p><form @submit.prevent="addRecipient"><label>Email address <input v-model="recipientEmail" type="email" required maxlength="254"></label><UButton type="submit" :loading="busy">Send verification</UButton></form><ul><li v-for="recipient in recipients" :key="recipient.id">{{ recipient.email }} — {{ !recipient.enabled ? 'Disabled' : recipient.verified_at ? 'Verified' : 'Awaiting verification' }} <UButton v-if="recipient.enabled" color="neutral" variant="ghost" @click="disableRecipient(recipient)">Disable</UButton><ul><li v-for="job in deliveries.filter(item => item.recipient_id === recipient.id && item.kind === 'verification')" :key="job.id">Verification: {{ job.state }} <UButton v-if="job.state === 'failed'" color="neutral" variant="ghost" @click="retryDelivery(job)">Retry</UButton><span v-if="job.state === 'uncertain'"> Request verification again if needed.</span></li></ul></li></ul></div>
       <div v-if="selected" class="forms-block"><h4>Responses: {{ selected.name }}</h4><p>Showing {{ submissions.length }} responses.</p><UButton :disabled="busy || !submissions.length" color="neutral" variant="outline" @click="exportCsv">Export all CSV</UButton><p v-if="!submissions.length">No responses to display.</p><UButton v-if="moreResponses" color="neutral" variant="outline" @click="inbox(selected, true)">Load more</UButton><ul><li v-for="row in submissions" :key="row.id"><p><time>{{ row.received_at }}</time> — {{ row.status }}</p><dl><template v-for="(value,key) in row.values" :key="key"><dt>{{ key }}</dt><dd>{{ value }}</dd></template></dl><ul v-if="legacy"><li v-for="job in deliveries.filter(item => item.response_id === row.id)" :key="job.id">Notification {{ recipients.find(item => item.id === job.recipient_id)?.email }}: {{ job.state }} <UButton v-if="job.state === 'failed' || job.state === 'uncertain'" color="neutral" variant="ghost" @click="retryDelivery(job)">Retry</UButton><span v-if="job.state === 'uncertain'"> Provider outcome unknown; check before resending.</span></li></ul><UButton v-if="apiResponses" color="neutral" variant="ghost" :disabled="busy || responseUnresolved" @click="status(row,'new')">Mark new</UButton><UButton v-if="responseControls" color="neutral" variant="ghost" :disabled="busy || responseUnresolved" @click="status(row,'reviewed')">Mark reviewed</UButton><UButton v-if="responseControls" color="neutral" variant="ghost" :disabled="busy || responseUnresolved" @click="status(row,'spam')">Mark spam</UButton><UButton v-if="responseControls" color="neutral" variant="ghost" :disabled="busy || responseUnresolved" @click="deleting = row.id">Delete</UButton><div v-if="responseControls && deleting === row.id"><p>Permanently delete this response and its notification history?</p><UButton color="error" :loading="busy" @click="deleteResponse(row)">Delete response</UButton><UButton color="neutral" variant="outline" @click="deleting = null">Cancel</UButton></div></li></ul></div>
     </div>

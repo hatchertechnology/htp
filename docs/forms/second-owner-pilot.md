@@ -38,3 +38,27 @@ No migrations, grants, public ingress, dashboard/static client, provider setting
 default flags or live configuration change here. A second pair still needs
 separately authorized database scope/approval and client configuration before any
 live pilot can work; local synthetic tests do not prove hosted RLS or availability.
+
+## Static notification capability
+
+The authenticated Rust `GET /websites/{id}/forms/pilot-eligibility` response
+preserves `eligible` for both configured pairs. It optionally adds
+`notifications_available: true` only for the primary website/owner pair, with
+`HTP_FORMS_OWNER_NOTIFICATION_API=true`, after the existing verified caller
+match and caller-bearer site RLS visibility check. Otherwise the capability is
+omitted. Errors and default-off behavior retain the existing contract.
+
+The static Forms dashboard reuses this single eligibility request. Notification
+controls require explicit boolean `true` plus the existing static pilot and
+notification rollout switches. Missing capabilities from older APIs fail closed:
+the panel stays hidden and makes no notification metadata requests. Identity,
+anonymous status, site, or mode changes clear eligibility synchronously; late
+answers cannot restore controls for an earlier context. Legacy and Nitro paths
+retain their existing behavior.
+
+This capability describes API route availability only. It does not promise
+database admission, recipient verification, queue acceptance, or delivery. It
+changes no notification authorization, SQL, hosted configuration, or default flags.
+Local regressions: `cargo test -p htp-api --offline --lib form_inbox`,
+`cargo test -p htp-api --offline --lib form_notifications`, and, with the local
+Forms Vite fixture running, `node tests/fixtures/check-forms-static-notifications.mjs`.

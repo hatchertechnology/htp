@@ -67,7 +67,33 @@ try {
    await page.screenshot({path:join(tmpdir(),'forms-notifications-mobile.png'),fullPage:true})
    await page.setViewportSize({width:1280,height:900})
    await page.screenshot({path:join(tmpdir(),'forms-notifications-desktop.png'),fullPage:true})
+   const before=state.apiCalls.filter(x=>/recipients|delivery-jobs/.test(x)).length
+   await page.evaluate(()=>globalThis.formFixture.setOwner(null))
+   await page.getByRole('region',{name:'Form notifications'}).waitFor({state:'detached'})
+   assert.equal((await page.evaluate(()=>globalThis.formFixture.state().apiCalls)).filter(x=>/recipients|delivery-jobs/.test(x)).length,before)
   }
+  if (!enabled) assert.equal((await page.evaluate(()=>globalThis.formFixture.state().apiCalls)).filter(x=>/recipients|delivery-jobs/.test(x)).length,0)
+  await page.close()
+ }
+ for (const capability of ['secondary','off','old']) {
+  const page=await browser.newPage()
+  await page.goto(`http://127.0.0.1:4177/tests/fixtures/forms.html?mode=pilot&static=1&notifications=1&capability=${capability}`)
+  await page.getByRole('button',{name:'Forms',exact:true}).click()
+  await page.getByRole('button',{name:'Responses',exact:true}).click()
+  assert.equal(await page.getByRole('region',{name:'Form notifications'}).count(),0)
+  const calls=await page.evaluate(()=>globalThis.formFixture.state().apiCalls)
+  assert.equal(calls.filter(x=>/recipients|delivery-jobs/.test(x)).length,0)
+  await page.close()
+ }
+ for (const change of ['owner','site']) {
+  const page=await browser.newPage()
+  await page.goto('http://127.0.0.1:4177/tests/fixtures/forms.html?mode=pilot&static=1&notifications=1&eligible=slow')
+  await page.waitForFunction(()=>globalThis.formFixture?.state().apiCalls.length===1)
+  await page.evaluate(change=>change==='owner'?globalThis.formFixture.setOwner(null):globalThis.formFixture.setSite('10000000-0000-0000-0000-000000000099'),change)
+  await page.waitForTimeout(700)
+  assert.equal(await page.getByRole('region',{name:'Form notifications'}).count(),0)
+  assert.equal(await page.getByRole('button',{name:'Forms',exact:true}).count(),0)
+  assert.equal((await page.evaluate(()=>globalThis.formFixture.state().apiCalls)).filter(x=>/recipients|delivery-jobs/.test(x)).length,0)
   await page.close()
  }
  console.log('Static notification browser fixture passed')

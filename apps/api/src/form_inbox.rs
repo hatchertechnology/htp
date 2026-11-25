@@ -440,11 +440,21 @@ struct OriginQuery {
 /// the handler and gets the same JSON envelope and `no-store` as every other
 /// response, rather than axum's plain-text rejection.
 pub(crate) fn router(state: FormInboxState) -> Router {
+    router_with_notifications(
+        state,
+        std::env::var("HTP_FORMS_OWNER_NOTIFICATION_API").as_deref() == Ok("true"),
+    )
+}
+
+#[derive(Clone, Copy)]
+struct NotificationEligibility(bool);
+
+fn router_with_notifications(state: FormInboxState, notifications: bool) -> Router {
     Router::new()
         .route("/websites/{id}/forms", get(list_forms))
         .route(
             "/websites/{id}/forms/pilot-eligibility",
-            get(pilot_eligibility),
+            get(pilot_eligibility).layer(Extension(NotificationEligibility(notifications))),
         )
         .route("/websites/{id}/forms/hosts", get(list_hosts))
         .route("/websites/{id}/forms/origins", get(list_origins))
@@ -462,9 +472,11 @@ pub(crate) fn router(state: FormInboxState) -> Router {
 type Caller = Option<Extension<AuthenticatedUser>>;
 
 /// `{"eligible": bool}`. True only for the exact pilot website and owner, and only
-/// when owner RLS also shows the site to the caller's bearer. Nothing else leaves.
+/// when owner RLS also shows the site to the caller's bearer. Optional notification
+/// capability describes API route availability only, never DB admission or delivery.
 async fn pilot_eligibility(
     State(state): State<FormInboxState>,
+    Extension(NotificationEligibility(notifications)): Extension<NotificationEligibility>,
     caller: Caller,
     headers: HeaderMap,
     path: Result<Path<Uuid>, PathRejection>,
@@ -477,7 +489,20 @@ async fn pilot_eligibility(
                 .reader
                 .owner_can_see_site(&headers, website_id)
                 .await?;
-        Ok(json!({"eligible": eligible}))
+        let mut result = json!({"eligible": eligible});
+        // Preserve the legacy eligible contract; missing capability fails closed.
+        if eligible
+            && notifications
+            && state.pilot.is_some_and(|pilot| {
+                pilot.website_id == website_id
+                    && caller
+                        .as_ref()
+                        .is_some_and(|caller| caller.0.id == pilot.owner_id)
+            })
+        {
+            result["notifications_available"] = json!(true);
+        }
+        Ok(result)
     }
     .await;
     respond(result)
@@ -1281,6 +1306,61 @@ mod tests {
             json!({"id": 1, "hostname": "www.example.test"})
         );
         assert_eq!(project(json!("not-an-object"), HOST_KEYS), json!({}));
+    }
+
+    #[tokio::test]
+    async fn notification_capability_requires_flag_primary_pair_and_rls() {
+        let fixture = fixture().await;
+        for (flag, primary, owner, expected) in [
+            (
+                true,
+                true,
+                OWNER,
+                json!({"eligible":true,"notifications_available":true}),
+            ),
+            (false, true, OWNER, json!({"eligible":true})),
+            (true, false, OWNER, json!({"eligible":true})),
+            (true, true, OTHER_OWNER, json!({"eligible":false})),
+        ] {
+            let pilot = if primary {
+                Some(pilot())
+            } else {
+                parse_pilots(Some(OTHER_SITE), Some(OTHER_OWNER), Some(SITE), Some(OWNER))
+            };
+            let app = router_with_notifications(
+                FormInboxState {
+                    reader: fixture.reader.clone(),
+                    enabled: true,
+                    pilot,
+                },
+                flag,
+            );
+            let (status, headers, body) = send(
+                app,
+                &format!("/websites/{SITE}/forms/pilot-eligibility"),
+                Some(owner),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+            assert_eq!(body, expected);
+        }
+        // The configured primary pair still cannot bypass site RLS.
+        let app = router_with_notifications(
+            FormInboxState {
+                reader: fixture.reader.clone(),
+                enabled: true,
+                pilot: parse_pilot(Some(OTHER_SITE), Some(OWNER)),
+            },
+            true,
+        );
+        let (_, _, body) = send(
+            app,
+            &format!("/websites/{OTHER_SITE}/forms/pilot-eligibility"),
+            Some(OWNER),
+        )
+        .await;
+        assert_eq!(body, json!({"eligible":false}));
     }
 
     #[tokio::test]
