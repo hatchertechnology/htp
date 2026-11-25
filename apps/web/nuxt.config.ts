@@ -36,6 +36,8 @@ export default defineNuxtConfig({
       // Selects the static dashboard client path (NUXT_PUBLIC_STATIC_DASHBOARD).
       // Default false keeps the Fly/SSR behavior unchanged.
       staticDashboard: false,
+      // Enable only after Rust/Fly OAuth and provider registrations are ready.
+      rolloutProviderConnect: false,
       rolloutLifecycle: false,
       rolloutRemediation: false,
       apiBaseUrl,
