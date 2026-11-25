@@ -229,7 +229,7 @@ fn authorize(
     let ids = path.map_err(|_| INVALID)?.0;
     let caller = caller.ok_or(UNAUTHORIZED)?;
     let pilot = state.pilot.ok_or(DISABLED)?;
-    if ids.id != pilot.website_id || caller.0.id != pilot.owner_id {
+    if !pilot.matches(ids.id, caller.0.id) {
         return Err(NOT_FOUND);
     }
     Ok(ids)
@@ -405,6 +405,7 @@ mod tests {
     }
     fn pilot() -> PilotScope {
         PilotScope {
+            second: None,
             website_id: uuid(SITE),
             owner_id: uuid(OWNER),
         }
@@ -504,6 +505,49 @@ mod tests {
             (Method::DELETE, false, ""),
         ]
     }
+    #[tokio::test]
+    async fn second_pair_response_operations_match_site_and_owner() {
+        let (state, seen) = fixture(None).await;
+        for owner in [OWNER, OTHER] {
+            let mut scope = pilot();
+            scope.second = Some((uuid(OTHER), uuid(owner)));
+            let app = router(ResponseState {
+                pilot: Some(scope),
+                ..state.clone()
+            });
+            for (method, status_path, body) in operations() {
+                let before = seen.lock().unwrap().len();
+                let (status, _, _) = send(
+                    app.clone(),
+                    method.clone(),
+                    &path(OTHER, status_path),
+                    Some(owner),
+                    true,
+                    body,
+                )
+                .await;
+                assert!(status.is_success());
+                assert_eq!(seen.lock().unwrap().len(), before + 1);
+                if owner != OWNER {
+                    for (site, caller) in [(SITE, owner), (OTHER, OWNER)] {
+                        let (status, _, value) = send(
+                            app.clone(),
+                            method.clone(),
+                            &path(site, status_path),
+                            Some(caller),
+                            true,
+                            body,
+                        )
+                        .await;
+                        assert_eq!(status, StatusCode::NOT_FOUND);
+                        assert_eq!(value["code"], "not_found");
+                    }
+                    assert_eq!(seen.lock().unwrap().len(), before + 1);
+                }
+            }
+        }
+    }
+
     #[tokio::test]
     async fn gates_and_scope_refuse_before_upstream() {
         let (state, seen) = fixture(None).await;
@@ -955,6 +999,7 @@ aKpDb+KKizP4pOlKiw3Ov4v43RK43imyuQMfaETyK/spnMZg78WYdE5w
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, jwks).await.unwrap() });
         let pilot = PilotScope {
+            second: None,
             website_id: Uuid::from_u128(1),
             owner_id: Uuid::from_u128(2),
         };

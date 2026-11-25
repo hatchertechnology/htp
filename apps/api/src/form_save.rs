@@ -9,7 +9,8 @@
 //!
 //! The feature is default-off behind its own flag, `HTP_FORMS_OWNER_SAVE_API`,
 //! and reuses the inbox pilot pair (`HTP_FORMS_PILOT_WEBSITE_ID` and
-//! `HTP_FORMS_PILOT_OWNER_ID`), so only the pilot owner may save the pilot site.
+//! `HTP_FORMS_PILOT_OWNER_ID`) plus its optional second pair. Each owner may
+//! save only the explicitly paired website.
 //! No privileged key is used.
 //!
 //! Write outcomes are mapped conservatively. Only a status the RPC returns for a
@@ -337,7 +338,7 @@ fn authorize(
     ensure_enabled(state)?;
     let caller = caller.ok_or(UNAUTHORIZED)?;
     let pilot = state.pilot.ok_or(NOT_ENABLED)?;
-    if website_id == pilot.website_id && caller.0.id == pilot.owner_id {
+    if pilot.matches(website_id, caller.0.id) {
         Ok(())
     } else {
         Err(NOT_FOUND)
@@ -459,6 +460,7 @@ mod tests {
 
     fn pilot() -> PilotScope {
         PilotScope {
+            second: None,
             website_id: uuid(SITE),
             owner_id: uuid(OWNER),
         }
@@ -714,6 +716,41 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(value["code"], json!("invalid_request"));
         assert_eq!(fixture.up.hits.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn second_pair_save_is_pairwise_before_upstream() {
+        let fixture = fixture(Reply::Echo).await;
+        for owner in [OWNER, OTHER_OWNER] {
+            let mut scope = pilot();
+            scope.second = Some((uuid(OTHER_SITE), uuid(owner)));
+            let app = app(true, Some(scope), fixture.saver.clone());
+            let before = fixture.up.hits.load(Ordering::SeqCst);
+            let (status, _, _) = send(
+                app.clone(),
+                Method::POST,
+                &post_uri(OTHER_SITE),
+                Some(owner),
+                &valid_body().to_string(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(fixture.up.hits.load(Ordering::SeqCst), before + 1);
+            if owner != OWNER {
+                for (site, caller) in [(SITE, owner), (OTHER_SITE, OWNER)] {
+                    let (status, _, _) = send(
+                        app.clone(),
+                        Method::POST,
+                        &post_uri(site),
+                        Some(caller),
+                        &valid_body().to_string(),
+                    )
+                    .await;
+                    assert_eq!(status, StatusCode::NOT_FOUND);
+                }
+                assert_eq!(fixture.up.hits.load(Ordering::SeqCst), before + 1);
+            }
+        }
     }
 
     #[tokio::test]
