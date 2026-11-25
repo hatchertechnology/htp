@@ -138,7 +138,7 @@ curl --fail https://htp-api-kerry-hatcher.fly.dev/mcp \
 ```
 
 `MCP_ALLOWED_HOSTS` and `MCP_ALLOWED_ORIGINS` are comma-separated allowlists.
-Local defaults allow loopback hosts and origins on port 3000; `fly.toml` sets
+Local defaults allow loopback hosts and origins on port 3000; `apps/api/fly.toml` sets
 the deployed hostname and HTTPS origin. Requests without an `Origin` header
 are supported. When adding a custom domain or browser client, update these
 allowlists to include its host and origin.

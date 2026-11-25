@@ -20,16 +20,19 @@ production origin, run signed-in checks on the production hostname. Set
 `NUXT_PUBLIC_ROLLOUT_PROVIDER_CONNECT=true` on the production build after both
 registered Fly callbacks and the Rust provider flow have been verified.
 
+The hostname cutover below was completed on 2026-11-25, and the Nitro Fly web
+app `htp-web-kerry-hatcher` was then retired. `HTP_WEB_MANAGEMENT_HOST` now
+accepts only `htp.hatchtech.dev`. The steps are kept as a historical record.
+Routine dashboard releases only rebuild and deploy the static assets (step 3's
+`wrangler deploy`) and run the checks in step 4.
+
 1. Record the current Fly release, API origin and provider rollout settings,
    and the dashboard build flags. Configure
    `HTP_DASHBOARD_CORS_ORIGIN=https://htp.hatchtech.dev` on Fly and
-   verify the production-origin preflights. (The cutover is complete. The
-   Nitro Fly web app `htp-web-kerry-hatcher` was retired on 2026-11-25, and
-   `HTP_WEB_MANAGEMENT_HOST` now accepts only `htp.hatchtech.dev`.)
+   verify the production-origin preflights.
 2. Select the Kerry Personal Cloudflare account containing the active
-   `hatchtech.dev` zone. Keep the healthy Fly web deployment and its hostname
-   certificate available for rollback. Record the existing CNAME target, proxy
-   status and TTL. Lower its TTL in advance and allow the previous TTL to expire.
+   `hatchtech.dev` zone. Record the existing CNAME target, proxy status and
+   TTL. Lower its TTL in advance and allow the previous TTL to expire.
 3. During cutover, remove the existing CNAME for `htp.hatchtech.dev` and deploy
    with `npx --yes wrangler@4.168.0 deploy --config wrangler.production.jsonc`.
    The deployment attaches the custom domain. A dry run checks the asset
