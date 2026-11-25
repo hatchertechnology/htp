@@ -231,10 +231,13 @@ def main():
         for path in sorted((ROOT/'supabase/migrations').glob('*forms*.sql')):
             if path==MIG: break
             source=path.read_text(); sql(source);sql(f"insert into fixture_ledger values('{path.name[:14]}','{hashlib.sha256(source.encode()).hexdigest()}');")
+        sql('grant execute on function delete_website_form_response(uuid,uuid,uuid) to authenticated;')
         before=acl(); protected=sql("select jsonb_agg(jsonb_build_array(oid::regprocedure::text,prosrc) order by oid) from pg_proc where oid in ('claim_form_delivery()'::regprocedure,'finish_form_delivery(uuid,uuid,text)'::regprocedure);")
         migration=MIG.read_text();print('producer_sha256='+hashlib.sha256(migration.encode()).hexdigest(),flush=True)
         # Guard rejects drift transactionally, restoring exact source/ACL afterward.
         for change,restore in [
+            ('grant execute on function delete_website_form_response(uuid,uuid,uuid) to authenticated with grant option;',
+             'revoke grant option for execute on function delete_website_form_response(uuid,uuid,uuid) from authenticated;'),
             ('grant execute on function request_form_recipient(uuid,uuid,text) to authenticated;','revoke execute on function request_form_recipient(uuid,uuid,text) from authenticated;'),
             ("alter function confirm_form_recipient(uuid,text) set search_path=public;","alter function confirm_form_recipient(uuid,text) set search_path='';")]:
             sql(change); refused(migration,'notification_producer_');sql(restore)

@@ -6,7 +6,7 @@
 -- Close takes approval, website, admission in that order. Fresh generation on reopen.
 begin;
 do $guard$
-declare item record; p pg_proc; r text; reachable text;
+declare item record; p pg_proc; r text; reachable text; pilot_delete_grant boolean;
 begin
  for item in select * from (values
  ('public.forms_pilot_site_allowed(uuid)','b666743e3ecffb46d748773c047690991131a5d65850b6d94c20b5bf9295b5c1'),
@@ -25,13 +25,24 @@ begin
  or p.proconfig is distinct from array['search_path=""']::text[]
  or encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') <> item.digest then
  raise exception 'notification_producer_source_drift: %',item.signature; end if;
- if (select count(*) from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner)))) <> (case when item.signature='public.forms_pilot_site_allowed(uuid)' then 1 else 2 end)
+ -- A pilot may already have the reviewed owner deletion grant. Preserve its
+ -- presence or absence without adding any privilege in this migration.
+ pilot_delete_grant := item.signature='public.delete_website_form_response(uuid,uuid,uuid)'
+   and exists(select 1 from aclexplode(p.proacl) a where a.grantee='authenticated'::regrole);
+ if (select count(*) from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner)))) <>
+    (case when item.signature='public.forms_pilot_site_allowed(uuid)' then 1 else 2 end)
+    + pilot_delete_grant::integer
  or exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
- where a.grantor<>'postgres'::regrole or a.grantee not in ('postgres'::regrole,'service_role'::regrole) or a.is_grantable or a.privilege_type<>'EXECUTE') then
+ where a.grantor<>'postgres'::regrole
+   or (a.grantee not in ('postgres'::regrole,'service_role'::regrole)
+       and not (pilot_delete_grant and a.grantee='authenticated'::regrole))
+   or a.is_grantable or a.privilege_type<>'EXECUTE') then
  raise exception 'notification_producer_acl_drift'; end if;
  foreach r in array array['anon','authenticated','service_role'] loop
  for reachable in select rolname from pg_roles where pg_has_role(r,oid,'MEMBER') loop
- if pg_has_role(reachable,'postgres','MEMBER') or has_function_privilege(reachable,p.oid,'EXECUTE') <> (r='service_role' and item.signature<>'public.forms_pilot_site_allowed(uuid)') then
+ if pg_has_role(reachable,'postgres','MEMBER') or has_function_privilege(reachable,p.oid,'EXECUTE') <>
+   ((r='service_role' and item.signature<>'public.forms_pilot_site_allowed(uuid)')
+    or (r='authenticated' and pilot_delete_grant and reachable='authenticated')) then
  raise exception 'notification_producer_effective_acl_drift'; end if;
  end loop; end loop;
  end loop;
