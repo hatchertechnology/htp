@@ -205,7 +205,7 @@ onBeforeUnmount(() => { generation++ })
         <button :disabled="busy || !exportFingerprint || deleteConfirmation !== 'DELETE INDEPENDENT EVIDENCE'" @click="deleteEvidence">Delete independent evidence</button>
         </template>
         <p v-if="readOnly && error" role="alert">{{ error }}</p>
-        <h2>Saved comparisons</h2><ul><li v-for="item in snapshots" :key="item.id"><button @click="openComparison(item)"><time :datetime="item.created_at" :title="item.created_at">{{ formatInstant(item.created_at) }}</time> · {{ item.fqdn }} · {{ item.semantics }}</button></li></ul><button v-if="snapshotCursor" @click="more('snapshots')">More comparisons</button>
+        <h2>Saved comparisons</h2><p v-if="!snapshots.length">No saved comparisons yet. Open a saved evidence import and compare it with an SEOsmith run.</p><ul><li v-for="item in snapshots" :key="item.id"><button @click="openComparison(item)"><time :datetime="item.created_at" :title="item.created_at">{{ formatInstant(item.created_at) }}</time> · {{ item.fqdn }} · {{ item.semantics }}</button></li></ul><button v-if="snapshotCursor" @click="more('snapshots')">More comparisons</button>
         <h2>Saved evidence</h2>
         <p v-if="!imports.length">No independent imports found.</p>
         <ul><li v-for="item in imports" :key="item.id"><button @click="choose(item.id)">{{ item.metadata?.filename || 'CSV import' }} · {{ item.fqdn }} · <time :datetime="item.created_at" :title="item.created_at">{{ formatInstant(item.created_at) }}</time></button> · SHA-256 {{ item.source_sha256 }}</li></ul><button v-if="importCursor" @click="more('imports')">More imports</button>
@@ -230,3 +230,12 @@ onBeforeUnmount(() => { generation++ })
     </template>
   </main>
 </template>
+
+<style scoped>
+/* The workspace pages share the Operations Desk rhythm; this plain shell
+   needs the same breathing room between its paragraphs and sections. */
+.page-shell > p { margin-block: 8px; }
+.page-shell h2 { margin: 26px 0 10px; }
+.page-shell h3 { margin: 22px 0 8px; }
+.page-shell ul { margin-block: 8px; }
+</style>

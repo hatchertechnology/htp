@@ -53,7 +53,8 @@ async function decide(approve: boolean) {
 </script>
 
 <template>
-  <div class="page-heading consent-heading"><h1>Approve app access</h1><p>Connect an AI agent to your Hatch account.</p></div>
+  <div class="consent-page">
+  <div class="page-heading"><h1>Approve app access</h1><p>Connect an AI agent to your Hatch account.</p></div>
     <section class="connection-settings surface oauth-consent" aria-labelledby="consent-heading">
       <h2 id="consent-heading">{{ details ? `${details.client.name || 'This app'} wants access` : 'Review this connection' }}</h2>
       <p v-if="!id" class="form-error" role="alert">This page needs a valid authorization request. Start the connection from your agent’s MCP settings.</p>
@@ -75,9 +76,11 @@ async function decide(approve: boolean) {
       <p v-if="error" class="form-error" role="alert">{{ error }}</p>
       <UButton v-if="error && user && id && !details" color="neutral" variant="outline" @click="load">Try again</UButton>
     </section>
+  </div>
 </template>
 
 <style scoped>
+.consent-page { margin: 0 auto; }
 .oauth-consent h2 { margin-bottom: 16px; }
 .oauth-consent p { max-width: 65ch; }
 .oauth-permissions { list-style: disc; padding-left: 22px; margin: 20px 0; }
