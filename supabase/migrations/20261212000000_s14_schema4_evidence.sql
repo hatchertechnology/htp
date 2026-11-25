@@ -6,13 +6,15 @@
 -- and it never edits the uninstalled 46/47 migrations. Existing ACLs are kept.
 
 -- N2: schema-4 lifecycle comparison key, deterministic from stored columns.
+-- No API-role EXECUTE (public, anon, authenticated, service_role are all revoked);
+-- only the owner and the security-definer index function call it.
 create or replace function public.seosmith_s14_comparison_key(a public.seosmith_audits) returns text
 language sql immutable set search_path='' as $$
   select encode(sha256(convert_to(
     (a.summary->>'comparison_key') || chr(10) || 'schema:4' || chr(10)
     || (a.report#>>'{evidence_contract,comparison_key}'),'UTF8')),'hex')
 $$;
-revoke all on function public.seosmith_s14_comparison_key(public.seosmith_audits) from public,anon,authenticated;
+revoke all on function public.seosmith_s14_comparison_key(public.seosmith_audits) from public,anon,authenticated,service_role;
 
 -- Schema 4 with evidence v1 is indexed as indexed_v1; schema 4 without usable
 -- evidence is unsupported. The remainder is the installed body.

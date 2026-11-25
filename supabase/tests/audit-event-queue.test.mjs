@@ -238,3 +238,37 @@ test('actual producer pass/fail pair is accepted and evaluated through the froze
   assert.ok((await db.query("select 1 from public.audit_events where delivery_id=$1 and rule='missing_title' and kind='new'",[fail.request.request_id])).rows.length)
  } finally {await db.close()}
 })
+
+// S14 schema 4 (E-db): enqueue reads the evidence version from report.evidence_contract.version,
+// because a schema-4 summary carries evidence_contract_version null.
+test('schema 4 enqueues by the report evidence version; schema 2 and non-worker sources are unchanged',async()=>{
+ const db=new PGlite(),site='00000000-0000-0000-0000-000000000003',owner='00000000-0000-0000-0000-000000000001'
+ const uid=n=>`00000000-0000-0000-0000-${String(n).padStart(12,'0')}`
+ try {
+  await db.exec(`create role anon; create role authenticated; create role service_role bypassrls; create schema auth;
+   create function auth.jwt() returns jsonb language sql as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
+   create function auth.uid() returns uuid language sql as $$select (auth.jwt()->>'sub')::uuid$$;
+   create table public.websites(id uuid primary key,owner_id uuid,fqdn text);
+   create table public.seosmith_audits(delivery_id uuid primary key,website_id uuid,fqdn text,generation bigint,ingestion_source text,summary jsonb,report jsonb);
+   create table public.google_report_jobs(id uuid primary key,website_id uuid,fqdn text);
+   create table public.bing_report_jobs(id uuid primary key,website_id uuid,fqdn text);
+   create table public.website_repositories(id uuid primary key,website_id uuid,fqdn text);
+   grant usage on schema public,auth to authenticated,anon;`)
+  // E-db also replaces the index and remediation functions, so their base objects must exist.
+  await db.exec("alter table public.seosmith_audits add column scan_at timestamptz, add column received_at timestamptz default now()")
+  for(const f of ['20261125000000_seosmith_lifecycle_index.sql','20261202000000_seosmith_remediation.sql','20261203000000_audit_event_queue.sql','20261212000000_s14_schema4_evidence.sql']) await db.exec(await readFile(new URL('../migrations/'+f,import.meta.url),'utf8'))
+  await db.query('insert into public.websites values($1,$2,$3)',[site,owner,'example.com'])
+  const jobs=()=>db.query('select delivery_id from public.audit_event_jobs order by delivery_id').then(r=>r.rows.map(x=>x.delivery_id))
+  const insert=(n,{source='worker',summary={},report={}}={})=>db.query("insert into public.seosmith_audits values($1,$2,'example.com',1,$3,$4,$5)",[uid(n),site,source,summary,report])
+  const s4=v=>({schema_version:'4',evidence_contract:{version:v}})
+  await insert(10,{report:s4('1')}); assert.deepEqual(await jobs(),[],'gated off')
+  await db.exec('update public.audit_event_config set enqueue_enabled=true')
+  await insert(11,{report:s4('1')})                           // enqueued; summary has no evidence_contract_version
+  await insert(12,{report:s4('2')})                           // unknown evidence version
+  await insert(13,{report:{schema_version:'4'}})              // no evidence
+  await insert(14,{source:'import',report:s4('1')})           // not a worker receipt
+  await insert(15,{summary:{schema_version:'2'},report:{schema_version:'2'}}) // schema 2 unchanged
+  await insert(16,{summary:{schema_version:'1'},report:{schema_version:'1'}}) // schema 1 not enqueued
+  assert.deepEqual(await jobs(),[uid(11),uid(15)])
+ } finally {await db.close()}
+})

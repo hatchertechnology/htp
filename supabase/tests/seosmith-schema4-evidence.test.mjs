@@ -62,7 +62,17 @@ test('schema 4 with evidence is indexed_v1 with the helper comparison key and th
     // The SQL helper equals the plan's formula; schema-2 key is untouched by it.
     const h = await db.query('select public.seosmith_s14_comparison_key(a) k from public.seosmith_audits a where delivery_id=$1', [f.id])
     assert.equal(h.rows[0].k, i.comparison_key)
-    await assert.rejects(() => as(db, 'authenticated').then(() => db.query('select public.seosmith_s14_comparison_key(a) from public.seosmith_audits a')), /permission denied/)
+    for (const role of ['anon', 'authenticated', 'service_role'])
+      await assert.rejects(() => as(db, role).then(() => db.query('select public.seosmith_s14_comparison_key(a) from public.seosmith_audits a')), /permission denied/, role)
+    await as(db, 'postgres')
+    // Schema 2 is unchanged: the index keeps the stored summary key verbatim (the receiver trigger derives it; no N2 hashing).
+    const v2 = JSON.parse(await readFile(new URL('./fixtures/contracts/v2-complete.json', import.meta.url), 'utf8'))
+    const old = randomUUID()
+    await db.query("insert into public.seosmith_audits(delivery_id,website_id,fqdn,generation,sha256,report,summary,ingestion_source,scan_at) values($1,$2,'example.com',1,$3,$4,$5,'worker','2026-11-25T09:00:00Z')",
+      [old, site, 'e'.repeat(64), v2, { schema_version: 2, comparison_key: COMPARISON }])
+    const i2 = await indexed(db, old)
+    assert.equal(i2.state, 'indexed_v1'); assert.equal(i2.schema_version, '2'); const stored = (await db.query('select summary->>$2 k from public.seosmith_audits where delivery_id=$1', [old, 'comparison_key'])).rows[0].k
+    assert.ok(stored); assert.equal(i2.comparison_key, stored); assert.notEqual(i2.comparison_key, i.comparison_key)
   } finally { await db.close() }
 })
 

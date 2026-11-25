@@ -43,3 +43,45 @@ test('index retains explicit evaluations, exposes gaps, backfills without rewrit
   assert.deepEqual((await db.query('select report from public.seosmith_audits where delivery_id=$1',[id(1)])).rows[0].report,v2)
  } finally {await db.close()}
 })
+
+// S14 schema 4 (E-db): the index treats a schema-4 audit with evidence v1 as indexed_v1 under the N2 key.
+test('schema 4 indexes as indexed_v1 with the N2 key; schema 1/2 keys and unsupported states are unchanged',async()=>{
+ const {createHash}=await import('node:crypto'),sha=s=>createHash('sha256').update(s).digest('hex')
+ const db=new PGlite()
+ try {
+  await db.exec(`create role anon; create role authenticated; create role service_role bypassrls; create schema auth;
+   create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
+   create function auth.uid() returns uuid language sql stable as $$select (auth.jwt()->>'sub')::uuid$$;
+   grant usage on schema auth,public to anon,authenticated,service_role;
+   create table public.websites(id uuid primary key,owner_id uuid,fqdn text);
+   create table public.seosmith_audits(delivery_id uuid primary key,website_id uuid,fqdn text,scan_at timestamptz,received_at timestamptz default now(),ingestion_source text,summary jsonb,report jsonb);`)
+  await db.query('insert into public.websites values($1,$2,$3)',[site,owner,'example.com'])
+  await db.exec(await readFile(new URL('../migrations/20261125000000_seosmith_lifecycle_index.sql',import.meta.url),'utf8'))
+  // E-db replaces the remediation and enqueue functions too, so their base objects must exist.
+  await db.exec('alter table public.seosmith_audits add column generation bigint')
+  for(const f of ['20261202000000_seosmith_remediation.sql','20261203000000_audit_event_queue.sql']) await db.exec(await readFile(new URL('../migrations/'+f,import.meta.url),'utf8'))
+  await db.exec(await readFile(new URL('../migrations/20261212000000_s14_schema4_evidence.sql',import.meta.url),'utf8'))
+  const receiverKey=sha('receiver-v5-comparison-key')
+  const insert=(n,report,summary={comparison_key:receiverKey})=>db.query("insert into public.seosmith_audits(delivery_id,website_id,fqdn,scan_at,ingestion_source,summary,report) values($1,$2,'example.com',$3,'worker',$4,$5)",[id(n),site,`2026-11-${String(n).padStart(2,'0')}T00:00:00Z`,summary,report])
+  const row=n=>db.query('select * from public.seosmith_lifecycle_indexed where delivery_id=$1',[id(n)]).then(r=>r.rows[0])
+  const count=(t,n)=>db.query(`select count(*)::int n from public.${t} where delivery_id=$1`,[id(n)]).then(r=>r.rows[0].n)
+  const v4={...structuredClone(v2),schema_version:'4'}
+  await insert(1,v4); await insert(2,v2); await insert(3,{schema_version:1})
+  await insert(4,{...structuredClone(v4),evidence_contract:undefined})                      // schema 4 without evidence
+  await insert(5,v4,{})                                                                       // schema 4, summary lacks the key
+  const noEvKey=structuredClone(v4); delete noEvKey.evidence_contract.comparison_key
+  await insert(6,noEvKey)                                                                     // schema 4, evidence lacks the key
+  const badVersion=structuredClone(v4); badVersion.evidence_contract.version=2
+  await insert(7,badVersion)                                                                  // schema 4, unknown evidence version
+  const s4=await row(1)
+  assert.equal(s4.state,'indexed_v1'); assert.equal(s4.schema_version,'4')
+  assert.equal(s4.comparison_key,sha(`${receiverKey}\nschema:4\n${v4.evidence_contract.comparison_key}`))
+  assert.equal(s4.policy_digest,v4.evidence_contract.policy.signature)
+  assert.equal(await count('seosmith_lifecycle_evaluations',1),v4.evidence_contract.evaluations.length)
+  assert.equal(await count('seosmith_lifecycle_observations',1),v4.evidence_contract.observations.length)
+  // Schema 2 keeps the summary key verbatim (no N2 hashing); schema 1 stays legacy.
+  const s2=await row(2); assert.equal(s2.state,'indexed_v1'); assert.equal(s2.comparison_key,receiverKey); assert.notEqual(s2.comparison_key,s4.comparison_key)
+  assert.equal((await row(3)).state,'legacy')
+  for(const n of [4,5,6,7]){const r=await row(n);assert.equal(r.state,'unsupported',`row ${n}`);assert.equal(r.comparison_key,null);assert.equal(await count('seosmith_lifecycle_evaluations',n),0)}
+ } finally {await db.close()}
+})
