@@ -6,7 +6,7 @@
 -- Close takes approval, website, admission in that order. Fresh generation on reopen.
 begin;
 do $guard$
-declare item record; p pg_proc; r text; reachable text; pilot_delete_grant boolean;
+declare item record; p pg_proc; r text; reachable text; pilot_delete_grant boolean; worker_grant boolean;
 begin
  for item in select * from (values
  ('public.forms_pilot_site_allowed(uuid)','b666743e3ecffb46d748773c047690991131a5d65850b6d94c20b5bf9295b5c1'),
@@ -29,9 +29,16 @@ begin
  -- presence or absence without adding any privilege in this migration.
  pilot_delete_grant := item.signature='public.delete_website_form_response(uuid,uuid,uuid)'
    and exists(select 1 from aclexplode(p.proacl) a where a.grantee='authenticated'::regrole);
+ -- Managed Supabase defaults can grant service_role EXECUTE on trigger
+ -- functions that have no worker call site. Preserve either exact profile.
+ worker_grant := case
+   when item.signature='public.forms_pilot_site_allowed(uuid)' then false
+   when item.signature in ('public.queue_form_response_notifications()','public.guard_website_form_deletion()')
+     then exists(select 1 from aclexplode(p.proacl) a where a.grantee='service_role'::regrole)
+   else true
+ end;
  if (select count(*) from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner)))) <>
-    (case when item.signature='public.forms_pilot_site_allowed(uuid)' then 1 else 2 end)
-    + pilot_delete_grant::integer
+    1 + worker_grant::integer + pilot_delete_grant::integer
  or exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
  where a.grantor<>'postgres'::regrole
    or (a.grantee not in ('postgres'::regrole,'service_role'::regrole)
@@ -41,7 +48,7 @@ begin
  foreach r in array array['anon','authenticated','service_role'] loop
  for reachable in select rolname from pg_roles where pg_has_role(r,oid,'MEMBER') loop
  if pg_has_role(reachable,'postgres','MEMBER') or has_function_privilege(reachable,p.oid,'EXECUTE') <>
-   ((r='service_role' and item.signature<>'public.forms_pilot_site_allowed(uuid)')
+   ((r='service_role' and worker_grant)
     or (r='authenticated' and pilot_delete_grant and reachable='authenticated')) then
  raise exception 'notification_producer_effective_acl_drift'; end if;
  end loop; end loop;
