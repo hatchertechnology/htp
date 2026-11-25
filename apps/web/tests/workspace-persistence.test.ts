@@ -147,15 +147,19 @@ it('recomputes a preset range on load and keeps a custom range fixed', async () 
   first.ws.range.setPreset(30)
   await settle()
   expect(first.contextOf(OWNER_A)?.range).toEqual({ kind: 'preset', days: 30 })
-  first.ws.range.setPreset(7)
-  await settle()
-  expect([first.ws.range.start.value, first.ws.range.end.value]).toEqual(['2026-11-18', '2026-11-24'])
   first.scope.stop()
 
+  // The rolling Last 30 days window recomputes on the next day: the stored value
+  // is the preset, never the dates.
   vi.setSystemTime(new Date('2026-11-26T03:00:00Z'))
   const second = harness({ user: OWNER_A, store, pages: sites })
   await settle()
+  expect(second.ws.range.preset.value).toBe(30)
+  expect([second.ws.range.start.value, second.ws.range.end.value]).toEqual(['2026-10-27', '2026-11-25'])
+  second.ws.range.setPreset(7)
+  await settle()
   expect([second.ws.range.start.value, second.ws.range.end.value]).toEqual(['2026-11-19', '2026-11-25'])
+  expect(second.contextOf(OWNER_A)?.range).toEqual({ kind: 'preset', days: 7 })
 
   expect(second.ws.range.setCustomRange('2026-10-01', '2026-10-10')).toBe(true)
   expect(second.ws.range.setCustomRange('2026-10-10', '2026-10-01')).toBe(false)
@@ -257,6 +261,91 @@ it('marks the context ready with an error after a failed load so the header can 
   expect(h.ws.error.value).toBe('')
   expect(h.ws.selectedId.value).toBe(A1)
   expect(h.contextOf(OWNER_A)?.websiteId).toBe(A1)
+  h.scope.stop()
+})
+
+it('awaits an in-flight load and re-reads once so a just-created website is selectable', async () => {
+  let list = [site(A1)]
+  let first = true
+  let release: () => void = () => {}
+  const held = new Promise<void>(resolve => { release = resolve })
+  const h = harness({
+    user: OWNER_A,
+    pages: async () => {
+      const snapshot = [...list]
+      if (first) { first = false; await held }
+      return { items: snapshot, has_more: false }
+    },
+  })
+  // Part D's flow: the POST finished while the initial list was still loading.
+  list = [site(A1), site(A3)]
+  const waiting = h.ws.load()
+  expect(h.ws.sites.value).toEqual([])
+  release()
+  await waiting
+  await settle()
+  expect(h.ws.sites.value.map(item => item.id)).toEqual([A1, A3])
+  expect(h.ws.selectWebsite(A3)).toBe(true)
+  expect(h.ws.selectedId.value).toBe(A3)
+  expect(h.websiteCalls()).toHaveLength(2)
+  h.scope.stop()
+})
+
+it('does not clobber the stored website when the range changes before the list loads', async () => {
+  const store = memoryStorage({ [contextStorageKey(OWNER_A)]: stored(A2) })
+  let release: () => void = () => {}
+  const held = new Promise<void>(resolve => { release = resolve })
+  const h = harness({ user: OWNER_A, store, pages: async () => { await held; return { items: [site(A1), site(A2)], has_more: false } } })
+  expect(h.ws.contextReady.value).toBe(false)
+  h.ws.range.setPreset(7)
+  expect(h.contextOf(OWNER_A)).toMatchObject({ websiteId: A2, range: { kind: 'preset', days: 7 } })
+  release()
+  await settle()
+  expect(h.ws.selectedId.value).toBe(A2)
+  expect(h.contextOf(OWNER_A)).toMatchObject({ websiteId: A2, range: { kind: 'preset', days: 7 } })
+  h.scope.stop()
+})
+
+it('keeps the stored website when a range change is followed by a failed load', async () => {
+  const store = memoryStorage({ [contextStorageKey(OWNER_A)]: stored(A2) })
+  let release: () => void = () => {}
+  const held = new Promise<void>(resolve => { release = resolve })
+  const h = harness({
+    user: OWNER_A,
+    store,
+    pages: async () => { await held; throw Object.assign(new Error('Request failed'), { data: { error: 'Could not load websites.' } }) },
+  })
+  h.ws.range.setPreset(7)
+  release()
+  await settle()
+  expect(h.ws.error.value).toBe('Could not load websites.')
+  expect(h.contextOf(OWNER_A)?.websiteId).toBe(A2)
+  // A later range change must still preserve the stored site, not write null.
+  h.ws.range.setPreset(28)
+  await settle()
+  expect(h.contextOf(OWNER_A)).toMatchObject({ websiteId: A2, range: { kind: 'preset', days: 28 } })
+  h.scope.stop()
+})
+
+it('does not request another page when the owner changes before a page settles', async () => {
+  let release: () => void = () => {}
+  const held = new Promise<void>(resolve => { release = resolve })
+  const h = harness({
+    user: OWNER_A,
+    pages: async (_url, owner) => {
+      if (owner === OWNER_A) { await held; return { items: [site(A1)], has_more: true } }
+      return { items: [site(B1)], has_more: false }
+    },
+  })
+  await settle()
+  expect(h.websiteCalls()).toHaveLength(1)
+  h.user.value = { id: OWNER_B }
+  await settle()
+  release()
+  await settle()
+  expect(h.websiteCalls().some(call => call.url.includes('offset=100'))).toBe(false)
+  expect(h.ws.sites.value.map(item => item.id)).toEqual([B1])
+  expect(h.ws.selectedId.value).toBe(B1)
   h.scope.stop()
 })
 

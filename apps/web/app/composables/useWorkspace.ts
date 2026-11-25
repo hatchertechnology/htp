@@ -52,7 +52,7 @@ export function useWorkspace() {
   const contextReady = useState('workspace:context-ready', () => false)
   // The pending site is keyed by owner so a previous owner's choice is never applied.
   const pendingSite = useState<{ owner: string; websiteId: string | null } | null>('workspace:pending-site', () => null)
-  const loadingOwner = useState<{ owner: string; generation: number } | null>('workspace:loading-owner', () => null)
+  const loadState = useState<{ owner: string; generation: number; promise: Promise<void>; again: boolean } | null>('workspace:load-state', () => null)
   const rangePreset = useState<RangePreset | null>('workspace:range-preset', () => null)
   const visibilityInstalled = useState('workspace:visibility-listener', () => false)
   // Report range stays in the same useState keys the reports and fixtures read.
@@ -95,18 +95,49 @@ export function useWorkspace() {
     if (rangePreset.value !== null) return { kind: 'preset', days: rangePreset.value }
     return start.value && end.value ? { kind: 'custom', start: start.value, end: end.value } : null
   }
+  // The stored site is written only from a validated selection or, before the
+  // list is validated (and after a failed load), from the still-pending stored
+  // choice. A range change must never null a persisted website.
+  function websiteForStorage(): string | null {
+    const current = owner.value
+    if (selectedId.value && sites.value.some(site => site.id === selectedId.value)) return selectedId.value
+    return current && pendingSite.value?.owner === current ? pendingSite.value.websiteId : null
+  }
   function persistRange() {
     const current = owner.value
     if (!current || auth.user.value?.id !== current) return
-    writeStoredContext(current, selectedId.value || null, currentRange())
+    writeStoredContext(current, websiteForStorage(), currentRange())
   }
 
+  // A concurrent load() waits for the running pass and queues exactly one more,
+  // so `await load()` always resolves with a list that includes everything the
+  // server had when it was called (Part D: `await ws.load(); ws.selectWebsite`).
   async function load() {
     const currentOwner = auth.user.value?.id
     if (!currentOwner) return
     const generation = sessionGeneration.value
-    if (loadingOwner.value?.owner === currentOwner && loadingOwner.value.generation === generation) return
-    loadingOwner.value = { owner: currentOwner, generation }
+    const running = loadState.value
+    if (running && running.owner === currentOwner && running.generation === generation) {
+      running.again = true
+      await running.promise.catch(() => {})
+      return
+    }
+    let finish: () => void = () => {}
+    const ticket = { owner: currentOwner, generation, promise: new Promise<void>((resolve) => { finish = resolve }), again: false }
+    loadState.value = ticket
+    try {
+      do {
+        ticket.again = false
+        await runLoad(currentOwner, generation)
+      } while (ticket.again && currentSession(currentOwner, generation))
+    } finally {
+      // `useState` wraps objects in a reactive proxy, so compare the raw promise.
+      if (loadState.value?.promise === ticket.promise) loadState.value = null
+      finish()
+    }
+  }
+  async function runLoad(currentOwner: string, generation: number) {
+    if (!currentSession(currentOwner, generation)) return
     loading.value = true; error.value = ''
     try {
       const collected: Website[] = []
@@ -134,7 +165,6 @@ export function useWorkspace() {
       if (!currentSession(currentOwner, generation)) return
       error.value = failureMessage(cause)
     } finally {
-      if (loadingOwner.value?.owner === currentOwner && loadingOwner.value.generation === generation) loadingOwner.value = null
       if (currentSession(currentOwner, generation)) { loading.value = false; contextReady.value = true }
     }
   }
@@ -199,7 +229,7 @@ export function useWorkspace() {
     if (!auth.ready.value || owner.value === id) return
     sessionGeneration.value++
     owner.value = id; sites.value = []; selectedId.value = ''; error.value = ''; loading.value = false
-    sitesTruncated.value = false; contextReady.value = false; pendingSite.value = null; loadingOwner.value = null
+    sitesTruncated.value = false; contextReady.value = false; pendingSite.value = null; loadState.value = null
     google.value = { connected: false, configured: true, analytics: false, search: false, business: false, reauthorizationRequired: false }; connectionReady.value = false
     bing.value = { connected: false, configured: true, reauthorizationRequired: false }; bingReady.value = false; bingError.value = ''
     // Apply the stored range before any request, so the first report read uses it.
