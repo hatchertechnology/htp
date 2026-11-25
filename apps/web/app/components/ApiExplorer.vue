@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Access, Operation, PlaygroundResponse, Transport } from '../../shared/types/api'
-import { playgroundTarget } from '../../shared/utils/playground-client'
+import { playgroundTarget } from '#shared/utils/playground-client'
 import { SIGN_IN_PATH } from '#shared/utils/public-routes'
 const props = defineProps<{ transport: Transport }>()
 const config = useRuntimeConfig()
