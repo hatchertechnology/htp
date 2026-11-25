@@ -43,13 +43,15 @@ def extra():
     print('PASS cyclic scopes cannot starve eligible site behind invalid scope', flush=True)
     b.setup()
     sql('update forms_notification_schedule set job_cursor=null where slot=1;')
-    # 130 invalid jobs precede the valid job in UUID order: bounded batches
-    # advance on invalidity instead of repeatedly scanning the same prefix.
+    # Completed and invalid labels precede the valid job in UUID order.
+    # Both occupy cursor slots so retained history cannot cause a full scan.
     sql(f"""delete from forms_notification_job_admissions;
       update website_form_delivery_jobs set id='{u(999)}' where id='{u(5)}';
       insert into website_form_recipients values ('{u(10)}','{u(1)}','{u(3)}','invalid@example.invalid',false,null,now());
-      insert into website_form_delivery_jobs(id,recipient_id,kind,secret_token)
-        select ('00000000-0000-0000-0000-'||lpad(i::text,12,'0'))::uuid,'{u(10)}','verification','synthetic'
+      insert into website_form_delivery_jobs(id,recipient_id,kind,secret_token,state)
+        select ('00000000-0000-0000-0000-'||lpad(i::text,12,'0'))::uuid,'{u(10)}','verification',
+          case when i<170 then null else 'synthetic' end,
+          case when i<170 then 'sent' else 'pending' end
         from generate_series(100,229) i;
       insert into forms_notification_job_admissions
         select id,'{u(7)}','{u(1)}','{u(2)}','{u(8)}' from website_form_delivery_jobs;""")
@@ -58,7 +60,7 @@ def extra():
     assert b.claim() is None
     job = b.claim()
     assert job['id'] == u(999)
-    print('PASS bounded invalid prefix advances 64/64 then eligible lease', flush=True)
+    print('PASS bounded completed and invalid labels advance 64/64 then eligible lease', flush=True)
     assert reconcile(g=9) == '0'
     assert reconcile(site=20) == '0'
     assert reconcile(owner=20) == '0'

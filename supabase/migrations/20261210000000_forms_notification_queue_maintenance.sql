@@ -50,7 +50,7 @@ revoke all on public.forms_notification_schedule from public,anon,authenticated,
 create or replace function public.claim_form_delivery()
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare
-  scope record; candidate record;
+  scope record; candidate record; candidate_id uuid;
   job public.website_form_delivery_jobs%rowtype;
   recipient public.website_form_recipients%rowtype;
   response public.website_form_responses%rowtype;
@@ -63,8 +63,19 @@ begin
   select website_cursor into cursor_site from public.forms_notification_schedule
     where slot=0 for update skip locked;
   if not found then return null; end if;
-  for scope in select * from public.forms_notification_admissions
-    where active order by coalesce(website_id<=cursor_site,false),website_id limit 1 loop
+  for scope in
+    with next_scope as materialized (
+      select * from public.forms_notification_admissions
+      where active and website_id>=coalesce(cursor_site,'00000000-0000-0000-0000-000000000000'::uuid)
+        and website_id is distinct from cursor_site
+      order by website_id limit 1
+    )
+    select * from next_scope
+    union all
+    (select * from public.forms_notification_admissions
+      where active and website_id<=cursor_site and not exists(select 1 from next_scope)
+      order by website_id limit 1)
+  loop
     update public.forms_notification_schedule set website_cursor=scope.website_id where slot=0;
     perform 1 from public.forms_pilot_approved_sites
       where website_id=scope.website_id and owner_id=scope.owner_id for share;
@@ -81,17 +92,35 @@ begin
       values (1,scope.website_id,null) on conflict do nothing;
     select job_cursor into cursor_job from public.forms_notification_schedule
       where slot=1 and website_cursor=scope.website_id;
-    for candidate in
-      select j.id,r.form_id,j.response_id,j.recipient_id
-      from public.forms_notification_job_admissions a
-      join public.website_form_delivery_jobs j on j.id=a.job_id
-      left join public.website_form_recipients r on r.id=j.recipient_id
-      where a.operation_id=scope.operation_id and a.website_id=scope.website_id
-        and a.owner_id=scope.owner_id and a.generation=scope.generation and j.state='pending'
-      order by coalesce(j.id<=cursor_job,false),j.id limit 64
+    for candidate_id in
+      -- Page the indexed label range before joining job state. Completed and
+      -- otherwise ineligible labels still advance the cursor, so no history
+      -- segment or invalid prefix requires an unbounded scan.
+      with next_labels as materialized (
+        select a.job_id from public.forms_notification_job_admissions a
+        where a.operation_id=scope.operation_id and a.website_id=scope.website_id
+          and a.owner_id=scope.owner_id and a.generation=scope.generation
+          and a.job_id>=coalesce(cursor_job,'00000000-0000-0000-0000-000000000000'::uuid)
+          and a.job_id is distinct from cursor_job
+        order by a.job_id limit 64
+      ), label_page as materialized (
+        select job_id, false as wrapped from next_labels
+        union all
+        (select a.job_id, true from public.forms_notification_job_admissions a
+         where a.operation_id=scope.operation_id and a.website_id=scope.website_id
+           and a.owner_id=scope.owner_id and a.generation=scope.generation
+           and a.job_id<=cursor_job
+         order by a.job_id limit (64-(select count(*) from next_labels)))
+      )
+      select page.job_id from label_page page order by page.wrapped,page.job_id
     loop
-      update public.forms_notification_schedule set job_cursor=candidate.id
+      update public.forms_notification_schedule set job_cursor=candidate_id
         where slot=1 and website_cursor=scope.website_id;
+      select j.id,r.form_id,j.response_id,j.recipient_id into candidate
+        from public.website_form_delivery_jobs j
+        join public.website_form_recipients r on r.id=j.recipient_id
+        where j.id=candidate_id and j.state='pending';
+      if not found then continue; end if;
       -- Private labels precede content locks. No job lock is held while waiting
       -- for form/response/recipient; compatible with existing producer order.
       perform 1 from public.forms_notification_job_admissions
@@ -199,7 +228,7 @@ do $guard$
 declare item record; p pg_proc; r text; reachable text;
 begin
   for item in select * from (values
-    ('public.claim_form_delivery()', '84b2d5809a8e7fa4f671a51d996f996e02459fd4ba556147e422fe559fe3b8ee'),
+    ('public.claim_form_delivery()', '17d17087b01c20400e7cd1ef480cc170b7884d07c06e687ae07559f9a1cbbb58'),
     ('public.finish_form_delivery(uuid,uuid,text)', '05c7713d3df39c768bede655041d322d60c1ab82ef2908b86e081d6a369b3465')
   ) expected(signature, digest) loop
     select * into p from pg_proc where oid=to_regprocedure(item.signature);
