@@ -118,9 +118,9 @@ struct DatasetInput {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct UrlInput {
-    site_url: String,
-    url: String,
+pub(crate) struct UrlInput {
+    pub(crate) site_url: String,
+    pub(crate) url: String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -143,7 +143,11 @@ fn valid_property(site: &str, fqdn: &str) -> bool {
             && site.ends_with('/')
     })
 }
-fn normalized_inspection(value: &str, site: &str, fqdn: &str) -> Option<(String, String)> {
+pub(crate) fn normalized_inspection(
+    value: &str,
+    site: &str,
+    fqdn: &str,
+) -> Option<(String, String)> {
     if value.len() > 2048 || site.len() > 2048 || !valid_property(site, fqdn) {
         return None;
     }
@@ -553,7 +557,7 @@ fn dashboard_projection(data: &Value) -> Value {
     }
     Value::Object(projected)
 }
-async fn inspect(
+pub(crate) async fn inspect(
     State((store, google)): State<(WebsiteStore, SearchClient)>,
     Path(id): Path<Uuid>,
     headers: HeaderMap,
@@ -634,7 +638,7 @@ async fn inspection_history(
         .map(Json)
         .map_err(SearchError::Website)
 }
-enum SearchError {
+pub(crate) enum SearchError {
     Invalid(&'static str),
     Website(crate::websites::WebsiteError),
     Token,

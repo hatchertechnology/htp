@@ -1,4 +1,4 @@
-//! Owner-scoped provider operations; consent and grant storage remain on the web origin.
+//! Owner-scoped provider operations shared with MCP.
 use axum::{
     Json, Router,
     extract::Path,
@@ -21,7 +21,7 @@ pub(crate) fn router() -> Router {
         )
 }
 
-// This route uses the owner bridge; Nitro alone supplies the Google credential.
+// The shared caller selects native grants only while the native rollout is enabled.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct OwnerInspectionInput {
@@ -84,7 +84,11 @@ fn rest_response(result: CallToolResult) -> Response {
     if failed {
         value["status"] = serde_json::json!(status.as_u16());
     }
-    (status, Json(value)).into_response()
+    let mut response = (status, Json(value)).into_response();
+    response
+        .headers_mut()
+        .insert("cache-control", "private, no-store".parse().unwrap());
+    response
 }
 
 #[cfg(test)]

@@ -44,10 +44,12 @@ provider body, or grant logging is added.
 
 `HTP_ROLLOUT_PROVIDER_OAUTH` must equal `true` to enable native OAuth. It is unset
 by default in code and explicitly `false` in fly.toml. Until enabled, new start,
-launch and callback operations return 503; existing connection status/disconnect
+launch and callback operations return 503; existing connection status/disconnect and owner inspection
 continue through their legacy owner bridge. If enabled but incomplete/invalid,
 all native OAuth operations fail closed with 503; there is no exchange fallback
-to Nitro. Status/disconnect remain on the legacy bridge in either gate state.
+to Nitro. Status/disconnect and owner inspection select native Rust when the gate is true.
+Status reports each provider’s configured state independently, matching Nitro;
+missing store or inspection configuration fails closed without bridge fallback.
 
 Enabling requires all of these API environment settings (names only; no values
 are stored here):
@@ -103,26 +105,47 @@ with AAD `htp_<provider>_grant:<owner UUID>` and JSON `{user,refresh,scopes}`. A
 tokens are never stored. Existing collectors, rotation RPCs, generation fences,
 MCP/owner inspection consumers and Nitro decryptors continue using those rows.
 
-REST status/disconnect and owner inspection remain on their existing Nitro
-bridges; native versions are reserved follow-up scope. Legacy browser-only Google
-cookies remain accessible only on the old web host: the existing Nitro one-time
-migration remains intact, but the API cannot read or delete another host's cookie.
-Migrate those browsers through existing Nitro before cutover, or reconnect through
-the native flow. Do not copy cookies or grant material into frontend storage.
+REST GET/DELETE `/providers/{google|bing}/connection` and MCP provider tools
+share the native grant store when the gate is true. POST
+`/websites/{id}/search/owner-inspect` and MCP URL inspection share native Google
+refresh and the existing Rust inspection implementation. The held gate preserves
+the existing Nitro bridges. Cloudflare remains static assets only.
 
-### Reserved native provider operations follow-up
+Legacy browser-only Google cookies remain accessible only on the old web host.
+The API cannot read or delete another host's cookie. Migrate through existing
+Nitro before cutover, or reconnect natively. Tombstones prevent legacy migration
+from restoring an account-wide disconnected grant. No browser credential or
+caller-supplied Google token is accepted by native owner inspection.
 
-`apps/api/src/providers.rs` continues delegating GET/DELETE
-`/providers/{google|bing}/connection` via `mcp::web_management_call` to Nitro
-`/api/{google|bing}/connection`. POST `/websites/{id}/search/owner-inspect` still
-uses `mcp::owner_inspection_call`; Nitro supplies Google's credential. The shared
-MCP management and owner-inspection callers in `mcp.rs` are unchanged. Static
-consent migration therefore does not retire the Nitro receiver or the existing
-trusted web-management origin configuration. Before changing the dashboard DNS
-to static hosting, select the existing direct legacy receiver with
-`HTP_WEB_MANAGEMENT_HOST=htp-web-kerry-hatcher.fly.dev`; the bridge default
-`htp.hatchtech.dev` would otherwise resolve to static assets. This does not add
-an allowed host or involve a Cloudflare proxy.
+### Native operations — activation still blocked
+
+`provider_management.rs` uses verified nonanonymous owner identity for grant
+reads and writes. Status projects metadata only. Disconnect creates a fresh
+UUID generation and empty tombstone, clearing Google scopes. Inspection checks
+website ownership and property/URL boundaries before refreshing Search Console
+credentials. Refresh tokens remain encrypted in the existing format; access
+tokens stay request-local. Rotated refresh persistence uses
+`rotate_google_grant` with the generation originally read with the grant. A lost
+CAS cannot overwrite a reconnect or disconnect. Shared MCP/REST errors retain
+the existing sanitized status mapping, and REST responses are private/no-store.
+Provider and grant-store transport disables redirects, has a 15-second deadline,
+and bounds JSON responses to 64 KiB.
+
+**Missing dependency: atomic consent/disconnect ordering.** The PR119 callback
+still unconditionally upserts. A callback already exchanging a code can overwrite
+a tombstone written by native disconnect, including on another replica. A local
+mutex or deleting pending entries cannot fix the database race. Before activation,
+add a shared per-owner/provider consent epoch: snapshot it when connect is issued,
+atomically increment it and write the tombstone on disconnect, and atomically
+compare it while writing the callback grant. Reject stale callbacks without a
+write. This needs a database RPC/schema contract (including absent-row ordering)
+and callback integration for both providers. Existing generation-fenced refresh
+RPCs do not provide that contract. This source change is **not activation-ready**.
+
+The existing singleton process/no-auto-stop handshake constraint remains. Add a
+bounded per-owner pending cap in `provider_oauth.rs::connect`, before inserting
+into `tickets`; the current 1024-entry global bound is unchanged. No Fly settings,
+rollout flags, provider registrations, or pending-store behavior were changed.
 
 Reuse these established store/encryption contracts in the follow-up:
 
@@ -136,16 +159,12 @@ Reuse these established store/encryption contracts in the follow-up:
 - Rust `provider_oauth.rs::seal/unseal` for the exact existing grant wire format
   and owner-purpose AAD, and `exchange_at`'s existing-table row payload: verified
   owner, fresh generation, status, encrypted grant, timestamp and Google scopes.
-  These private helpers can be extracted into a shared grant-store module in the
-  follow-up; do not invent another grant format or refresh-token transport.
+  These crate-private helpers are reused by native management; do not invent another grant format or refresh-token transport.
 - Owner inspection must preserve existing website-owner checks, scoped Google
   access and generation-fenced refresh persistence rather than accepting a
   browser-supplied Google token. Keep its API/MCP response/error mapping intact.
 
-Native status/disconnect should use the verified owner identity for every read
-and write, preserve tombstones and generation fences, and decide the in-flight
-consent/disconnect fence before activation. This change adds no native status,
-disconnect, refresh, or owner-inspection implementation.
+The atomic consent/disconnect fence above remains required before activation.
 
 ## Synthetic verification
 
