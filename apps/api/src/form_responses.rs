@@ -277,6 +277,65 @@ fn respond(result: Result<Value, WriteError>) -> Response {
     (status, [(header::CACHE_CONTROL, "no-store")], Json(body)).into_response()
 }
 
+use rmcp::handler::server::{tool::Extension as ToolExtension, wrapper::Parameters};
+use rmcp::model::CallToolResult;
+use rmcp::schemars;
+use rmcp::{tool, tool_router};
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DeleteResponseInput {
+    #[schemars(with = "String")]
+    website_id: Uuid,
+    #[schemars(with = "String")]
+    form_id: Uuid,
+    #[schemars(with = "String")]
+    response_id: Uuid,
+    /// Must be true after explicit user intent to permanently delete this exact response.
+    confirm_delete: bool,
+}
+#[tool_router(router = forms_response_tool_router, vis = "pub(crate)")]
+impl crate::mcp::WebsiteMcp {
+    #[tool(
+        description = "Permanently delete exactly one explicitly selected pilot form response. Requires explicit user intent and confirm_delete=true. No bulk deletion. Unknown outcomes require inbox reconciliation before another explicit attempt. Default-off; visible to signed-in users when configured, executable only by the pilot owner.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false
+        )
+    )]
+    async fn delete_form_response(
+        &self,
+        Parameters(input): Parameters<DeleteResponseInput>,
+        ToolExtension(parts): ToolExtension<axum::http::request::Parts>,
+    ) -> CallToolResult {
+        if !input.confirm_delete {
+            return CallToolResult::structured_error(
+                json!({"code":"explicit_delete_required","error":"Confirm explicit intent to delete this exact response."}),
+            );
+        }
+        crate::mcp::forms_result(
+            delete_response(
+                State(self.responses.clone()),
+                parts
+                    .extensions
+                    .get::<AuthenticatedUser>()
+                    .cloned()
+                    .map(Extension),
+                parts.headers,
+                Ok(Path(ResponseIds {
+                    id: input.website_id,
+                    form_id: input.form_id,
+                    response_id: input.response_id,
+                })),
+                Ok(Bytes::new()),
+            )
+            .await,
+        )
+        .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
