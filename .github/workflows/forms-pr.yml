@@ -92,6 +92,11 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Test forms migrations and admission
         run: node --test tests/website-forms.test.mjs tests/forms-client-admission.test.mjs tests/forms-host-challenge-quota.test.mjs tests/forms-activation-fixture.test.mjs tests/forms-pilot-scope.test.mjs
+      - name: Test notification claim and shutdown in PostgreSQL 17
+        run: |
+          docker pull public.ecr.aws/supabase/postgres:17.11.0.004
+          python3 tests/forms-delivery-claim-local.py
+          python3 tests/forms-delivery-scoped-claim-local.py
 
   api:
     needs: scope
