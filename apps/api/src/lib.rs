@@ -15,6 +15,7 @@ mod insights;
 mod mcp;
 mod oauth;
 mod playground;
+mod provider_management;
 mod provider_oauth;
 mod providers;
 mod repositories;

@@ -21,3 +21,10 @@ Native Google/Bing consent migration is opt-in and held by default. See
 [PROVIDER-OAUTH.md](PROVIDER-OAUTH.md) for the static-browser contract, required
 Fly callback registrations, matching legacy grant keys, and handshake routing
 limits before activation.
+
+With `HTP_ROLLOUT_PROVIDER_OAUTH=true`, provider status/disconnect and Google
+owner URL Inspection use Rust directly for REST and MCP. The held gate retains
+the bridge above. See [PROVIDER-OAUTH.md](PROVIDER-OAUTH.md) for native contracts,
+legacy-cookie migration, and the unresolved atomic consent/disconnect fence.
+Native activation remains blocked; no rollout or Fly configuration changes are
+included in the management implementation.

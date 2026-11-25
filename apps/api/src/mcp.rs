@@ -406,6 +406,11 @@ pub(crate) async fn owner_inspection_call(
         result.is_error = Some(true);
         return result;
     }
+    if crate::provider_management::enabled() {
+        return native_provider_result(
+            crate::provider_management::inspect(headers, website_id, site_url, url).await,
+        );
+    }
     web_management_call(
         headers,
         reqwest::Method::POST,
@@ -424,8 +429,57 @@ pub(crate) async fn web_management_call(
     path: &str,
     body: Option<serde_json::Value>,
 ) -> CallToolResult {
+    if crate::provider_management::enabled() {
+        let name = match path {
+            "/api/google/connection" => Some("google"),
+            "/api/bing/connection" => Some("bing"),
+            _ => None,
+        };
+        if let Some(name) = name {
+            return native_provider_result(
+                crate::provider_management::connection(
+                    headers,
+                    name,
+                    method == reqwest::Method::DELETE,
+                )
+                .await,
+            );
+        }
+    }
     let selector = std::env::var_os("HTP_WEB_MANAGEMENT_HOST");
     web_management_call_with_selector(selector.as_deref(), headers, method, path, body).await
+}
+
+fn native_provider_result(result: Result<serde_json::Value, u16>) -> CallToolResult {
+    match result {
+        Ok(value) => CallToolResult::structured(value),
+        Err(status) => {
+            let (code, error) = match status {
+                400 | 422 => (
+                    "invalid_request",
+                    "Check the website, Search Console property and URL.",
+                ),
+                401 => (
+                    "authorization_required",
+                    "Sign in or reconnect the provider through HTP Connections.",
+                ),
+                403 | 404 => (
+                    "access_denied",
+                    "Website or provider resource not found or inaccessible.",
+                ),
+                429 => ("quota_exceeded", "Provider quota exceeded. Retry later."),
+                _ => (
+                    "provider_unavailable",
+                    "HTP provider operation unavailable. Check Connections and retry later.",
+                ),
+            };
+            let mut result = CallToolResult::structured(
+                serde_json::json!({"code":code,"error":error,"status":status}),
+            );
+            result.is_error = Some(true);
+            result
+        }
+    }
 }
 
 // Exact host selectors only: never interpret configuration as a URL or use request headers.

@@ -293,7 +293,7 @@ async fn start(
     private(response)
 }
 // Wire format matches Nitro sealed-cookie.ts: IV || tag || ciphertext, base64url.
-fn seal(value: &Value, key: &[u8], purpose: &str) -> Result<String, ()> {
+pub(crate) fn seal(value: &Value, key: &[u8], purpose: &str) -> Result<String, ()> {
     let key =
         aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_256_GCM, key).map_err(|_| ())?);
     let mut iv = [0; 12];
@@ -311,7 +311,7 @@ fn seal(value: &Value, key: &[u8], purpose: &str) -> Result<String, ()> {
     output.extend(data);
     Ok(URL_SAFE_NO_PAD.encode(output))
 }
-fn unseal(value: &str, key: &[u8], purpose: &str) -> Option<Value> {
+pub(crate) fn unseal(value: &str, key: &[u8], purpose: &str) -> Option<Value> {
     if value.len() > 8192 {
         return None;
     }

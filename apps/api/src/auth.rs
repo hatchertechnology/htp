@@ -62,7 +62,7 @@ impl SupabaseAuth {
         }
     }
 
-    async fn verify(&self, token: &str) -> Result<AuthenticatedUser, AuthError> {
+    pub(crate) async fn verify(&self, token: &str) -> Result<AuthenticatedUser, AuthError> {
         let jwt_header = decode_header(token).map_err(|_| AuthError::InvalidToken)?;
         // Never accept symmetric keys or let an untrusted token select a key URL.
         let expected_alg = match jwt_header.alg {
@@ -163,7 +163,7 @@ pub(crate) async fn require_user(
     response
 }
 
-fn bearer_token(headers: &HeaderMap) -> Result<&str, AuthError> {
+pub(crate) fn bearer_token(headers: &HeaderMap) -> Result<&str, AuthError> {
     if headers.get_all(header::AUTHORIZATION).iter().count() != 1 {
         return Err(AuthError::InvalidToken);
     }
