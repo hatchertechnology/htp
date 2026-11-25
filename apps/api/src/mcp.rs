@@ -50,6 +50,9 @@ pub(crate) struct WebsiteMcp {
     store: crate::websites::WebsiteStore,
     pub(crate) forms: crate::form_verification::FormVerificationState,
     tool_router: rmcp::handler::server::router::tool::ToolRouter<WebsiteMcp>,
+    pub(crate) inbox: crate::form_inbox::FormInboxState,
+    pub(crate) save: crate::form_save::FormSaveState,
+    pub(crate) responses: crate::form_responses::ResponseState,
     management: axum::Router,
     exports: crate::audit_export::SharedExports,
 }
@@ -1432,6 +1435,13 @@ pub(crate) fn secured_service(
             }
         });
     }
+    let inbox = crate::form_inbox::FormInboxState {
+        reader: store.forms_reader(),
+        enabled: crate::form_inbox::enabled_from_env(),
+        pilot: crate::form_inbox::pilot_from_env(),
+    };
+    let save = crate::form_save::state_from_env(store.forms_saver());
+    let responses = crate::form_responses::state_from_env(store.forms_response_writer());
     let forms = crate::form_verification::FormVerificationState {
         verifier: store.forms_verifier(),
         enabled: crate::form_verification::enabled_from_env(),
@@ -1442,7 +1452,10 @@ pub(crate) fn secured_service(
                 exports: exports.clone(),
                 store: store.clone(),
                 forms: forms.clone(),
-                tool_router: website_tool_router(forms.enabled),
+                inbox: inbox.clone(),
+                save: save.clone(),
+                responses: responses.clone(),
+                tool_router: owner_tool_router(forms.enabled, &inbox, &save, &responses),
                 management: crate::websites::router(store.clone())
                     .merge(crate::insights::router(store.clone()))
                     .merge(crate::seosmith::read_router(store.clone()))
@@ -1488,7 +1501,19 @@ fn env_list(name: &str, default: &str) -> Vec<String> {
 pub(crate) fn playground_demo(secured: bool, list: bool) -> serde_json::Value {
     if list {
         let tools = if secured {
-            website_tool_router(crate::form_verification::enabled_from_env()).list_all()
+            let store = crate::websites::WebsiteStore::new("http://127.0.0.1:1", "unused");
+            let inbox = crate::form_inbox::FormInboxState {
+                reader: store.forms_reader(),
+                enabled: crate::form_inbox::enabled_from_env(),
+                pilot: crate::form_inbox::pilot_from_env(),
+            };
+            owner_tool_router(
+                crate::form_verification::enabled_from_env(),
+                &inbox,
+                &crate::form_save::state_from_env(store.forms_saver()),
+                &crate::form_responses::state_from_env(store.forms_response_writer()),
+            )
+            .list_all()
         } else {
             HelloWorldMcp::tool_router().list_all()
         };
@@ -1502,6 +1527,42 @@ pub(crate) fn playground_demo(secured: bool, list: bool) -> serde_json::Value {
         // Match the legacy Nitro client's fixed MCP 2025-11-25 wire response.
         result.result_type = None;
         serde_json::json!({"jsonrpc": "2.0", "id": 3, "result": result})
+    }
+}
+
+fn owner_tool_router(
+    verification: bool,
+    inbox: &crate::form_inbox::FormInboxState,
+    save: &crate::form_save::FormSaveState,
+    responses: &crate::form_responses::ResponseState,
+) -> rmcp::handler::server::router::tool::ToolRouter<WebsiteMcp> {
+    let mut router = website_tool_router(verification);
+    if inbox.enabled && inbox.pilot.is_some() {
+        router.merge(WebsiteMcp::forms_inbox_tool_router());
+    }
+    if save.enabled && save.pilot.is_some() {
+        router.merge(WebsiteMcp::forms_save_tool_router());
+    }
+    if responses.enabled && responses.pilot.is_some() {
+        router.merge(WebsiteMcp::forms_response_tool_router());
+    }
+    router
+}
+
+// Convert the fixed typed handler's public envelope, retaining error semantics.
+pub(crate) async fn forms_result(response: axum::response::Response) -> CallToolResult {
+    let success = response.status().is_success();
+    let bytes = axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024).await;
+    let value = bytes.ok().and_then(|b| serde_json::from_slice(&b).ok());
+    let Some(value) = value else {
+        return CallToolResult::structured_error(
+            serde_json::json!({"code":"forms_result_unavailable","error":"Outcome unavailable. Reconcile the inbox before any further action."}),
+        );
+    };
+    if success {
+        CallToolResult::structured(value)
+    } else {
+        CallToolResult::structured_error(value)
     }
 }
 
@@ -1529,6 +1590,18 @@ mod management_tests {
                 verifier: crate::form_verification::FormVerifier::new("http://127.0.0.1:1", "test"),
                 enabled: false,
             },
+            inbox: crate::form_inbox::FormInboxState {
+                reader: crate::form_inbox::FormInboxReader::new("http://127.0.0.1:1", "test"),
+                enabled: false,
+                pilot: None,
+            },
+            save: crate::form_save::state_from_env(crate::form_save::FormSaver::new(
+                "http://127.0.0.1:1",
+                "test",
+            )),
+            responses: crate::form_responses::state_from_env(
+                crate::form_responses::ResponseWriter::new("http://127.0.0.1:1", "test"),
+            ),
             tool_router: website_tool_router(false),
             management: app,
             exports: std::sync::Arc::default(),
@@ -1570,6 +1643,18 @@ mod management_tests {
                 verifier: crate::form_verification::FormVerifier::new("http://127.0.0.1:1", "test"),
                 enabled: false,
             },
+            inbox: crate::form_inbox::FormInboxState {
+                reader: crate::form_inbox::FormInboxReader::new("http://127.0.0.1:1", "test"),
+                enabled: false,
+                pilot: None,
+            },
+            save: crate::form_save::state_from_env(crate::form_save::FormSaver::new(
+                "http://127.0.0.1:1",
+                "test",
+            )),
+            responses: crate::form_responses::state_from_env(
+                crate::form_responses::ResponseWriter::new("http://127.0.0.1:1", "test"),
+            ),
             tool_router: website_tool_router(false),
             management: app,
             exports: std::sync::Arc::default(),
@@ -1730,3 +1815,7 @@ mod management_tests {
         server.abort();
     }
 }
+
+#[cfg(test)]
+#[path = "mcp_forms_tests.rs"]
+mod forms_owner_tests;

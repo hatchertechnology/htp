@@ -110,16 +110,18 @@ fn valid_form_key(key: &str) -> bool {
 
 /// Request body. Unknown fields are refused, so the caller cannot smuggle
 /// extra parameters past the contract. `form_id` absent means create.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SaveBody {
     #[serde(default)]
+    #[schemars(with = "Option<String>")]
     pub form_id: Option<Uuid>,
     pub form_key: String,
     pub name: String,
     pub fields: Vec<Value>,
     pub active: bool,
     #[serde(default)]
+    #[schemars(with = "Vec<String>")]
     pub host_ids: Vec<Uuid>,
 }
 
@@ -331,6 +333,51 @@ pub(crate) fn state_from_env(saver: FormSaver) -> FormSaveState {
         saver,
         enabled: enabled_from_env(),
         pilot: pilot_from_env(),
+    }
+}
+
+use rmcp::handler::server::{tool::Extension as ToolExtension, wrapper::Parameters};
+use rmcp::model::CallToolResult;
+use rmcp::schemars;
+use rmcp::{tool, tool_router};
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SaveFormInput {
+    #[schemars(with = "String")]
+    website_id: Uuid,
+    form: SaveBody,
+}
+#[tool_router(router = forms_save_tool_router, vis = "pub(crate)")]
+impl crate::mcp::WebsiteMcp {
+    #[tool(
+        description = "Save an inactive or active form for the scoped pilot website. Omit form_id to create; supply it to update. Activation requires verified host grants and database validation. On unknown outcome, list forms to reconcile before any further action; never blindly retry a create. Default-off; signed-in pilot owner only.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false
+        )
+    )]
+    async fn save_website_form(
+        &self,
+        Parameters(input): Parameters<SaveFormInput>,
+        ToolExtension(parts): ToolExtension<axum::http::request::Parts>,
+    ) -> CallToolResult {
+        crate::mcp::forms_result(
+            save_form(
+                State(self.save.clone()),
+                parts
+                    .extensions
+                    .get::<AuthenticatedUser>()
+                    .cloned()
+                    .map(Extension),
+                parts.headers,
+                Ok(Path(input.website_id)),
+                Ok(Json(input.form)),
+            )
+            .await,
+        )
+        .await
     }
 }
 
