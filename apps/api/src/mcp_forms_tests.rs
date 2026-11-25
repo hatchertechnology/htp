@@ -117,6 +117,22 @@ async fn fixture() -> (String, Seen, tokio::task::JoinHandle<()>) {
                 if body["p_name"] == "uncertain" { return (StatusCode::BAD_GATEWAY, Json(json!({"secret":"never expose"}))); }
                 return (StatusCode::OK, Json(json!({"id":FORM,"form_key":body["p_form_key"],"name":body["p_name"],"fields":body["p_fields"],"active":body["p_active"]})));
             }
+            if uri.contains("set_website_form_response_status") {
+                if body["p_form_id"] != json!(FORM) || body["p_response_id"] == json!(Uuid::from_u128(99)) {
+                    return (StatusCode::NOT_FOUND, Json(json!({"message":"private"})));
+                }
+                let mut row = json!({"id":body["p_response_id"],"website_id":body["p_website_id"],"form_id":body["p_form_id"],"status":body["p_status"],"raw_content":"private"});
+                match body["p_response_id"].as_str().unwrap().parse::<Uuid>().unwrap().as_u128() {
+                    90 => return (StatusCode::BAD_GATEWAY, Json(row)),
+                    91 => row["form_id"] = json!(Uuid::from_u128(99)),
+                    92 => row["website_id"] = json!(Uuid::from_u128(99)),
+                    93 => row["id"] = json!(Uuid::from_u128(99)),
+                    94 => row["status"] = json!("new"),
+                    95 => row = json!(null),
+                    _ => {},
+                }
+                return (StatusCode::OK, Json(row));
+            }
             if uri.contains("delete_website_form_response") {
                 if body["p_response_id"] == json!(Uuid::from_u128(90)) {
                     return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"code":"55000","message":"private"})));
@@ -237,6 +253,7 @@ async fn discovery_is_independent_default_off_and_requires_pilot_pair() {
                 ("list_form_responses", flags[0]),
                 ("save_website_form", flags[1]),
                 ("delete_form_response", flags[2]),
+                ("set_form_response_status", flags[2]),
             ] {
                 assert_eq!(
                     tools.iter().any(|t| t["name"] == name),
@@ -381,6 +398,7 @@ async fn every_operation_rejects_wrong_scope_and_disabled_state_before_upstream(
             json!({"website_id":SITE,"form":{"form_key":"contact","name":"Contact","fields":[{}],"active":false}}),
         ),
         ("delete_form_response", args()),
+        ("set_form_response_status", status_args()),
     ];
     let (origin, seen, task) = fixture().await;
     let enabled = server(&origin, [true; 3], true);
@@ -570,4 +588,120 @@ async fn secured_transport_caps_request_body_before_dispatch() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+fn status_args() -> Value {
+    json!({"website_id":SITE,"form_id":FORM,"response_id":RESPONSE,"status":"reviewed"})
+}
+
+#[tokio::test]
+async fn status_tool_schema_success_and_validation() {
+    let (origin, seen, task) = fixture().await;
+    let app = app(server(&origin, [false, false, true], true));
+    let discovery = rpc(app.clone(), "tools/list", json!({}), None, false).await;
+    let tool = discovery["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "set_form_response_status")
+        .unwrap();
+    let schema = &tool["inputSchema"];
+    assert_eq!(schema["additionalProperties"], false);
+    let status = &schema["properties"]["status"];
+    let status = status["$ref"].as_str().map_or(status, |r| {
+        schema.pointer(r.strip_prefix('#').unwrap()).unwrap()
+    });
+    assert_eq!(status["enum"], json!(["new", "reviewed", "spam"]));
+    assert_eq!(tool["annotations"]["readOnlyHint"], false);
+    assert_eq!(tool["annotations"]["idempotentHint"], false);
+    for status in ["new", "reviewed", "spam"] {
+        let mut input = status_args();
+        input["status"] = json!(status);
+        let result = call(
+            app.clone(),
+            "set_form_response_status",
+            input,
+            Some(OWNER),
+            true,
+        )
+        .await;
+        assert_eq!(result["result"]["isError"], false, "{result}");
+        assert_eq!(
+            result["result"]["structuredContent"],
+            json!({"id":RESPONSE,"status":status})
+        );
+    }
+    for (key, value) in [
+        ("status", json!("deleted")),
+        ("response_id", json!("*")),
+        ("raw_content", json!("private")),
+    ] {
+        let mut input = status_args();
+        input[key] = value;
+        let result = call(
+            app.clone(),
+            "set_form_response_status",
+            input,
+            Some(OWNER),
+            true,
+        )
+        .await;
+        assert!(result.get("error").is_some() || result["result"]["isError"] == true);
+    }
+    let result = call(
+        app,
+        "set_form_response_status",
+        status_args(),
+        Some(OWNER),
+        false,
+    )
+    .await;
+    assert_eq!(
+        result["result"]["structuredContent"]["code"],
+        "unauthorized"
+    );
+    let requests = seen.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    for ((uri, body), status) in requests.iter().zip(["new", "reviewed", "spam"]) {
+        assert_eq!(uri, "/rest/v1/rpc/set_website_form_response_status");
+        assert_eq!(
+            *body,
+            json!({"p_website_id":SITE,"p_form_id":FORM,"p_response_id":RESPONSE,"p_status":status})
+        );
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn status_wrong_scope_and_ambiguous_results_are_sanitized_without_retry() {
+    let (origin, seen, task) = fixture().await;
+    let app = app(server(&origin, [true; 3], true));
+    for (key, id, code, status) in [
+        ("form_id", 99, "not_found", 404),
+        ("response_id", 99, "not_found", 404),
+        ("response_id", 90, "response_status_unknown_outcome", 503),
+        ("response_id", 91, "response_status_unknown_outcome", 503),
+        ("response_id", 92, "response_status_unknown_outcome", 503),
+        ("response_id", 93, "response_status_unknown_outcome", 503),
+        ("response_id", 94, "response_status_unknown_outcome", 503),
+        ("response_id", 95, "response_status_unknown_outcome", 503),
+    ] {
+        let mut input = status_args();
+        input[key] = json!(Uuid::from_u128(id));
+        let result = call(
+            app.clone(),
+            "set_form_response_status",
+            input,
+            Some(OWNER),
+            true,
+        )
+        .await;
+        assert_eq!(result["result"]["isError"], true, "{result}");
+        assert_eq!(result["result"]["structuredContent"]["code"], code);
+        assert_eq!(result["result"]["structuredContent"]["status"], status);
+        assert!(!result.to_string().contains("private"));
+        assert!(!result.to_string().contains("raw_content"));
+    }
+    assert_eq!(seen.lock().unwrap().len(), 8);
+    task.abort();
 }

@@ -23,7 +23,7 @@ use crate::{
 
 const ENABLE_VAR: &str = "HTP_FORMS_OWNER_RESPONSE_API";
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, rmcp::schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 enum ResponseStatus {
     New,
@@ -294,8 +294,55 @@ struct DeleteResponseInput {
     /// Must be true after explicit user intent to permanently delete this exact response.
     confirm_delete: bool,
 }
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SetResponseStatusInput {
+    #[schemars(with = "String")]
+    website_id: Uuid,
+    #[schemars(with = "String")]
+    form_id: Uuid,
+    #[schemars(with = "String")]
+    response_id: Uuid,
+    status: ResponseStatus,
+}
 #[tool_router(router = forms_response_tool_router, vis = "pub(crate)")]
 impl crate::mcp::WebsiteMcp {
+    #[tool(
+        description = "Set exactly one pilot form response status to new, reviewed or spam. Returns management metadata only. Unknown outcomes require rereading the response before another explicit attempt; requests are never retried. Default-off; visible when configured, executable only by the pilot owner.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false
+        )
+    )]
+    async fn set_form_response_status(
+        &self,
+        Parameters(input): Parameters<SetResponseStatusInput>,
+        ToolExtension(parts): ToolExtension<axum::http::request::Parts>,
+    ) -> CallToolResult {
+        crate::mcp::forms_result(
+            set_status(
+                State(self.responses.clone()),
+                parts
+                    .extensions
+                    .get::<AuthenticatedUser>()
+                    .cloned()
+                    .map(Extension),
+                parts.headers,
+                Ok(Path(ResponseIds {
+                    id: input.website_id,
+                    form_id: input.form_id,
+                    response_id: input.response_id,
+                })),
+                Ok(Json(StatusBody {
+                    status: input.status,
+                })),
+            )
+            .await,
+        )
+        .await
+    }
+
     #[tool(
         description = "Permanently delete exactly one explicitly selected pilot form response. Requires explicit user intent and confirm_delete=true. No bulk deletion. Unknown outcomes require inbox reconciliation before another explicit attempt. Default-off; visible to signed-in users when configured, executable only by the pilot owner.",
         annotations(

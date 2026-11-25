@@ -10,7 +10,7 @@ website/owner pair are required before upstream access.
 | --- | --- |
 | `list_form_hosts`, `list_website_forms`, `list_form_responses` | `HTP_FORMS_OWNER_INBOX_API` |
 | `save_website_form` | `HTP_FORMS_OWNER_SAVE_API` |
-| `delete_form_response` | `HTP_FORMS_OWNER_RESPONSE_API` |
+| `set_form_response_status`, `delete_form_response` | `HTP_FORMS_OWNER_RESPONSE_API` |
 
 Every group also requires valid `HTP_FORMS_PILOT_WEBSITE_ID` and
 `HTP_FORMS_PILOT_OWNER_ID`. Discovery omits a group unless its flag and pilot
@@ -35,6 +35,12 @@ by listing forms before any further action. No automatic write retry is added. C
 The canonical serialized form is capped at 2 MiB in shared REST/MCP validation
 before upstream access; the secured MCP transport also caps requests at 32 MiB.
 These bounds do not use the heavy-report admission semaphore.
+
+Status accepts exactly `{website_id, form_id, response_id, status}`, with status
+limited to `new`, `reviewed`, or `spam`. It reuses the REST authorization and
+single-attempt writer, including exact returned website/form/response/status
+affinity checks. Success exposes only `{id, status}`. Ambiguous results remain
+`response_status_unknown_outcome` errors; reread before another explicit attempt.
 
 Delete accepts exactly `{website_id, form_id, response_id, confirm_delete}`.
 Require explicit user intent for that exact response and `confirm_delete: true`.
