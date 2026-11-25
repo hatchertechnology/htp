@@ -37,6 +37,16 @@ pub struct WebsiteStore {
 }
 
 impl WebsiteStore {
+    pub(crate) fn forms_notification_client(
+        &self,
+    ) -> crate::form_notifications::NotificationClient {
+        let project = self
+            .url
+            .strip_suffix("/rest/v1/websites")
+            .unwrap_or(&self.url);
+        crate::form_notifications::NotificationClient::new(project, &self.publishable_key)
+    }
+
     /// Forms verification uses the same project and publishable key as the store.
     pub(crate) fn forms_verifier(&self) -> crate::form_verification::FormVerifier {
         let project = self

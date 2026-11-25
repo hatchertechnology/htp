@@ -131,6 +131,7 @@ impl FormInboxReader {
             // Redirects are disabled so the bearer is never sent to another origin.
             client: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
+                .retry(reqwest::retry::never())
                 .build()
                 .expect("static reqwest client configuration"),
         }
@@ -138,7 +139,7 @@ impl FormInboxReader {
 
     /// GET the rows for one table with the caller's bearer. Returns the parsed
     /// array. Upstream bodies are never copied into errors.
-    async fn get_rows(
+    pub(crate) async fn get_rows(
         &self,
         headers: &HeaderMap,
         table: &str,
