@@ -5,6 +5,7 @@ mod audit_export;
 pub mod auth;
 mod bing;
 mod dashboard_cors;
+mod form_confirmation;
 mod form_inbox;
 mod form_ingress;
 mod form_responses;
@@ -146,6 +147,7 @@ pub fn app_with_capabilities(
         .merge(seosmith_ingest)
         .merge(s14_worker::router())
         .merge(form_ingress::router())
+        .merge(form_confirmation::router())
         .merge(protected);
 
     // Opt-in exact-origin CORS for the static dashboard's website routes only.

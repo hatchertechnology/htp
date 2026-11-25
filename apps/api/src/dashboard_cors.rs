@@ -115,6 +115,9 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
     ) {
         return Some("GET, DELETE");
     }
+    if path == "/forms/confirm" {
+        return Some("POST");
+    }
     if path == "/websites" {
         return Some("GET, POST, PATCH, DELETE");
     }
