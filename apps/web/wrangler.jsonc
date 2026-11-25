@@ -1,9 +1,7 @@
 {
-  // Cloudflare Workers Static Assets for the opt-in static dashboard build.
-  // No `main` entry: this config serves the output of `npm run build:static`
-  // only. It is not a deploy target and is not wired to any route or domain.
+  // Asset-only dashboard preview. Production uses wrangler.production.jsonc.
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "htp-web-static-dashboard",
+  "name": "htp-web-static-dashboard-preview",
   "compatibility_date": "2026-10-28",
   "assets": {
     "directory": "./.output/public",
