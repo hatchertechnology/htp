@@ -1,11 +1,11 @@
 import { resolveWorkspaceOwnerPath, workspaceOwnerBody } from '#shared/utils/workspace-owner-client'
-import { resolveProviderConnectionPath } from '#shared/utils/provider-connection-client'
+import { PROVIDER_CONNECT_HELD, providerAuthorizationUrl, resolveProviderConnectionPath, type ConnectProvider } from '#shared/utils/provider-connection-client'
 import { gatedEvidenceTransport } from '#shared/utils/gated-evidence-client'
 import type { Website } from '../../shared/types/websites'
 
 export function useWorkspace() {
   const auth = useAuth()
-  const runtime = useRuntimeConfig().public as { staticDashboard?: boolean; apiBaseUrl?: unknown; rolloutSearchEvidence?: boolean; rolloutLifecycle?: boolean; rolloutRemediation?: boolean }
+  const runtime = useRuntimeConfig().public as { staticDashboard?: boolean; apiBaseUrl?: unknown; rolloutProviderConnect?: boolean; rolloutSearchEvidence?: boolean; rolloutLifecycle?: boolean; rolloutRemediation?: boolean }
   const sessionGeneration = useState('workspace:session-generation', () => 0)
   const sites = useState<Website[]>('workspace:sites', () => [])
   const selectedId = useState('workspace:selected', () => '')
@@ -19,6 +19,8 @@ export function useWorkspace() {
   const connectionReady = useState('workspace:google-ready', () => false)
   const selected = computed(() => sites.value.find(site => site.id === selectedId.value) ?? null)
 
+  const providerConnectAvailable = runtime.staticDashboard !== true || runtime.rolloutProviderConnect === true
+
   async function request<T>(url: string, options: Record<string, unknown> = {}) {
     const generation = sessionGeneration.value
     const user = auth.user.value?.id
@@ -27,10 +29,22 @@ export function useWorkspace() {
     const method = options.method ?? 'GET'
     const evidence = gatedEvidenceTransport(url, options, runtime)
     const ownerPath = resolveWorkspaceOwnerPath(evidence.path, method, runtime.staticDashboard === true, runtime.apiBaseUrl)
-    const path = resolveProviderConnectionPath(ownerPath, method, runtime.staticDashboard === true, runtime.apiBaseUrl)
+    const path = resolveProviderConnectionPath(ownerPath, method, runtime.staticDashboard === true, runtime.apiBaseUrl, runtime.rolloutProviderConnect === true)
+    const staticConnect = runtime.staticDashboard === true && /^\/api\/(google|bing)\/connect$/.test(url)
+    if (staticConnect && options.body !== undefined) throw new Error('Provider Connect does not accept a body.')
+    if (staticConnect && (options.query !== undefined || options.params !== undefined || options.baseURL !== undefined)) throw new Error('Provider Connect uses a fixed API URL.')
     const body = workspaceOwnerBody(url, method, runtime.staticDashboard === true, options.body)
     const requestOptions: Record<string, unknown> = { ...evidence.options, ...('body' in options ? { body } : {}) }
-    return $fetch<T>(path, { ...requestOptions, headers: { Authorization: `Bearer ${token}` }, retry: 0 })
+    return $fetch<T>(path, { ...requestOptions, headers: { Authorization: `Bearer ${token}` }, retry: 0, ...(staticConnect ? { redirect: 'error' as const, credentials: 'omit' as const } : {}) })
+  }
+  async function connectProvider(provider: ConnectProvider) {
+    if (provider !== 'google' && provider !== 'bing') throw new Error('Unsupported provider.')
+    if (!providerConnectAvailable) throw new Error(PROVIDER_CONNECT_HELD)
+    const user = auth.user.value?.id
+    const generation = sessionGeneration.value
+    const result = await request<unknown>(`/api/${provider}/connect`, { method: 'POST' })
+    if (!user || auth.user.value?.id !== user || sessionGeneration.value !== generation) throw new Error('Your session has ended. Sign in again.')
+    return providerAuthorizationUrl(provider, result, runtime.staticDashboard === true ? runtime.apiBaseUrl : undefined)
   }
   async function load() {
     if (!auth.user.value || loading.value) return
@@ -74,7 +88,7 @@ export function useWorkspace() {
     if (id) { void load(); void checkGoogle(); void checkBing() }
   }, { immediate: true, flush: 'sync' })
   onMounted(() => { if (auth.user.value && !sites.value.length) void load() })
-  return { ...auth, sites, selectedId, selected, loading, error, google, connectionReady, bing, bingReady, bingError, request, load, checkGoogle, checkBing }
+  return { ...auth, sites, selectedId, selected, loading, error, google, connectionReady, bing, bingReady, bingError, providerConnectAvailable, connectProvider, request, load, checkGoogle, checkBing }
 }
 export function failureMessage(cause: unknown) {
   const error = cause as { data?: { error?: string; message?: string; statusMessage?: string }; message?: string }
