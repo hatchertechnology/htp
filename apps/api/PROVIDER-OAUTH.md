@@ -27,7 +27,7 @@ required. Existing Nitro source and background collectors are unchanged.
    no Supabase bearer or dashboard cookie is expected on provider navigation.
 6. Redirects go only to the configured dashboard `/connections`, with exactly
    `google=<outcome>` or `bing=<outcome>`. Outcomes are `connected`, `denied`,
-   `invalid_state`, `failed`; Google also supports `missing_scope`. No query
+   `invalid_state`, `failed`, `stale_consent`; Google also supports `missing_scope`. No query
    field can supply an origin/path. Responses are private/no-store/no-referrer.
 
 Connect routes use the existing Supabase verifier (rejecting anonymous users).
@@ -84,7 +84,8 @@ the native flow. Registration availability has not been inspected or changed.
 
 ### Handshake routing limitation
 
-Launch tickets and consumed callback states use one bounded (1024 entries),
+Launch tickets and active callback states use one bounded (1024 entries, at most
+eight per owner across both providers after expiry pruning),
 10-minute, in-process ledger, shared by this app's routes. Navigation through
 start and callback must reach the same running API process as connect. A restart,
 stop or another replica fails closed; it cannot recover a pending connection.
@@ -99,7 +100,9 @@ legacy routes and saved grants remain intact.
 
 Writes target existing `google_connections` and `bing_connections`, keyed by the
 verified pending owner, with fresh generation UUID, status, updated_at, Google
-scopes, and `encrypted_grant`. No schema migration is needed. Encryption exactly
+scopes, and `encrypted_grant`. Native writes require the standalone
+`20261206000000_provider_consent_fence.sql` migration. Connection table columns
+and existing data are unchanged. Encryption exactly
 matches Nitro's AES-256-GCM layout: base64url(12-byte IV || 16-byte tag || ciphertext),
 with AAD `htp_<provider>_grant:<owner UUID>` and JSON `{user,refresh,scopes}`. Access
 tokens are never stored. Existing collectors, rotation RPCs, generation fences,
@@ -131,40 +134,68 @@ the existing sanitized status mapping, and REST responses are private/no-store.
 Provider and grant-store transport disables redirects, has a 15-second deadline,
 and bounds JSON responses to 64 KiB.
 
-**Missing dependency: atomic consent/disconnect ordering.** The PR119 callback
-still unconditionally upserts. A callback already exchanging a code can overwrite
-a tombstone written by native disconnect, including on another replica. A local
-mutex or deleting pending entries cannot fix the database race. Before activation,
-add a shared per-owner/provider consent epoch: snapshot it when connect is issued,
-atomically increment it and write the tombstone on disconnect, and atomically
-compare it while writing the callback grant. Reject stale callbacks without a
-write. This needs a database RPC/schema contract (including absent-row ordering)
-and callback integration for both providers. Existing generation-fenced refresh
-RPCs do not provide that contract. This source change is **not activation-ready**.
+### Atomic native consent contract
 
-The existing singleton process/no-auto-stop handshake constraint remains. Add a
-bounded per-owner pending cap in `provider_oauth.rs::connect`, before inserting
-into `tickets`; the current 1024-entry global bound is unchanged. No Fly settings,
-rollout flags, provider registrations, or pending-store behavior were changed.
+The native callbacks now use `complete_provider_consent`, never a connection
+upsert. `begin_provider_consent` materializes a service-only fence row keyed by
+verified owner and provider, serializes on that row, and returns its UUID epoch
+plus the current connection generation (null for absence). Connect binds this
+snapshot into both the process ledger and sealed cookie before issuing a ticket.
+It does not create a connection row or change an existing grant.
 
-Reuse these established store/encryption contracts in the follow-up:
+`disconnect_provider_consent` holds the same fence lock, advances its epoch,
+and writes the fresh-generation disconnected tombstone in one transaction,
+including when no connection exists. Callback locks the fence and requires the
+captured epoch. For an existing connection it updates only the captured generation;
+for absence it inserts with `ON CONFLICT DO NOTHING`. It advances the epoch only
+if exactly one grant row was written. False CAS returns `stale_consent`; it never
+falls back to an upsert, retries, or claims connected. Competing callbacks from
+one snapshot have at most one winner. A later explicit connect obtains a fresh
+snapshot. Both provider and owner identities partition the fence.
 
-- Nitro `google-store.ts::googleStore`, `google.ts::readConnection/readGrant/`
-  `writeGrant/googleConnection/disconnectGoogle/googleAccessToken`; preserve the
-  browser-cookie one-time migration, disconnected tombstone, scope checks and
-  `rotate_google_grant` generation fence.
-- Nitro `bing.ts::bingStore/bingConnection/disconnectBing` and its established
-  `bing_connections` row layout; background Bing collectors retain their own
-  refresh/rotation handling.
-- Rust `provider_oauth.rs::seal/unseal` for the exact existing grant wire format
-  and owner-purpose AAD, and `exchange_at`'s existing-table row payload: verified
-  owner, fresh generation, status, encrypted grant, timestamp and Google scopes.
-  These crate-private helpers are reused by native management; do not invent another grant format or refresh-token transport.
-- Owner inspection must preserve existing website-owner checks, scoped Google
-  access and generation-fenced refresh persistence rather than accepting a
-  browser-supplied Google token. Keep its API/MCP response/error mapping intact.
+All three RPCs are security invoker with an empty search path and explicit
+service-only EXECUTE. The fence table has RLS, no owner/anonymous policies, and
+only SELECT/INSERT/UPDATE for service_role. Existing connection ACLs and refresh
+RPCs remain unchanged. Transport/SQL errors and malformed RPC responses fail
+closed. An HTTP failure after commit is an uncertain outcome; the API does not
+retry or report success. A user can check status and explicitly reconnect.
 
-The atomic consent/disconnect fence above remains required before activation.
+Only native operations participate in the shared epoch. Existing Nitro writers
+and collectors retain their behavior. Captured connection-generation CAS also
+protects callbacks against an intervening existing writer that changes generation,
+including concurrent insert of a previously absent connection. This does not
+retrofit epoch checks into legacy callbacks: drain legacy handshakes before
+native cutover and do not claim safe mixed legacy/native consent activation.
+
+### Individual ledger45 application and rollback
+
+The migration was CLI-created and then ordered at `20261206000000`, after all
+currently queued migrations. It depends only on `auth.users` and the original
+Google/Bing connection tables, not remediation, event queue, bounded search or
+comparison-pilot migrations. Do not use a blanket database push to apply it on
+hosted ledger45, as that would include unrelated pending migrations.
+
+`python3 supabase/deploy/provider-consent-fence-ledger45.py` prints an atomic,
+reviewable single-migration candidate: locks the migration ledger, requires the
+45 known versions through `20261201000000`, applies just the consent SQL, and
+inserts only its ledger record. It stores the exact multi-statement migration
+body in one statements-array item. It does not execute SQL or access a server.
+`--rollback` prints the inverse, requiring the expected 46 versions and exact
+consent ledger name/source before dropping only the new RPCs/table and deleting
+only that ledger entry. Existing connection rows, evidence and generations stay
+intact. The raw schema rollback also exists in `supabase/rollbacks/` and leaves
+ledger management to the release operator.
+
+The version guard is not a full hosted catalog/ACL/role/default/event guard.
+Independent review must reconcile the fresh hosted baseline, canonical ledger
+record convention, effective privileges, and existing lifecycle/Forms guards,
+which currently pin ledger45. This patch performs no hosted application and
+supplies no authorization to bypass those guards. Hold native rollout, drain
+pending consent and restart the singleton before rollback or switching writers.
+Reapplication creates new epochs, so old pending callbacks fail closed.
+
+The singleton/no-auto-stop handshake requirement still blocks activation until
+qualified. No Fly settings, rollout flags, registrations or bridge code changed.
 
 ## Synthetic verification
 
@@ -175,3 +206,10 @@ Referer, state/cookie/expiry/replay, Google PKCE and token form encoding, scope 
 refresh rejection, fixed redirects, bounded provider transport, storage failures,
 legacy Node crypto format and unchanged provider bridge tests. No live
 provider, database, browser consent, or production verification is claimed.
+
+`python3 supabase/tests/provider-consent-pg17/run.py` creates a disposable,
+network-disabled PG17 container, reconstructs the 45-migration synthetic baseline,
+and exercises isolated application/rollback, service-only ACLs, absent/existing
+connection races, disconnect/callback ordering, concurrent callbacks, reconnect,
+owner/provider separation, external generation changes and injected SQL failures.
+It uses no restored data, production connection or credentials.

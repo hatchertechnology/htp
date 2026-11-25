@@ -135,22 +135,20 @@ pub(crate) async fn connection(
     if !disconnect {
         return Ok(status(name, true, &store.read(name, owner).await?));
     }
-    let row = tombstone(name, owner);
-    store
+    disconnect_at(&store, name, owner).await
+}
+async fn disconnect_at(store: &Store, name: &str, owner: uuid::Uuid) -> Result<Value, u16> {
+    let applied = store
         .request(
             reqwest::Method::POST,
-            &format!("{name}_connections"),
-            Some(row),
+            "rpc/disconnect_provider_consent",
+            Some(json!({"p_owner_id":owner,"p_provider":name})),
         )
         .await?;
-    Ok(json!({"connected":false}))
-}
-fn tombstone(name: &str, owner: uuid::Uuid) -> Value {
-    let mut row = json!({"owner_id":owner,"generation":uuid::Uuid::new_v4(),"encrypted_grant":"","status":"disconnected","updated_at":chrono::Utc::now().to_rfc3339()});
-    if name == "google" {
-        row["scopes"] = json!([]);
+    if applied != Value::Bool(true) {
+        return Err(503);
     }
-    row
+    Ok(json!({"connected":false}))
 }
 
 async fn access(store: &Store, owner: uuid::Uuid) -> Result<String, u16> {
@@ -275,6 +273,44 @@ pub(crate) async fn inspect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn disconnect_uses_only_atomic_rpc_and_requires_true() {
+        use axum::{Router, routing::post};
+        for (reply, expected) in [
+            (json!(true), Ok(json!({"connected":false}))),
+            (json!(false), Err(503)),
+            (json!({}), Err(503)),
+        ] {
+            let owner = uuid::Uuid::new_v4();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let project = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                axum::serve(
+                    listener,
+                    Router::new().route(
+                        "/rest/v1/rpc/disconnect_provider_consent",
+                        post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                            let reply = reply.clone();
+                            async move {
+                                assert_eq!(headers["authorization"], "Bearer synthetic-service");
+                                assert_eq!(body, json!({"p_owner_id":owner,"p_provider":"google"}));
+                                Json(reply)
+                            }
+                        }),
+                    ),
+                )
+                .await
+                .unwrap();
+            });
+            let store = Store {
+                project,
+                service: "synthetic-service".into(),
+                client: reqwest::Client::new(),
+            };
+            assert_eq!(disconnect_at(&store, "google", owner).await, expected);
+            server.abort();
+        }
+    }
     #[tokio::test]
     async fn synthetic_refresh_uses_owner_aad_and_original_generation() {
         use axum::{Router, http::Uri, routing::any};
@@ -441,21 +477,6 @@ mod tests {
             );
         }
         server.abort();
-    }
-    #[test]
-    fn disconnect_changes_generation_and_clears_grant() {
-        let owner = uuid::Uuid::new_v4();
-        for name in ["google", "bing"] {
-            let a = tombstone(name, owner);
-            let b = tombstone(name, owner);
-            assert_eq!(a["owner_id"], owner.to_string());
-            assert_eq!(a["status"], "disconnected");
-            assert_eq!(a["encrypted_grant"], "");
-            assert_ne!(a["generation"], b["generation"]);
-            if name == "google" {
-                assert_eq!(a["scopes"], json!([]));
-            }
-        }
     }
     #[test]
     fn metadata_preserves_nitro_status_and_privacy() {
