@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-28T16:31:37.028744+00:00",
+  "generatedAt": "2026-11-26T00:00:00.000000+00:00",
   "title": "Design System: Hatch Operations Desk",
   "extensions": {
     "colorMeta": {
@@ -214,7 +214,7 @@
       "kind": "custom",
       "refersTo": "summary",
       "description": "Labeled unavailable measurement without sample metrics.",
-      "html": "<div class=\"ds-summary\"><div><span>Active users</span><strong>\u2014</strong></div></div>",
+      "html": "<div class=\"ds-summary\"><div><span>Active users</span><strong>—</strong></div></div>",
       "css": ".ds-summary{font-family:'Encode Sans Variable',sans-serif;background:#fff;border:1px solid var(--border,#d9e1e7);border-radius:5px;display:flex;gap:19px;align-items:center;padding:15px 20px;color:var(--ink,#10233a)}.ds-summary span{font-size:14px;line-height:1.3}.ds-summary strong{display:block;font-size:34px;font-weight:700;line-height:1.3;letter-spacing:-.02em;font-variant-numeric:tabular-nums}"
     },
     {
@@ -223,6 +223,34 @@
       "description": "Date menu field with rust keyboard focus.",
       "html": "<label class=\"ds-date\">Start date<input type=\"date\" aria-label=\"Start date\"></label>",
       "css": ".ds-date{font-family:'Encode Sans Variable',sans-serif;display:grid;gap:5px;color:var(--ink,#10233a);font-size:14px}.ds-date input{font-family:'Encode Sans Variable',sans-serif;border:1px solid var(--border,#d9e1e7);padding:8px 10px;border-radius:4px;background:#fff;color:var(--ink,#10233a);caret-color:var(--rust,#b94d28)}.ds-date input:focus-visible{outline:2px solid var(--rust,#b94d28);outline-offset:4px;}"
+    },
+    {
+      "name": "Context bar",
+      "kind": "custom",
+      "description": "Header working context: the website select, and on report pages the date range with its Last 30 days shortcut. No status pills or account cards.",
+      "html": "<header class=\"ds-context\"><label class=\"ds-picker\">Website<select><option>Select a website</option></select></label><div class=\"ds-range\"><button class=\"ds-range-summary\" aria-haspopup=\"true\" aria-expanded=\"false\">Date range<br><strong>Last 30 days · Oct 26 – Nov 24</strong></button><button class=\"ds-shortcut\" aria-pressed=\"true\">Last 30 days</button></div></header>",
+      "css": ".ds-context{font-family:'Encode Sans Variable',sans-serif;display:flex;align-items:end;gap:24px;border-bottom:1px solid var(--border,#d9e1e7);min-height:104px;padding:16px 0;background:var(--canvas,#f6f5ef)}.ds-range{margin-left:auto;display:flex;align-items:end;gap:12px}.ds-range-summary{display:grid;gap:3px;text-align:left;background:transparent;border:0;cursor:pointer;font:inherit}.ds-range-summary strong{display:flex;align-items:center;gap:10px;width:100%;min-height:42px;border:1px solid var(--border,#d9e1e7);border-radius:4px;background:#fff;color:var(--ink,#10233a);padding:8px 14px;font-size:16px;font-weight:400}.ds-shortcut{border:1px solid var(--border,#d9e1e7);border-radius:4px;background:#fff;color:var(--ink,#10233a);min-height:42px;padding:8px 14px;cursor:pointer}.ds-shortcut[aria-pressed='true']{border-color:var(--rust,#b94d28);color:var(--rust,#b94d28)}.ds-range-summary:focus-visible,.ds-shortcut:focus-visible{outline:2px solid var(--rust,#b94d28);outline-offset:4px}"
+    },
+    {
+      "name": "User menu",
+      "kind": "button",
+      "description": "Rail menu button (monogram, truncated email, chevron) opening email, Connections and Sign out; stays visible as a monogram button at 960px.",
+      "html": "<button class=\"ds-usermenu\" aria-haspopup=\"menu\" aria-label=\"Account menu for you@example.com\"><span class=\"ds-monogram\" aria-hidden=\"true\">Y</span><span class=\"ds-email\">you@example.com</span><svg aria-hidden=\"true\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\"><path d=\"m6 9 6 6 6-6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/></svg></button>",
+      "css": ".ds-usermenu{font-family:'Encode Sans Variable',sans-serif;display:flex;align-items:center;gap:10px;min-height:44px;min-width:0;padding:0 10px;font-size:12px;color:#f1f5f7;background:transparent;border:0;border-radius:4px;cursor:pointer}.ds-usermenu:hover{background:#2b4254}.ds-email{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-monogram{width:40px;height:40px;background:#405a6e;color:#fff;display:grid;place-items:center;border-radius:50%;font-weight:600;flex:none}.ds-usermenu:focus-visible{outline:2px solid var(--rust,#b94d28);outline-offset:4px}"
+    },
+    {
+      "name": "Data table",
+      "kind": "table",
+      "description": "Ruled dense table: 11px muted headings, sortable header buttons with aria-sort, 12px body with tabular numerals, Fine Rule row lines, status as text beside a small dot, selection checkboxes, and a partial-data notice row.",
+      "html": "<table class=\"ds-table\"><thead><tr><th scope=\"col\">Received <button aria-sort=\"descending\" aria-label=\"Sort by received\">↕</button></th><th scope=\"col\">Message</th><th scope=\"col\"><span class=\"ds-status\"><span class=\"ds-dot\"></span>New</span></th></tr></thead><tbody><tr><td><time datetime=\"2026-11-24T14:03:00Z\" title=\"2026-11-24T14:03:00Z\">Nov 24, 2026, 9:03 AM EST</time></td><td>Hello</td><td><span class=\"ds-status\"><span class=\"ds-dot\"></span>New</span></td></tr><tr class=\"ds-table-notice\" colspan=\"3\"><td colspan=\"3\">Sorting, filters and search apply to the 100 responses loaded.</td></tr></tbody></table>",
+      "css": ".ds-table{font-family:'Encode Sans Variable',sans-serif;width:100%;border-collapse:collapse;font-size:12px;background:#fff;color:var(--ink,#10233a)}.ds-table th{color:var(--muted,#53677e);font-weight:500;font-size:11px;padding:8px 0;border-bottom:1px solid var(--border,#d9e1e7);text-align:left}.ds-table td{padding:7px 0;border-bottom:1px solid #e8edf1}.ds-table time{font-variant-numeric:tabular-nums}.ds-table button{font:inherit;background:none;border:0;cursor:pointer;color:inherit}.ds-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#778798;margin-right:6px}.ds-table-notice td{color:var(--muted,#53677e);font-size:12px}.ds-table button:focus-visible{outline:2px solid var(--rust,#b94d28);outline-offset:4px}"
+    },
+    {
+      "name": "Sign-in panel",
+      "kind": "card",
+      "description": "The only sign-in surface: one centered 400px white ruled panel on the public ivory canvas with the sign-up toggle and an Authentication by Supabase footnote.",
+      "html": "<section class=\"ds-signin\"><h1>Sign in to Hatch</h1><form><label>Email<input type=\"email\"></label><label>Password<input type=\"password\"></label><button type=\"submit\">Sign in</button></form><p class=\"ds-signin-foot\">Authentication by Supabase</p></section>",
+      "css": ".ds-signin{font-family:'Encode Sans Variable',sans-serif;width:min(400px,100%);background:#fff;border:1px solid var(--border,#d9e1e7);border-radius:5px;padding:28px 24px 24px;color:var(--ink,#10233a)}.ds-signin h1{font-size:24px;font-weight:700;letter-spacing:-.025em;margin:0 0 16px}.ds-signin label{display:grid;gap:5px;font-size:12px;font-weight:600;margin-bottom:14px}.ds-signin input{min-height:44px;border:1px solid var(--border,#d9e1e7);border-radius:4px;padding:8px 12px;background:#fff;caret-color:var(--rust,#b94d28)}.ds-signin button[type=submit]{width:100%;min-height:44px;background:var(--rust,#b94d28);color:#fff;border:0;border-radius:4px;cursor:pointer}.ds-signin-foot{display:flex;align-items:center;gap:9px;font-size:11px;color:var(--muted,#53677e);margin-top:20px}.ds-signin input:focus-visible,.ds-signin button:focus-visible{outline:2px solid var(--rust,#b94d28);outline-offset:4px}"
     }
   ],
   "narrative": {

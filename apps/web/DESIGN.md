@@ -50,6 +50,21 @@ spacing:
   panel: "20px"
   task: "24px"
 components:
+  context-bar:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text}"
+    padding: "0"
+  user-menu:
+    backgroundColor: "{colors.rail}"
+    textColor: "{colors.surface}"
+    rounded: "{rounded.control}"
+  data-table:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text}"
+  sign-in-panel:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text}"
+    rounded: "{rounded.panel}"
   report-panel:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.text}"
@@ -77,7 +92,7 @@ components:
 
 **Creative North Star: "Operations Desk"**
 
-Operations Desk pairs a persistent navy navigation anchor with an ivory work surface and white, finely ruled reports. Rust marks active navigation, actions, and the traffic line. The result is calm, practical, and deliberately flat.
+Operations Desk pairs a persistent navy navigation anchor with an ivory work surface and white, finely ruled reports. Rust marks active navigation, actions, and the traffic line. The result is calm, practical, and deliberately flat. The selected website and report dates are durable context that persists per account; every page reads them, so users never re-pick the subject of their work.
 
 Self-hosted Encode Sans carries both headings and dense report text. Strong totals, tabular numerals, and restrained supporting labels establish hierarchy without ornamental imagery. Data, account, loading, and empty states use the same materials.
 
@@ -122,13 +137,17 @@ The variable font is self-hosted through `@fontsource-variable/encode-sans`. Str
 
 **The Readable Totals Rule.** Use tabular numerals for aligned measurements and retain explicit labels beside each total.
 
+**Timestamps.** Timestamps display in the viewer's timezone with a short zone label (e.g. `Nov 24, 2026, 9:03 AM EST`); the UTC ISO value stays in `<time datetime>`/`title`. Calendar dates (report ranges, provider daily rows) are not shifted.
+
 ## Layout
 
-A two-column shell gives the desktop rail 223px and lets the workspace consume the remaining width. Workspace gutters are 30px. The report header is 104px high; context controls keep website, dates, and connection visible above the page content.
+A two-column shell gives the desktop rail 223px and lets the workspace consume the remaining width. Workspace gutters are 30px. The report header is 104px high; the context bar holds the website select and, on report pages, the date range and a Last 30 days shortcut. No status pills or account cards share that bar; account lives in the rail menu. The website select keeps the same position and left edge on every page.
 
-Report panels use 12–16px gaps; settings tasks use 24px gaps and 20–28px internal padding. Settings place an account panel in a 340px secondary column. The dashboard's Search-first composition is documented separately in `.impeccable/surfaces/dashboard.md`.
+Report panels use 12–16px gaps; settings tasks use 24px gaps and 20–28px internal padding. Settings pages use one column of ruled white sections, max ≈ 960px, with 24px gaps — no secondary account column anywhere. The dashboard's Search-first composition is documented separately in `.impeccable/surfaces/dashboard.md`.
 
-At 1279px the rail becomes 190px, gutters become 22px, and report/settings columns tighten. At 960px navigation becomes a horizontal top strip and settings stack. At 650px gutters become 16px, navigation wraps, context controls form a compact grid, report panels stack, and summary measurements become a two-column grid. Date controls use a bounded fixed menu on narrow screens. Tables retain horizontal scrolling when needed.
+Public pages (sign-in, OAuth consent, form confirmation) drop the rail: an ivory canvas, the "Hatch." wordmark top-left, and one centered white ruled panel of 400px max width with 30px (16px narrow) gutters.
+
+At 1279px the rail becomes 190px, gutters become 22px, and report/settings columns tighten. At 960px navigation becomes a horizontal top strip and settings stack; the user menu remains as a monogram button at the end of the strip. At 650px gutters become 16px, navigation wraps, the context bar forms a two-row grid (website full width; range and Last 30 days share row two), report panels stack, and summary measurements become a two-column grid. Date controls use a bounded fixed menu on narrow screens. Tables retain horizontal scrolling when needed.
 
 ## Elevation & Depth
 
@@ -144,7 +163,35 @@ Controls and navigation have small corners (4px); white report surfaces use slig
 
 ### Navigation
 
-White icon-and-label links sit in the navy rail. Rust fill identifies the active page; a lighter navy fill identifies hover. Desktop links have 12px by 15px padding and a 50px minimum height; the horizontal navigation reduces its type and spacing while retaining a 44px minimum height above the narrow breakpoint.
+White icon-and-label links sit in the navy rail — Overview, Websites, the gated Forms item, Connections. Rust fill identifies the active page; a lighter navy fill identifies hover. Desktop links have 12px by 15px padding and a 50px minimum height; the horizontal navigation reduces its type and spacing while retaining a 44px minimum height above the narrow breakpoint.
+
+### Context bar
+
+The header is the working context and nothing else: the labelled website select always, plus the date range control on routes that read report dates. No connection or account status appears here. A failed website load keeps the bar in place with a small Retry action beside the select.
+
+### User menu
+
+The rail ends with a user menu button: a circular monogram, the account email (truncated), and a chevron, opening a real dropdown — the email as a non-interactive label, a Connections item, and Sign out. Every part meets a 44px touch target; at 960px the email collapses and the monogram alone remains visible.
+
+### Date range control
+
+A labelled summary button opens a bounded menu: rolling presets (7/28/90), Start/End date fields, and an Apply action; a separate Last 30 days shortcut sits beside the menu with `aria-pressed` when the rolling preset is active. The summary names the window — "Last 30 days · Oct 26 – Nov 24" for a preset, "Custom · …" for a fixed range — so include-today is always visible as a labelled change. Range endpoints are calendar dates shown as stored; they are not timezone-shifted.
+
+### Data table
+
+Ruled white tables for dense rows (submissions, history). Column headings are 11px, sentence case, in Slate Muted; body text is 12px with tabular numerals for times and numbers; row rules use Fine Rule. Header cells that sort are buttons carrying `aria-sort`; status renders as text beside a small dot; the first column stays readable while narrower columns scroll horizontally at 650px; selection uses checkboxes with a "select visible" header. A notice row states partial data when more rows exist on the server.
+
+### Tabs
+
+Two-part surfaces (for example a form's Responses and Setup) use text tabs with a 2px rust underline for the active tab — no fill, no pills. Inactive tabs stay Slate Muted and meet a 44px target.
+
+### Sign-in panel
+
+The only sign-in surface: a 400px white ruled panel on the ivory public canvas, titled "Sign in to Hatch", holding the email/password form with the sign-up toggle and an "Authentication by Supabase" footnote. No rail, no workspace chrome.
+
+### Danger section
+
+Destructive settings (delete this website) are their own final section with a rust-tinted outline, plain-language consequence copy, and an inline confirmation step instead of a dialog.
 
 ### Buttons and fields
 
@@ -160,16 +207,24 @@ The traffic series uses a rounded rust stroke (2.5px), a low-opacity fill, dashe
 
 ### Feedback and motion
 
-Errors stay inline with retry or connection actions. Connection and account states include words beside status dots. Navigation and small links transition color over 160ms with `cubic-bezier(.16,1,.3,1)`; inherited button transitions use 160ms ease-out. A chart filter transition is declared at 180ms. A loading spinner rotates over one second. Reduced motion disables transitions and animations.
+Errors stay inline with retry or connection actions. Connection and submission states include words beside status dots. Navigation and small links transition color over 160ms with `cubic-bezier(.16,1,.3,1)`; inherited button transitions use 160ms ease-out. A chart filter transition is declared at 180ms. A loading spinner rotates over one second. Reduced motion disables transitions and animations.
 
 ## Do's and Don'ts
 
 ### Do:
 
 - Do retain navy navigation, ivory canvas, and white report surfaces.
+- Do keep the website select in the same position on every page.
 - Do use the rust focus outline and visible labels for controls.
 - Do preserve context and readable empty states while reports load.
 - Do let long domains wrap or truncate deliberately and keep numeric columns aligned.
+
+### Don't:
+
+- Don't introduce gradients, glass, or decorative shadows into report panels.
+- Don't replace actual report values or missing data with illustrative metrics.
+- Don't add prior-period deltas unless the underlying comparison is available.
+- Don't put status pills or account cards in the context bar or page body; account lives in the rail menu.
 
 ### Don't:
 

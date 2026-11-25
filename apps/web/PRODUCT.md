@@ -18,12 +18,13 @@ website and reading real Google Analytics data in one clear dashboard.
 
 ## Capabilities and Constraints
 
+- The selected website and date range persist per signed-in user; the Forms page manages forms and a sortable, filterable submissions table for the selected website; signed-out users sign in on a dedicated page and return to the page they requested.
 - Users can create, list, rename and delete their own website records.
 - Owners can attach a public GitHub repository and optional branch to each FQDN through UI, REST, or MCP. Background polling stores commit dates and observation times; pausing/replacing links preserves history. Website change history uses the selected reporting dates, and commits do not imply deployments.
 - Overview shows live GitHub issues labeled HTP from the latest linked public repository, with open/closed/all filters, pagination, update dates, and GitHub links. Issues are independent of reporting dates and Google connections; public GitHub request limits apply.
 - Each website can have a numeric GA4 property binding; Google checks report access.
 - Browser users connect their own Google account using read-only Analytics and Search Console OAuth.
-- Overview includes a combined Search/onsite timeline with separate labeled metric scales, every saved primary-branch commit marker in the selected dates, selectable commit details, and an accessible daily table. Commit pagination is fully loaded; gaps remain missing rather than zero. Provider daily timezones and UTC commit timestamps are explicit.
+- Overview includes a combined Search/onsite timeline with separate labeled metric scales, every saved primary-branch commit marker in the selected dates, selectable commit details, and an accessible daily table. Commit pagination is fully loaded; gaps remain missing rather than zero. Provider daily timezones are explicit; timestamps display in the viewer's timezone with a zone label; daily buckets remain UTC.
 - Overview leads with Search Console clicks, impressions, CTR, position, daily search trends, top queries and landing pages. The user explicitly requested Search first.
 - URL Inspection reads indexed status, crawl and canonical information for one page. All integrations are read-only.
 - Conversion reporting includes configured GA4 key events, aggregate session conversion rates, revenue, daily trends, landing pages, channels, and event names.
