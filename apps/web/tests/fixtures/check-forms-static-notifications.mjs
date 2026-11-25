@@ -7,8 +7,8 @@ try {
  for(const enabled of [false,true]) {
   const page=await browser.newPage({viewport:{width:390,height:844}})
   await page.goto(`http://127.0.0.1:4177/tests/fixtures/forms.html?mode=pilot&static=1${enabled?'&notifications=1':''}`)
-  await page.getByRole('button',{name:'Forms',exact:true}).click()
-  await page.getByRole('button',{name:'Responses',exact:true}).click()
+  await page.getByRole('tab',{name:'Responses'}).waitFor()
+  await page.getByRole('tab',{name:'Setup'}).click()
   assert.equal(await page.getByRole('button',{name:'Request verification',exact:true}).count(),enabled?1:0)
   if(enabled) {
    await page.getByText('<unsafe>@example.test',{exact:false}).waitFor()
@@ -78,8 +78,8 @@ try {
  for (const capability of ['secondary','off','old']) {
   const page=await browser.newPage()
   await page.goto(`http://127.0.0.1:4177/tests/fixtures/forms.html?mode=pilot&static=1&notifications=1&capability=${capability}`)
-  await page.getByRole('button',{name:'Forms',exact:true}).click()
-  await page.getByRole('button',{name:'Responses',exact:true}).click()
+  await page.getByRole('tab',{name:'Responses'}).waitFor()
+  await page.getByRole('tab',{name:'Setup'}).click()
   assert.equal(await page.getByRole('region',{name:'Form notifications'}).count(),0)
   const calls=await page.evaluate(()=>globalThis.formFixture.state().apiCalls)
   assert.equal(calls.filter(x=>/recipients|delivery-jobs/.test(x)).length,0)
@@ -92,7 +92,7 @@ try {
   await page.evaluate(change=>change==='owner'?globalThis.formFixture.setOwner(null):globalThis.formFixture.setSite('10000000-0000-0000-0000-000000000099'),change)
   await page.waitForTimeout(700)
   assert.equal(await page.getByRole('region',{name:'Form notifications'}).count(),0)
-  assert.equal(await page.getByRole('button',{name:'Forms',exact:true}).count(),0)
+  assert.equal(await page.getByRole('tab',{name:'Responses'}).count(),0)
   assert.equal((await page.evaluate(()=>globalThis.formFixture.state().apiCalls)).filter(x=>/recipients|delivery-jobs/.test(x)).length,0)
   await page.close()
  }

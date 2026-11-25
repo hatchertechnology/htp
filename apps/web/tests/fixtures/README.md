@@ -8,6 +8,8 @@ From `apps/web`, run `npm ci` and `npx playwright install chromium` once. Start 
 
 Run `npm run fixture:forms:serve`, then `npm run fixture:forms:check` in another terminal. It mounts the actual forms component with synthetic data and checks desktop/mobile response rendering, escaping, export availability and host-quota error messages. It does not exercise a hosted backend.
 
+The same server serves all Forms checkers. `node tests/fixtures/check-forms-pilot.mjs`, `check-forms-static.mjs`, `check-forms-static-owner.mjs`, `check-forms-static-notifications.mjs` and `check-forms-static-responses.mjs` cover the pilot gates and static owner/notification/response paths. `check-forms-page.mjs` mounts the real `/forms` page with synthetic workspace, flag and eligibility states. `check-forms-table.mjs` runs at 1280px and 390px in `America/New_York` and covers local-time cells, the local-day From/To filter, sort, status filter, search, bounded paging, CSV formula handling and sequential bulk status with the unknown-outcome lock. `?rows=150` on `forms.html` selects the deterministic two-page inbox.
+
 # API-only cross-origin browser fixture
 
 After installing web dependencies and Playwright Chromium, run `cargo test --locked -p htp-api --lib form_ingress::tests::browser_cors_against_actual_api -- --ignored --nocapture` from the repository root. This starts the actual API handler and a mocked RPC server on loopback; the Node fixture provides disposable loopback TLS and synthetic browser host mapping. OpenSSL is required. It tests preflight and browser-visible responses, not deployed Fly identity or real PostgREST.

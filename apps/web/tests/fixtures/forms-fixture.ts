@@ -8,8 +8,24 @@ const NEW_HOST='30000000-0000-0000-0000-000000000002'
 const NEW_FORM='10000000-0000-0000-0000-000000000003'
 const TOKEN='b'.repeat(64)
 const form={id:FORM,name:'Cleaning Quote',form_key:'cleaning_quote',active:true,fields:[{key:'name',label:'Name',kind:'text',required:true,max_length:100}]}
-const data:Record<string,any[]>={website_form_hosts:[{id:HOST,hostname:'www.example.com',verified_at:'2026-01-01'}],website_forms:[form],website_form_responses:[{id:'40000000-0000-0000-0000-000000000001',status:'new',received_at:'2026-01-01',values:{name:'<script>unsafe</script>'}}],website_form_origins:[{form_id:FORM,host_id:HOST}],website_form_recipients:[{id:'recipient-id',email:'fixture@example.invalid',verified_at:'2026-01-01',enabled:true}],website_form_delivery_jobs:[{id:'job-id',recipient_id:'recipient-id',response_id:'40000000-0000-0000-0000-000000000001',kind:'response',state:'failed',attempts:1}]}
 const params=new URLSearchParams(location.search), mode=params.get('mode')==='pilot'?'pilot':'legacy', visibility=params.get('eligible') ?? 'yes'
+const rowCount=Number(params.get('rows') ?? 0)
+const responseId=(n:number)=>`40000000-0000-0000-0000-${String(n).padStart(12,'0')}`
+// A deterministic 150-row inbox for sort/filter/search and bulk checks. It spans
+// two API pages, mixes statuses, and carries formula, multiline and script text.
+function fixtureRows(count:number){
+  const rows:any[]=[]
+  rows.push({id:responseId(101),status:'new',received_at:'2026-11-25T03:00:00Z',values:{name:'Local day insider',score:'10',note:'Inside the Nov 24 local day'}})
+  rows.push({id:responseId(102),status:'reviewed',received_at:'2026-11-24T04:59:59Z',values:{name:'Before local day',score:'2',note:'Outside the Nov 24 local day'}})
+  rows.push({id:responseId(103),status:'spam',received_at:'2026-11-25T01:00:00Z',values:{name:'=HYPERLINK("http://example.invalid","formula")',score:'1',note:'=HYPERLINK("http://example.invalid","x")'}})
+  rows.push({id:responseId(104),status:'new',received_at:'2026-11-24T18:00:00Z',values:{name:'<script>unsafe</script>',score:'3',note:'line one\nline two'}})
+  while(rows.length<count){
+    const index=rows.length
+    rows.push({id:responseId(1000+index),status:['new','reviewed','spam'][index%3],received_at:new Date(Date.UTC(2026,10,25,6,0,0)-index*3600_000).toISOString(),values:{name:`Response ${index}`,score:String((index*7)%50),note:'Synthetic row'}})
+  }
+  return rows
+}
+const data:Record<string,any[]>={website_form_hosts:[{id:HOST,hostname:'www.example.com',verified_at:'2026-01-01'}],website_forms:[form],website_form_responses:rowCount?fixtureRows(rowCount):[{id:'40000000-0000-0000-0000-000000000001',status:'new',received_at:'2026-01-01',values:{name:'<script>unsafe</script>'}}],website_form_origins:[{form_id:FORM,host_id:HOST}],website_form_recipients:[{id:'recipient-id',email:'fixture@example.invalid',verified_at:'2026-01-01',enabled:true}],website_form_delivery_jobs:[{id:'job-id',recipient_id:'recipient-id',response_id:'40000000-0000-0000-0000-000000000001',kind:'response',state:'failed',attempts:1}]}
 const staticMode=params.get('static')==='1'
 const fixtureSite=ref(SITE)
 const user=ref<{id:string;is_anonymous?:boolean}|null>({id:'owner'}), calls:string[]=[], queries:string[]=[], apiCalls:string[]=[], bodies:{method:string;path:string;body:any}[]=[]
@@ -60,7 +76,11 @@ async function apiFetch(target:URL, method:string, body:any){
     if(failed) throw failureError(failed)
     return {host_id:host.id,verified:true,status:'verified'}
   }
-  if(new RegExp(`^/websites/${SITE}/forms/${FORM}/responses$`).test(path)&&method==='GET') return pageOf(data.website_form_responses)
+  if(new RegExp(`^/websites/${SITE}/forms/${FORM}/responses$`).test(path)&&method==='GET'){
+    const all=data.website_form_responses, limit=Math.min(Number(target.searchParams.get('limit') ?? 100),100), offset=Number(target.searchParams.get('offset') ?? 0)
+    const items=all.slice(offset,offset+limit)
+    return {items,has_more:offset+items.length<all.length}
+  }
   const notification = new RegExp(`^/websites/${SITE}/forms/${FORM}/(recipients|delivery-jobs)(?:/([0-9a-f-]+)/(disable|retry))?$`).exec(path)
   if(notification) {
     const recipient='50000000-0000-0000-0000-000000000001', job='60000000-0000-0000-0000-000000000001'
