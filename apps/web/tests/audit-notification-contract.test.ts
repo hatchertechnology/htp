@@ -13,6 +13,15 @@ it('classifies evidenced transitions and severity escalation', () => {
   expect(classifyAuditEvent({...old,outcome:'fail',severity:'warning'}, now, true)).toBeNull()
   expect(classifyAuditEvent(old, now, true)?.deduplication_key).toBe(classifyAuditEvent(old, now, true)?.deduplication_key)
 })
+it('accepts schema 4 with evidence v1 and keeps mixed or unevidenced versions out', () => {
+  expect(classifyAuditEvent({...old,schema_version:4}, {...now,schema_version:4}, true)?.kind).toBe('new')
+  const prior4 = {...observation('prior','2026-10-31T00:00:00Z','fail'),schema_version:4}
+  expect(classifyAuditEvent({...old,schema_version:4}, {...now,schema_version:4}, true, prior4)?.kind).toBe('reopened')
+  expect(classifyAuditEvent({...old,outcome:'fail',severity:'warning',schema_version:4}, {...now,severity:'critical',schema_version:4}, true)?.kind).toBe('severity_increased')
+  expect(classifyAuditEvent({...old,schema_version:4}, now, true)).toBeNull()
+  expect(classifyAuditEvent(old, {...now,schema_version:4}, true)).toBeNull()
+  expect(classifyAuditEvent({...old,schema_version:4,evidence_contract_version:2}, {...now,schema_version:4,evidence_contract_version:2}, true)).toBeNull()
+})
 it('suppresses unknown, incomparable, imported and out-of-order evidence', () => {
   for (const change of [{outcome:'unknown'}, {attempt:'not_attempted'}, {eligibility:'unknown'}, {policy_digest:'different'}, {rule_version:'different'}, {binding_generation:2}, {ingestion_source:'import'}, {scan_at:old.scan_at}, {severity:null}]) expect(classifyAuditEvent(old, {...now,...change} as EventObservation, true)).toBeNull()
   expect(classifyAuditEvent({...old,outcome:'unknown'}, now, true)).toBeNull()

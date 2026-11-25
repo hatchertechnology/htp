@@ -16,7 +16,7 @@ export interface AuditEventCandidate {
 const rank: Record<TechnicalSeverity, number> = { warning: 1, alert: 2, critical: 3 }
 const scope = ['website_id', 'fqdn', 'binding_generation', 'schema_version', 'evidence_contract_version', 'policy_digest', 'engine_version', 'ruleset_version', 'entity_id', 'rule', 'rule_version', 'validator_version'] as const
 function valid(o: EventObservation): boolean {
-  return o.ingestion_source === 'worker' && o.schema_version === 2 && o.evidence_contract_version === 1
+  return o.ingestion_source === 'worker' && (o.schema_version === 2 || o.schema_version === 4) && o.evidence_contract_version === 1
     && scope.every(k => o[k] !== '' && o[k] !== null && o[k] !== undefined)
     && !!o.delivery_id && !!o.source_locator && Number.isFinite(Date.parse(o.scan_at))
     && o.eligibility === 'eligible' && o.attempt === 'completed' && (o.outcome === 'pass' || o.outcome === 'fail')
