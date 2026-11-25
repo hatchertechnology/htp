@@ -1,6 +1,9 @@
 import type { Website, WebsitePage } from '../../shared/types/websites'
 import { resolveWebsitePath } from '#shared/utils/websites-client'
 
+// Mutation helper for the selected website. The list itself lives in
+// `useWorkspace()` (bounded paging, persisted selection), so this composable no
+// longer loads on mount: the Websites page reads `ws.sites` and `ws.selected`.
 export function useWebsites() {
   const auth = useAuth()
   // Optional local typing: the build lane owns the declaration and default of these settings.
@@ -35,6 +38,7 @@ export function useWebsites() {
     saving.value = false
   }
 
+  // Kept for compatibility; the Websites page refreshes through `useWorkspace()`.
   async function load(more = false) {
     if (!auth.user.value || loading.value) return
     const current = ++generation
@@ -52,8 +56,10 @@ export function useWebsites() {
     } finally { if (current === generation) loading.value = false }
   }
 
-  async function mutate(method: 'POST' | 'PATCH' | 'DELETE', id?: string, fqdn?: string) {
-    if (saving.value || !auth.user.value) return false
+  // Returns the created/updated website, or the deleted record for DELETE.
+  // `null` means the mutation failed; `error` carries the message.
+  async function mutate(method: 'POST' | 'PATCH' | 'DELETE', id?: string, fqdn?: string): Promise<Website | null> {
+    if (saving.value || !auth.user.value) return null
     const owner = auth.user.value.id
     const current = ++generation
     controller?.abort()
@@ -62,19 +68,20 @@ export function useWebsites() {
     loading.value = false
     error.value = ''
     try {
-      await request(`/api/websites${id ? `/${id}` : ''}`, method, fqdn === undefined ? undefined : { fqdn }, controller.signal)
-      if (current !== generation || auth.user.value?.id !== owner) return false
-      // Reset pagination so an alphabetically renamed row cannot leave stale pages.
-      await load()
-      return true
+      // DELETE bodies are not part of the owner contract; `fqdn` is only the
+      // deleted record's display value for the caller's selection fallback.
+      const body = method === 'DELETE' || fqdn === undefined ? undefined : { fqdn }
+      const result = await request<Website | null>(`/api/websites${id ? `/${id}` : ''}`, method, body, controller.signal)
+      if (current !== generation || auth.user.value?.id !== owner) return null
+      if (method === 'DELETE') return id ? { id, fqdn: fqdn ?? '' } : null
+      if (!result || typeof result.id !== 'string' || typeof result.fqdn !== 'string') return null
+      return { id: result.id, fqdn: result.fqdn, ga4_property_id: result.ga4_property_id ?? null }
     } catch (cause) {
       if (auth.user.value?.id === owner) error.value = message(cause)
-      return false
+      return null
     } finally { if (auth.user.value?.id === owner) saving.value = false }
   }
 
-  watch(() => auth.user.value?.id, () => { reset(); void load() })
-  onMounted(() => { void load() })
   onBeforeUnmount(reset)
   return { items, hasMore, loading, saving, error, load, mutate }
 }
