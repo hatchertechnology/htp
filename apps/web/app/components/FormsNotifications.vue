@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { notificationUrl, notificationPage, notificationResult, notificationUnknown, type Recipient, type Delivery, type Collection } from '#shared/utils/forms-notification-client'
 import { sessionEndedError } from '#shared/utils/forms-owner-client'
+import { formatInstant, zoneLabel } from '#shared/utils/local-time'
 const props = defineProps<{ websiteId: string; formId: string }>()
 const auth = useAuth(), config = useRuntimeConfig()
 const recipients = ref<Recipient[]>([]), jobs = ref<Delivery[]>([])
@@ -63,20 +64,20 @@ onMounted(() => read())
 <template>
   <section class="forms-block" aria-label="Form notifications">
     <h4>Notification recipients and delivery</h4>
-    <p>Recipients must verify their address. Queue acceptance does not confirm email delivery. “sent” records provider acceptance, not inbox arrival.</p>
+    <p>Recipients must verify their address. Queue acceptance does not confirm email delivery. “sent” records provider acceptance, not inbox arrival. Times show in your timezone ({{ zoneLabel() }}).</p>
     <p v-if="readError" role="alert">{{ readError }}</p>
     <p v-if="error" role="alert">{{ error }}</p><p v-if="message" role="status">{{ message }}</p>
     <UButton :disabled="busy" color="neutral" variant="outline" @click="read()">Reload notification metadata</UButton>
     <form @submit.prevent="write('create')"><label>Email address <input v-model="email" type="email" required maxlength="254"></label><UButton type="submit" :disabled="busy || unresolved">Request verification</UButton></form>
     <p v-if="!recipients.length">No recipients on this page.</p>
-    <ul><li v-for="r in recipients" :key="r.id">{{ r.email }} — {{ !r.enabled ? 'Disabled' : r.verified_at ? 'Verified' : 'Awaiting verification' }} · Created {{ r.created_at }}<UButton v-if="r.enabled" :disabled="busy || unresolved" color="neutral" variant="ghost" @click="write('disable', r)">Disable recipient</UButton></li></ul>
+    <ul><li v-for="r in recipients" :key="r.id">{{ r.email }} — {{ !r.enabled ? 'Disabled' : r.verified_at ? 'Verified' : 'Awaiting verification' }} · Created <time :datetime="r.created_at" :title="r.created_at">{{ formatInstant(r.created_at) }}</time><UButton v-if="r.enabled" :disabled="busy || unresolved" color="neutral" variant="ghost" @click="write('disable', r)">Disable recipient</UButton></li></ul>
     <UButton v-if="moreRecipients" :disabled="busy" @click="read('recipients', true)">More recipients</UButton>
     <h4>Delivery jobs</h4><p v-if="!jobs.length">No delivery jobs on this page.</p>
-    <ul><li v-for="job in jobs" :key="job.id"><p>{{ job.kind }}: {{ job.state }} · Attempts {{ job.attempts }} · Updated {{ job.updated_at }}</p><p>Recipient {{ job.recipient_id }} · Response {{ job.response_id || 'None' }} · Job {{ job.id }}</p><p v-if="job.state === 'uncertain'">Provider outcome unknown. Check provider records before resending; a retry can duplicate delivery.</p><p v-if="job.kind === 'verification' && job.state === 'uncertain'">Request fresh verification if needed.</p><UButton v-if="job.state === 'failed' || job.kind === 'response' && job.state === 'uncertain'" :disabled="busy || unresolved" color="neutral" variant="ghost" @click="write('retry', job)">Retry delivery</UButton></li></ul>
+    <ul><li v-for="job in jobs" :key="job.id"><p>{{ job.kind }}: {{ job.state }} · Attempts {{ job.attempts }} · Updated <time :datetime="job.updated_at" :title="job.updated_at">{{ formatInstant(job.updated_at) }}</time></p><p>Recipient {{ job.recipient_id }} · Response {{ job.response_id || 'None' }} · Job {{ job.id }}</p><p v-if="job.state === 'uncertain'">Provider outcome unknown. Check provider records before resending; a retry can duplicate delivery.</p><p v-if="job.kind === 'verification' && job.state === 'uncertain'">Request fresh verification if needed.</p><UButton v-if="job.state === 'failed' || job.kind === 'response' && job.state === 'uncertain'" :disabled="busy || unresolved" color="neutral" variant="ghost" @click="write('retry', job)">Retry delivery</UButton></li></ul>
     <UButton v-if="moreJobs" :disabled="busy" @click="read('delivery-jobs', true)">More delivery jobs</UButton>
   </section>
 </template>
 <style scoped>
-.forms-block { border-top: 1px solid #d9e1e7; padding: 16px 0; margin-top: 16px; overflow-wrap: anywhere; }
-h4 { font-weight: 700; margin: 8px 0; } form { display: grid; gap: 8px; margin: 12px 0; } input { border: 1px solid #53677e; padding: 6px 8px; max-width: 100%; } li { margin: 12px 0; }
+.forms-block { border-top: 1px solid var(--border); padding: 16px 0; margin-top: 16px; overflow-wrap: anywhere; }
+h4 { font-weight: 650; font-size: 19px; margin: 8px 0; } form { display: grid; gap: 8px; margin: 12px 0; } input { border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; max-width: 100%; } p { color: var(--muted); max-width: 70ch; } li { margin: 12px 0; } time { font-variant-numeric: tabular-nums; }
 </style>
