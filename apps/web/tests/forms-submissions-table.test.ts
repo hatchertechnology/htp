@@ -95,6 +95,11 @@ describe('status, local-day and search filters', () => {
     expect(applySubmissionQuery(rows, query({ from: '2026-11-01', to: '2026-11-01' })).map(item => item.id))
       .toEqual(['last', 'first'])
   })
+  it('returns no rows when a requested local day does not exist in the zone', () => {
+    const rows = [row('one', '2011-12-29T12:00:00Z'), row('two', '2011-12-31T12:00:00Z')]
+    expect(applySubmissionQuery(rows, query({ from: '2011-12-30', timeZone: 'Pacific/Apia' }))).toEqual([])
+    expect(applySubmissionQuery(rows, query({ to: '2011-12-30', timeZone: 'Pacific/Apia' }))).toEqual([])
+  })
   it('searches values case- and NFKC-insensitively, not keys or status', () => {
     const rows = [
       row('match', '2026-11-24T12:00:00Z', 'new', { name: 'Café', note: 'Hello World' }),

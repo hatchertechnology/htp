@@ -154,6 +154,9 @@ async function load() {
 const submissionTableColumns = computed(() => submissionColumns(selected.value?.fields ?? [], submissions.value))
 function selectForm(form: Form) {
   tab.value = 'responses'
+  // Main cleared the unknown-outcome lock when the user reopened Responses for
+  // a form; the reload that follows makes the fresh state authoritative.
+  responseUnresolved.value = false
   void inbox(form)
 }
 async function begin() {
@@ -277,7 +280,9 @@ async function retryDelivery(job:Delivery) {
   try { const {data,error:err}=await $supabase.rpc('retry_form_delivery',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_job_id:job.id}); if (err || !data) throw new Error('This delivery cannot be retried.'); await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
 }
 // Snapshot all affinity before obtaining a bearer; never fall back to RPC in static mode.
-async function manageResponse(row: Submission, next?: string) {
+// `reload` is false for bulk rows so one action does not reset the loaded page
+// after every write.
+async function manageResponse(row: Submission, next?: string, reload = true) {
   const form = selected.value, owner = auth.user.value?.id, site = props.websiteId, generation = eligibilityGeneration
   if (!apiResponses.value || busy.value || responseUnresolved.value || !form || !owner || auth.user.value?.is_anonymous === true || !submissions.value.some(item => item.id === row.id) || (next === undefined && deleting.value !== row.id)) return
   const current = () => generation === eligibilityGeneration && apiResponses.value && props.websiteId === site && auth.user.value?.id === owner && auth.user.value?.is_anonymous !== true && selected.value?.id === form.id
@@ -300,35 +305,41 @@ async function manageResponse(row: Submission, next?: string) {
       if (current()) error.value = responseMessage(cause, next === undefined)
       return
     }
-    if (!current()) return
+    if (!current()) return false
     deleting.value = null
-    await inbox(form)
+    if (reload) await inbox(form)
     return true
   } catch (cause) { if (current()) error.value = responseMessage(cause, next === undefined) }
   finally { busy.value = false }
   return false
 }
-// Bulk status is status only, sequential, at most 100 selected visible rows. It
-// stops on the first refusal or unknown outcome; an unknown outcome keeps the
-// existing lock and inbox reload from the single-row path.
+// Bulk status is status only and acts on every selected loaded row, including
+// rows across API pages. It stops on the first refusal or unknown outcome and
+// reports succeeded, failed, unknown and not-attempted counts.
 async function bulkStatus(ids: string[], next: string) {
   if (busy.value || responseUnresolved.value || !selected.value) return
-  const rows = ids.slice(0, 100).map(id => submissions.value.find(row => row.id === id)).filter((row): row is Submission => !!row)
+  const rows = ids.map(id => submissions.value.find(row => row.id === id)).filter((row): row is Submission => !!row)
   if (!rows.length) return
   if (!apiResponses.value && !(legacy.value && responseControls.value)) return
-  let changed = 0
+  let changed = 0, failed = 0, unknown = false
   for (const row of rows) {
-    if (responseUnresolved.value) break
+    if (responseUnresolved.value) { unknown = true; break }
     error.value = ''; notice.value = ''
     if (apiResponses.value) {
-      if (!(await manageResponse(row, next))) break
-    } else {
-      await status(row, next)
-      if (error.value) break
+      if (await manageResponse(row, next, false)) { changed++; continue }
+      if (responseUnresolved.value) { unknown = true; break }
+      failed++; break
     }
+    await status(row, next)
+    if (error.value) { failed++; break }
     changed++
   }
-  if (changed && !responseUnresolved.value) notice.value = `${changed} response${changed === 1 ? '' : 's'} marked ${next}.`
+  const notAttempted = rows.length - changed - failed - (unknown ? 1 : 0)
+  // One reload after a successful or refused bulk pass keeps the table on the
+  // bounded first page without dropping selected rows mid-loop.
+  if (apiResponses.value && changed && !unknown) await inbox(selected.value)
+  if (!failed && !unknown) notice.value = `${changed} response${changed === 1 ? '' : 's'} marked ${next}.`
+  else notice.value = `Bulk status: ${changed} succeeded, ${failed} failed, ${unknown ? 1 : 0} unknown, ${notAttempted} not attempted.`
 }
 async function deleteResponse(row:Submission) {
   if (runtime.staticDashboard === true) { deleting.value = row.id; await manageResponse(row); return }

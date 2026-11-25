@@ -74,8 +74,13 @@ function bound(day: string, timeZone: string): { start: number; end: number } | 
 export function applySubmissionQuery(rows: ReadonlyArray<SubmissionRow>, query: SubmissionQuery): SubmissionRow[] {
   const timeZone = query.timeZone ?? userTimeZone()
   const statuses = Array.isArray(query.statuses) ? query.statuses : []
-  const from = bound(query.from, timeZone)
-  const to = bound(query.to, timeZone)
+  const fromDay = query.from.trim()
+  const toDay = query.to.trim()
+  const from = fromDay ? bound(fromDay, timeZone) : null
+  const to = toDay ? bound(toDay, timeZone) : null
+  // A requested date with no such local instant (for example a zone-skipped
+  // day) matches no rows instead of silently opening the bound.
+  if ((fromDay && !from) || (toDay && !to)) return []
   const term = normalize(query.search).trim()
 
   const filtered: Array<{ row: SubmissionRow; index: number }> = []

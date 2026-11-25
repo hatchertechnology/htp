@@ -65,6 +65,9 @@ function toggleStatus(status: SubmissionStatus, checked: boolean) {
   const current = new Set(query.value.statuses)
   if (checked) current.add(status)
   else current.delete(status)
+  // Empty means "all" in the query contract, which would contradict three
+  // unchecked boxes. Keep at least one status selected.
+  if (!current.size) current.add(status)
   query.value.statuses = statusOptions.map(option => option.value).filter(value => current.has(value))
 }
 function sameSort(left: SortKey, right: SortKey): boolean {
@@ -93,7 +96,7 @@ function toggleAllVisible() {
   selectedIds.value = allVisibleSelected.value ? [] : ids
 }
 function bulk(next: SubmissionStatus) {
-  const ids = selectedIds.value.slice(0, 100)
+  const ids = [...selectedIds.value]
   selectedIds.value = []
   if (ids.length) emit('bulk-status', ids, next)
 }
@@ -140,7 +143,7 @@ function statusClass(status: string): string {
     </p>
     <p v-if="filtersHideRows" class="table-count" role="status">Showing {{ visibleCount }} of {{ loadedCount }} loaded</p>
 
-    <div v-if="selectedIds.length" class="bulk-bar" role="group" aria-label="Bulk response actions">
+    <div v-if="(canManage || canMarkNew) && selectedIds.length" class="bulk-bar" role="group" aria-label="Bulk response actions">
       <span>{{ selectedIds.length }} selected</span>
       <UButton v-if="canManage" color="neutral" variant="outline" :disabled="busy || locked" @click="bulk('reviewed')">Mark reviewed</UButton>
       <UButton v-if="canManage" color="neutral" variant="outline" :disabled="busy || locked" @click="bulk('spam')">Mark spam</UButton>
@@ -148,11 +151,11 @@ function statusClass(status: string): string {
     </div>
 
     <div class="table-scroll">
-      <table>
+      <table :class="{ 'has-selection': canManage || canMarkNew }">
         <caption class="visually-hidden">Responses for this form. Sorting, filters and search apply to loaded rows only.</caption>
         <thead>
           <tr>
-            <th class="select-cell" scope="col">
+            <th v-if="canManage || canMarkNew" class="select-cell" scope="col">
               <input
                 type="checkbox"
                 aria-label="Select all visible responses"
@@ -176,7 +179,7 @@ function statusClass(status: string): string {
         </thead>
         <tbody>
           <tr v-for="row in visibleRows" :key="row.id">
-            <td class="select-cell">
+            <td v-if="canManage || canMarkNew" class="select-cell">
               <input type="checkbox" :aria-label="`Select response received ${formatInstant(row.received_at, { timeZone: zone })}`" :checked="selectedIds.includes(row.id)" :disabled="busy || locked" @change="toggleRow(row.id)">
             </td>
             <td class="time-cell">
@@ -243,10 +246,10 @@ tbody tr:last-child td { border-bottom: 0; }
 .select-cell input { width: 18px; height: 18px; }
 .time-cell time { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .status-cell { white-space: nowrap; text-transform: lowercase; }
-.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #778798; margin-right: 6px; }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
 .status-dot.status-new { background: var(--rust); }
-.status-dot.status-reviewed { background: #278149; }
-.status-dot.status-spam { background: #778798; }
+.status-dot.status-reviewed { background: var(--ink); }
+.status-dot.status-spam { background: var(--muted); }
 .value-cell { max-width: 260px; overflow-wrap: anywhere; }
 .row-action-cell { white-space: nowrap; }
 .row-action-cell details { display: inline-block; margin-right: 8px; }
@@ -263,7 +266,7 @@ tbody tr:last-child td { border-bottom: 0; }
   .date-filter input, .search-filter input { width: 100%; }
   .table-scroll { border: 1px solid var(--border); border-radius: 4px; }
   th:first-child, td:first-child { position: sticky; left: 0; background: #fff; z-index: 1; }
-  th:nth-child(2), td:nth-child(2) { position: sticky; left: 34px; background: #fff; z-index: 1; }
+  table.has-selection th:nth-child(2), table.has-selection td:nth-child(2) { position: sticky; left: 34px; background: #fff; z-index: 1; }
   .value-cell { max-width: 210px; }
 }
 </style>
