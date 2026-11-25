@@ -139,6 +139,85 @@ async fn fixture() -> (String, Seen, tokio::task::JoinHandle<()>) {
 }
 
 #[tokio::test]
+async fn save_schema_advertises_field_objects_and_preserves_object_inputs() {
+    let (origin, seen, task) = fixture().await;
+    let app = app(server(&origin, [false, true, false], true));
+    let discovery = rpc(app.clone(), "tools/list", json!({}), None, false).await;
+    let tool = discovery["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "save_website_form")
+        .unwrap();
+    // Inspect the actual advertised transport schema, including resolved items.
+    fn resolve<'a>(root: &'a Value, schema: &'a Value) -> &'a Value {
+        match schema["$ref"].as_str() {
+            Some(reference) => root.pointer(reference.strip_prefix('#').unwrap()).unwrap(),
+            None => schema,
+        }
+    }
+    let schema = &tool["inputSchema"];
+    let form = resolve(schema, &schema["properties"]["form"]);
+    let fields = &form["properties"]["fields"];
+    assert_eq!(fields["type"], "array", "{tool}");
+    let item = resolve(schema, &fields["items"]);
+    assert_eq!(item["type"], "object", "{tool}");
+    assert_eq!(item["additionalProperties"], false);
+    let properties = &item["properties"];
+    for (key, ty) in [
+        ("key", "string"),
+        ("label", "string"),
+        ("kind", "string"),
+        ("required", "boolean"),
+        ("max_length", "integer"),
+    ] {
+        assert_eq!(
+            resolve(schema, &properties[key])["type"],
+            ty,
+            "{key}: {tool}"
+        );
+        assert!(item["required"].as_array().unwrap().contains(&json!(key)));
+    }
+    assert_eq!(properties.as_object().unwrap().len(), 5);
+    assert_eq!(
+        resolve(schema, &properties["kind"])["enum"],
+        json!(["text", "email", "telephone", "multiline"])
+    );
+    assert_eq!(properties["max_length"]["minimum"], 1);
+    assert_eq!(properties["max_length"]["maximum"], 5000);
+
+    let fields = json!([
+        {"key":"name","label":"Name","kind":"text","required":true,"max_length":100},
+        {"key":"email","label":"Email","kind":"email","required":true,"max_length":254},
+        {"key":"phone","label":"Phone","kind":"telephone","required":false,"max_length":50},
+        {"key":"message","label":"Message","kind":"multiline","required":false,"max_length":5000}
+    ]);
+    for form_id in [Value::Null, json!(FORM)] {
+        let result = call(
+            app.clone(),
+            "save_website_form",
+            json!({
+                "website_id":SITE, "form": {"form_id":form_id,"form_key":"contact",
+                    "name":"Contact","fields":fields,"active":false,"host_ids":[]}
+            }),
+            Some(OWNER),
+            true,
+        )
+        .await;
+        assert_eq!(result["result"]["isError"], false, "{result}");
+        assert_eq!(result["result"]["structuredContent"]["fields"], fields);
+    }
+    let requests = seen.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    for (_, body) in requests.iter() {
+        assert_eq!(body["p_fields"], fields);
+    }
+    assert_eq!(requests[0].1["p_form_id"], Value::Null);
+    assert_eq!(requests[1].1["p_form_id"], json!(FORM));
+    task.abort();
+}
+
+#[tokio::test]
 async fn discovery_is_independent_default_off_and_requires_pilot_pair() {
     for bits in 0..8 {
         let flags = [bits & 1 != 0, bits & 2 != 0, bits & 4 != 0];
