@@ -14,11 +14,15 @@ npx --yes wrangler@4.168.0 deploy --config wrangler.production.jsonc --dry-run
 ```
 
 Use `wrangler.jsonc` for the separate public `workers.dev` preview and its
-version URLs. Test the signed-in workspace there before cutover. Set
+version URLs. Use it to check assets, routes and unauthenticated behavior.
+Build it with public configuration only. With the API restricted to the
+production origin, run signed-in checks on the production hostname. Set
 `NUXT_PUBLIC_ROLLOUT_PROVIDER_CONNECT=true` on the production build after both
 registered Fly callbacks and the Rust provider flow have been verified.
 
-1. On Fly, configure `HTP_DASHBOARD_CORS_ORIGIN=https://htp.hatchtech.dev` and
+1. Record the current Fly release, API origin and provider rollout settings,
+   and the dashboard build flags. Configure
+   `HTP_DASHBOARD_CORS_ORIGIN=https://htp.hatchtech.dev` on Fly and
    verify the production-origin preflights. Keep
    `HTP_WEB_MANAGEMENT_HOST=htp-web-kerry-hatcher.fly.dev` for any held
    compatibility operations. Check that those operations still reach Fly.
