@@ -74,13 +74,18 @@ const details = [
   { delivery_id: ids[7], scan_at: '2026-11-16T11:54:00Z', received_at: time, ingestion_source: 'worker', summary: e2eSummaryReordered, summary_sha256: e2eSummarySha, summary_bytes: Buffer.byteLength(e2eSummaryText), report: JSON.parse(e2eReportText), report_json: e2eReportText, source_sha256: e2eSourceSha, source_bytes: Buffer.byteLength(e2eReportText) },
   { delivery_id: ids[8], scan_at: '2026-11-16T11:53:00Z', received_at: time, ingestion_source: 'worker', summary: e2eSummaryReordered, summary_text: e2eSummaryText, summary_sha256: '0'.repeat(64), summary_bytes: Buffer.byteLength(e2eSummaryText), report: JSON.parse(e2eReportText), report_json: e2eReportText, source_sha256: e2eSourceSha, source_bytes: Buffer.byteLength(e2eReportText) },
 ]
-// Run J: a supported summary that omits the rule_coverage and severity maps.
-// Missing coverage is unknown, never a population of verified-clean rules.
+// Run J: a supported summary that omits the rule_coverage map. Missing coverage
+// is unknown, never a population of verified-clean rules.
 const noCoverageId = '00000000-0000-4000-8000-000000000013'
 const noCoverageSummary = { ...partialSummary }
 delete noCoverageSummary.rule_coverage
-delete noCoverageSummary.severities
 details.push({ ...details[1], delivery_id: noCoverageId, summary: noCoverageSummary, summary_text: undefined, summary_sha256: undefined })
+// Run K: a v5 summary with no severity map. That map is required for v5, so the
+// detail is refused and the trend leaves a gap rather than plotting 0.
+const noSeveritiesId = '00000000-0000-4000-8000-000000000017'
+const noSeveritiesSummary = { ...partialSummary }
+delete noSeveritiesSummary.severities
+details.push({ ...details[1], delivery_id: noSeveritiesId, scan_at: '2026-11-16T11:52:00Z', summary: noSeveritiesSummary, summary_text: undefined, summary_sha256: undefined, summary_bytes: undefined })
 // Runs P1/P2 are an equal-schema (4/4) pair with a shared comparison key, engine
 // and ruleset; Q is an older schema-2 run with the same key. Selecting P2 must
 // offer no comparison against Q (2/4), while P1 against P2 (4/4) is offered.
@@ -318,10 +323,11 @@ try {
   await panel.getByText(/Complete verified/).waitFor()
   assert.equal(await filename(page, 'Download run JSON'), `seosmith-${ids[5]}-reconstructed.json`)
 
-  // A zero-critical schema-4 run is a plotted point of 0, not a gap.
+  // A zero-critical schema-4 run is a plotted point of 0, not a gap. A summary
+  // with no severity map is unknown, so it is not plotted at all.
   await page.getByLabel('Audit chart metric').selectOption('critical')
   const plotted = await page.locator('.seo-trend svg circle').count()
-  assert.equal(plotted, runs.length, 'every run with a scan time plots, including zero-critical schema-4 runs')
+  assert.equal(plotted, runs.length - 1, 'every run with a scan time and a severity map plots, including zero-critical runs; a missing severity map is a gap')
   assert.match(await page.locator('.seo-trend svg circle').first().getAttribute('aria-label'), /: 0 Critical findings/)
 
   // Comparison gates: 4/4 with matching key is offered; 4 against 2 is not.

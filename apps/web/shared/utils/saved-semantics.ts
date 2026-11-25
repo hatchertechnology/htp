@@ -36,8 +36,10 @@ export const recordCountRows: RecordCountRow[] = [
   { key: 'not_applicable', label: 'Not applicable', kind: 'neutral' },
   { key: 'unknown', label: 'Unknown', kind: 'neutral' },
 ]
-export function recordCounts(counts: AuditRecordCounts | undefined): Array<RecordCountRow & { count: number }> {
-  return recordCountRows.map(row => ({ ...row, count: counts?.[row.key] ?? 0 }))
+export function recordCounts(counts: AuditRecordCounts | undefined): Array<RecordCountRow & { count: number | null }> {
+  // An absent receiver key is unavailable, not a reported zero. Only a value
+  // the receiver actually sent may be rendered as a count.
+  return recordCountRows.map(row => ({ ...row, count: counts?.[row.key] ?? null }))
 }
 
 export type RuleClaim = 'verified-clean' | 'findings-observed' | 'unverified'

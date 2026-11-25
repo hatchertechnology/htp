@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { isSavedDetail } from '../shared/utils/saved-detail-validation'
-import { auditCoverageLabel, digestStatus, recordCounts, reportExport, ruleClaim, ruleClaimLabels, ruleClaimTotals, semanticsSupport, sha256Hex, sha256Matches, summaryExport, SCHEMA4_SUMMARY_VERSION } from '../shared/utils/saved-semantics'
+import { auditCoverageLabel, digestStatus, recordCountRows, recordCounts, reportExport, ruleClaim, ruleClaimLabels, ruleClaimTotals, semanticsSupport, sha256Hex, sha256Matches, summaryExport, SCHEMA4_SUMMARY_VERSION } from '../shared/utils/saved-semantics'
 import { auditPoints, auditValue, severityCount } from '../shared/utils/seosmith'
 import type { AuditDetail, AuditRun, AuditSummary } from '../shared/types/seosmith'
 
@@ -43,7 +43,9 @@ describe('receiver-verified schema 4 semantics', () => {
     expect(rows.map(row => row.key)).toEqual(['observation', 'advisory_triggered', 'advisory_not_triggered', 'violation', 'no_violation', 'not_applicable', 'unknown'])
     expect(rows.find(row => row.key === 'observation')?.count).toBe(3)
     expect(rows.find(row => row.key === 'violation')?.count).toBe(1)
-    expect(rows.find(row => row.key === 'no_violation')?.count).toBe(0)
+    // An omitted receiver key is unavailable, never a reported zero.
+    expect(rows.find(row => row.key === 'no_violation')?.count).toBeNull()
+    expect(recordCounts(undefined).every(row => row.count === null)).toBe(true)
   })
 
   it('summarises per-rule claim totals without turning absence into a clean site', () => {
@@ -231,26 +233,31 @@ describe('retained summary text and retained report exports', () => {
 })
 
 describe('sparse schema-4 severity contract is render-safe', () => {
-  it('shows zero for an omitted severity key or a missing severity map', () => {
+  it('shows zero for an omitted severity key and a gap for a missing severity map', () => {
     const summary = { schema_version: 4, summary_version: 5, severities: { alert: 2 } } as unknown as AuditSummary
     expect(severityCount(summary, 'critical')).toBe(0)
+    expect(auditValue({ summary } as AuditRun, 'critical')).toBe(0)
     expect(severityCount(summary, 'alert')).toBe(2)
     const noMap = { schema_version: 4, summary_version: 5 } as unknown as AuditSummary
     expect(severityCount(noMap, 'critical')).toBe(0)
     expect(severityCount(undefined, 'warning')).toBe(0)
-    expect(auditValue({ summary: noMap } as AuditRun, 'critical')).toBe(0)
-    expect(severityCount(noMap, 'critical')).toBe(0)
+    // The map itself is absent: unknown, so the trend leaves a gap.
+    expect(auditValue({ summary: noMap } as AuditRun, 'critical')).toBeNull()
   })
 
-  it('keeps the permissive base shape so an unsupported future summary still loads', async () => {
+  it('rejects a v5 summary without severities but keeps an unsupported future version loadable', async () => {
     const report = await fixture<unknown>('report-complete-verified.json')
     const summary = await fixture<AuditSummary>('summary-complete-verified.json')
     const noMap = { ...summary } as Record<string, unknown>
     delete noMap.severities
     const value = detail(noMap as unknown as AuditSummary, report)
-    expect(isSavedDetail(value, value.delivery_id)).toBe(true)
-    expect(severityCount(noMap as unknown as AuditSummary, 'critical')).toBe(0)
-    expect(auditPoints([{ ...value, summary: noMap as unknown as AuditSummary }], 'critical')[0]?.value).toBe(0)
+    expect(isSavedDetail(value, value.delivery_id)).toBe(false)
+    expect(auditPoints([{ ...value, summary: noMap as unknown as AuditSummary }], 'critical')[0]?.value).toBeNull()
+    // A future version still loads its base shape so the panel can say it is unsupported.
+    const future = { ...summary, summary_version: SCHEMA4_SUMMARY_VERSION + 1 } as Record<string, unknown>
+    delete future.severities
+    const futureValue = detail(future as unknown as AuditSummary, report)
+    expect(isSavedDetail(futureValue, futureValue.delivery_id)).toBe(true)
   })
 })
 
@@ -280,13 +287,24 @@ describe('trend points for schema-4 runs with omitted severity keys', () => {
 })
 
 describe('schema-4 summary v5 required fields', () => {
-  it('rejects a v5 summary that omits record_counts or run timing', async () => {
+  it('rejects a v5 summary that omits required receiver fields', async () => {
     const report = await fixture<unknown>('report-complete-verified.json')
     const summary = await fixture<AuditSummary>('summary-complete-verified.json')
-    for (const key of ['record_counts', 'started_at', 'finished_at', 'engine_version', 'ruleset_version', 'findings']) {
+    for (const key of ['record_counts', 'severities', 'started_at', 'finished_at', 'engine_version', 'ruleset_version', 'findings']) {
       const broken = { ...summary } as Record<string, unknown>
       delete broken[key]
       const value = detail(broken as unknown as AuditSummary, report)
+      expect(isSavedDetail(value, value.delivery_id), key).toBe(false)
+    }
+  })
+
+  it('rejects a v5 record_counts map that omits a receiver key', async () => {
+    const report = await fixture<unknown>('report-complete-verified.json')
+    const summary = await fixture<AuditSummary>('summary-complete-verified.json')
+    for (const key of recordCountRows.map(row => row.key)) {
+      const counts = { ...summary.record_counts } as Record<string, unknown>
+      delete counts[key]
+      const value = detail({ ...summary, record_counts: counts } as unknown as AuditSummary, report)
       expect(isSavedDetail(value, value.delivery_id), key).toBe(false)
     }
   })

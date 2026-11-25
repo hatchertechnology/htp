@@ -1,4 +1,9 @@
 import type { AuditDetail } from '../types/seosmith'
+import { recordCountRows } from './saved-semantics'
+
+// The receiver's RecordCounts is a fixed struct; a v5 summary missing any key
+// cannot support a reported zero, so the row is refused rather than shown as 0.
+const recordCountKeys = recordCountRows.map(row => row.key)
 
 type RecordValue = Record<string, unknown>
 const isRecord = (value: unknown): value is RecordValue =>
@@ -35,9 +40,11 @@ function isSchema4Summary(value: RecordValue): boolean {
   if (!optional(value.severities, isNumberMap) || !optional(value.summary_version, isNumber)) return false
   if (value.summary_version !== 5) return true
   // The receiver always emits these; a v5 summary without them is malformed, and
-  // display must never turn an absent count into a reported zero.
+  // display must never turn an absent count or severity map into a reported zero.
   if (!isNumber(value.findings) || !isString(value.started_at) || !isString(value.finished_at)
-    || !isString(value.engine_version) || !isString(value.ruleset_version) || !isNumberMap(value.record_counts)) return false
+    || !isString(value.engine_version) || !isString(value.ruleset_version)
+    || !isNumberMap(value.severities)
+    || !isRecord(value.record_counts) || !hasNumbers(value.record_counts, recordCountKeys)) return false
   return optional(value.audit_coverage, isString)
     && optional(value.wire_contract_version, isString)
     && optional(value.evidence_state, isString)
@@ -45,7 +52,6 @@ function isSchema4Summary(value: RecordValue): boolean {
     && optionalBoolean(value.crawl_coverage_complete)
     && optionalBoolean(value.evaluation_coverage_complete)
     && optionalBoolean(value.coverage_complete)
-    && optional(value.record_counts, isNumberMap)
     && optional(value.omitted_records, isNumber)
     && optional(value.omitted_observations, isNumber)
     && optional(value.rule_coverage, isRuleCoverageMap)

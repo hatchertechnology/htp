@@ -2,14 +2,14 @@ import type { AuditRun, AuditFinding, AuditPage, AuditSummary, Severity } from '
 export type AuditMetric = 'findings' | 'critical' | 'alert' | 'warning' | 'checked' | 'http_errors' | 'rate'
 export const auditMetricLabels: Record<AuditMetric, string> = { findings: 'All findings', critical: 'Critical findings', alert: 'Alerts', warning: 'Warnings', checked: 'URLs checked', http_errors: 'HTTP errors', rate: 'Findings per 100 URLs' }
 // Schema version 5 keeps only the severities that occur, so a zero count may
-// be absent (and a future summary may omit the map entirely). Display reads
-// must treat both as zero rather than throwing or leaving a blank cell.
+// be absent. An absent key is a reported zero, but an absent severity map is
+// unknown: the trend must leave a gap rather than draw a zero it never saw.
 export function severityCount(summary: AuditSummary | null | undefined, severity: Severity): number {
   return summary?.severities?.[severity] ?? 0
 }
 export function auditValue(run: AuditRun, metric: AuditMetric): number | null {
   const s = run.summary
-  const value = metric === 'findings' ? s.findings : metric === 'rate' ? (s.pages.checked ? s.findings / s.pages.checked * 100 : null) : metric === 'checked' || metric === 'http_errors' ? s.pages[metric] : severityCount(s, metric as Severity)
+  const value = metric === 'findings' ? s.findings : metric === 'rate' ? (s.pages.checked ? s.findings / s.pages.checked * 100 : null) : metric === 'checked' || metric === 'http_errors' ? s.pages[metric] : s.severities ? severityCount(s, metric as Severity) : null
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 }
 export const evidenceSchema = (version: number | undefined) => version === 2 || version === 4

@@ -97,7 +97,7 @@ function downloadSummary() {
       <table>
         <caption>Receiver record counts for this run</caption>
         <thead><tr><th scope="col">Record outcome</th><th scope="col">Count</th></tr></thead>
-        <tbody><tr v-for="row in counts" :key="row.key"><th scope="row">{{ row.label }}</th><td :data-record-count="row.key">{{ row.count }}</td></tr></tbody>
+        <tbody><tr v-for="row in counts" :key="row.key"><th scope="row">{{ row.label }}</th><td :data-record-count="row.key">{{ row.count ?? 'Unavailable' }}</td></tr></tbody>
       </table>
     </div>
     <p class="report-caption">An advisory is a threshold observation; a policy violation requires explicit intent. Neither is inferred from an absent finding.</p>
