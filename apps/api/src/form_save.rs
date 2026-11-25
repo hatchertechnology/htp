@@ -110,6 +110,32 @@ fn valid_form_key(key: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_')
 }
 
+/// Schema-only field definition pinned to the save RPC contract. Keep JSON
+/// deserialization and database validation authoritative for REST and MCP.
+#[derive(rmcp::schemars::JsonSchema)]
+#[schemars(deny_unknown_fields)]
+#[allow(dead_code)]
+struct SaveFieldSchema {
+    #[schemars(length(min = 1, max = 64), regex(pattern = "^[a-z][a-z0-9_]{0,63}$"))]
+    key: String,
+    #[schemars(length(min = 1, max = 100))]
+    label: String,
+    kind: SaveFieldKindSchema,
+    required: bool,
+    #[schemars(range(min = 1, max = 5000))]
+    max_length: u32,
+}
+
+#[derive(rmcp::schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
+enum SaveFieldKindSchema {
+    Text,
+    Email,
+    Telephone,
+    Multiline,
+}
+
 /// Request body. Unknown fields are refused, so the caller cannot smuggle
 /// extra parameters past the contract. `form_id` absent means create.
 #[derive(Debug, serde::Serialize, Deserialize, rmcp::schemars::JsonSchema)]
@@ -120,6 +146,7 @@ pub(crate) struct SaveBody {
     pub form_id: Option<Uuid>,
     pub form_key: String,
     pub name: String,
+    #[schemars(with = "Vec<SaveFieldSchema>")]
     pub fields: Vec<Value>,
     pub active: bool,
     #[serde(default)]
@@ -589,6 +616,19 @@ mod tests {
         assert!(!valid_form_key("1quote"));
         assert!(!valid_form_key("quote-request"));
         assert!(!valid_form_key("_quote"));
+    }
+
+    #[test]
+    fn field_schema_annotation_does_not_change_json_deserialization() {
+        // Invalid definitions still reach the database's authoritative validator.
+        let mut input = valid_body();
+        input["fields"] = json!(["name", {"future_property": true}]);
+        let body: SaveBody = serde_json::from_value(input.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&body).unwrap()["fields"],
+            input["fields"]
+        );
+        assert!(validate(&body).is_ok());
     }
 
     #[test]
