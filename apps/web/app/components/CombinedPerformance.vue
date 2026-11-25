@@ -2,8 +2,10 @@
 import type { DashboardReport } from '../../shared/types/dashboard'
 import type { SearchReport } from '../../shared/types/search'
 import { timelineCommits, timelineDays, timelinePath, type OnsiteMetric, type SearchMetric } from '#shared/utils/performance-timeline'
+import { formatInstant, zoneLabel } from '#shared/utils/local-time'
 const props = defineProps<{ search: SearchReport | null; onsite: DashboardReport | null; searchLoading: boolean; onsiteLoading: boolean; searchError: string; onsiteError: string }>()
 const ws = useWorkspace()
+function zone() { return zoneLabel() }
 const { start, end, includeToday } = useReportRange()
 const { history, busy: commitBusy, error: commitError, load: reloadCommits } = useRepositoryHistory(() => ws.selectedId.value, () => start.value, () => end.value, () => true, true, true)
 const searchMetric = ref<SearchMetric>('clicks')
@@ -56,7 +58,7 @@ function tickLabel(value: number, metric: string) {
   return !['ctr', 'engagementRate'].includes(metric) && value >= 1000 ? new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value) : format(value, metric)
 }
 function date(value: string) { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T12:00:00Z`)) }
-function commitLabel(commit: typeof commits.value[number]) { return `${commit.committed_at.replace('T', ' ').slice(0, 19)} UTC · ${commit.sha.slice(0, 7)} · ${commit.message.split('\n')[0]}` }
+function commitLabel(commit: typeof commits.value[number]) { return `${formatInstant(commit.committed_at)} · ${commit.sha.slice(0, 7)} · ${commit.message.split('\n')[0]}` }
 </script>
 <template>
   <section class="combined-performance" aria-labelledby="combined-title" :aria-busy="searchLoading || onsiteLoading || commitBusy">
@@ -87,13 +89,13 @@ function commitLabel(commit: typeof commits.value[number]) { return `${commit.co
         </div>
         <p v-if="!searchLoading && !onsiteLoading && hasData && days.some(day => day.search === null || day.onsite === null)" class="report-caption">Gaps mean no returned value, rather than confirmed zero activity.</p>
         <div v-if="commits.length" class="combined-commit-inspector">
-          <label for="combined-commit">Inspect a commit<select id="combined-commit" v-model="selectedSha"><option value="">Select a vertical line or choose a commit</option><option v-for="commit in commits" :key="commit.sha" :value="commit.sha">{{ commitLabel(commit) }}</option></select></label>
-          <div v-if="selected" class="combined-commit-detail" aria-live="polite"><a :href="`${selected.repository_url}/commit/${selected.sha}`" target="_blank" rel="noopener noreferrer">{{ selected.message.split('\n')[0] }} · {{ selected.sha.slice(0, 7) }}</a><p>{{ commitLabel(selected) }} · {{ selected.author || 'Unknown author' }}</p><p>{{ selectedDay?.date }} reporting date: {{ searchLabels[searchMetric] }} {{ format(selectedDay?.search, searchMetric) }} · {{ onsiteLabels[onsiteMetric] }} {{ format(selectedDay?.onsite, onsiteMetric) }}</p></div>
+          <label for="combined-commit">Inspect a commit<select id="combined-commit" v-model="selectedSha"><option value="">Select a vertical line or choose a commit</option><option v-for="commit in commits" :key="commit.sha" :value="commit.sha" :title="commit.committed_at">{{ commitLabel(commit) }}</option></select></label>
+          <div v-if="selected" class="combined-commit-detail" aria-live="polite"><a :href="`${selected.repository_url}/commit/${selected.sha}`" target="_blank" rel="noopener noreferrer">{{ selected.message.split('\n')[0] }} · {{ selected.sha.slice(0, 7) }}</a><p :title="selected.committed_at">{{ commitLabel(selected) }} · {{ selected.author || 'Unknown author' }}</p><p>{{ selectedDay?.date }} reporting date: {{ searchLabels[searchMetric] }} {{ format(selectedDay?.search, searchMetric) }} · {{ onsiteLabels[onsiteMetric] }} {{ format(selectedDay?.onsite, onsiteMetric) }}</p></div>
         </div>
         <p v-else-if="!commitBusy && !commitError" class="report-caption">{{ history?.repository ? 'No saved commits on this tracked branch in these dates.' : 'Link a public GitHub repository under Websites to add commit markers.' }} <NuxtLink v-if="!history?.repository" to="/websites">Manage repositories</NuxtLink></p>
         <details class="daily-data combined-daily"><summary>Combined daily data</summary><div class="table-scroll"><table><thead><tr><th scope="col">Reporting date</th><th scope="col">{{ searchLabels[searchMetric] }}</th><th scope="col">{{ onsiteLabels[onsiteMetric] }}</th><th scope="col">Commits (UTC)</th></tr></thead><tbody><tr v-for="day in days" :key="day.date"><td>{{ day.date }}</td><td>{{ format(day.search, searchMetric) }}</td><td>{{ format(day.onsite, onsiteMetric) }}</td><td>{{ commitCounts[day.date] ?? 0 }}</td></tr></tbody></table></div></details>
       </template>
     </div>
-    <p class="report-caption">Each series has its own labeled scale. Daily totals use Google Search’s Pacific Time and GA4’s {{ onsite?.report.daily.metadata?.timeZone || onsite?.report.summary.metadata?.timeZone || 'property timezone' }}; those daily windows differ. Commit markers use exact UTC commit times. Commits are repository changes, not confirmed deployments, and correlation does not establish causation.<span v-if="history?.repository?.backfilling">Older Git history is still being collected; markers will fill in as it arrives.</span><span v-if="history?.repository?.last_error">Repository collection has an error. Check Website change history below for details.</span><span v-if="history?.repository && !history.repository.enabled">Repository collection is paused; saved commit markers remain available.</span><span v-if="searchMetric === 'position'">Lower average search position is better.</span></p>
+    <p class="report-caption">Each series has its own labeled scale. Daily totals use Google Search’s Pacific Time and GA4’s {{ onsite?.report.daily.metadata?.timeZone || onsite?.report.summary.metadata?.timeZone || 'property timezone' }}; those daily windows differ. Commit markers show exact commit times in your timezone ({{ zone() }}); daily buckets use UTC. Commits are repository changes, not confirmed deployments, and correlation does not establish causation.<span v-if="history?.repository?.backfilling">Older Git history is still being collected; markers will fill in as it arrives.</span><span v-if="history?.repository?.last_error">Repository collection has an error. Check Website change history below for details.</span><span v-if="history?.repository && !history.repository.enabled">Repository collection is paused; saved commit markers remain available.</span><span v-if="searchMetric === 'position'">Lower average search position is better.</span></p>
   </section>
 </template>

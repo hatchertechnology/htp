@@ -9,9 +9,10 @@ function explorer(staticDashboard: boolean, raw: ReturnType<typeof vi.fn>) {
   const source = readFileSync(new URL('../app/components/ApiExplorer.vue', import.meta.url), 'utf8').split('<script setup lang="ts">')[1]!.split('</script>')[0]!
   const script = ts.transpileModule(`${source}\nglobalThis.demo = { sendRequest, clear, response, error, loading, access, operation };`, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const context: Record<string, any> = {
-    exports: {}, require: () => ({ playgroundTarget }),
+    exports: {}, require: (name: string) => name.endsWith('playground-client') ? { playgroundTarget } : { SIGN_IN_PATH: '/sign-in' },
     defineProps: () => ({ transport: 'mcp' }),
     useRuntimeConfig: () => ({ public: { staticDashboard, apiBaseUrl: 'https://api.example' } }),
+    useRoute: () => ({ fullPath: '/mcp' }), navigateTo: vi.fn(),
     useAuth: () => ({ user: { value: { id: 'fixture-user' } }, accessToken: async () => 'synthetic-token' }),
     ref: (value: unknown) => ({ value }), computed: (fn: () => unknown) => ({ get value() { return fn() } }),
     watch: () => {}, onBeforeUnmount: () => {}, onMounted: () => {},

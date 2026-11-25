@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import FormsNotifications from './FormsNotifications.vue'
+import FormsSubmissionsTable from './FormsSubmissionsTable.vue'
 import { csvCell } from "../utils/forms-csv"
+import { formatInstant } from '#shared/utils/local-time'
+import { submissionColumns } from '#shared/utils/forms-submissions-table'
 import { FORMS_INBOX_PAGE_SIZE, formsInboxPath, formsInboxUrl, staticFormsInboxReads, type FormsInboxPage } from '#shared/utils/forms-inbox-client'
 import { beginBody, confirmBody, isSavedResult, isVerifiedResult, ownerMessage, ownerPath, ownerUrl, pageQuery, parseChallenge, saveBody, sessionEndedError, isUnknownOutcome, type OwnerChallenge, type OwnerPage, type OwnerStep } from '#shared/utils/forms-owner-client'
 import { responseUrl, responseBody, responseResult, responseUnknown, responseMessage, staticResponseEnabled } from '#shared/utils/forms-response-client'
@@ -18,6 +21,7 @@ const config = useRuntimeConfig()
 const runtime = config.public as { apiBaseUrl?: unknown; staticDashboard?: boolean; rolloutFormsPilot?: boolean; rolloutFormsResponses?: boolean; rolloutFormsNotifications?: boolean }
 const legacy = computed(() => props.mode === 'legacy')
 const eligible = ref(false)
+const eligibilityResolved = ref(false)
 const notificationsAvailable = ref(false)
 // Static pilot reads go through the authenticated API. Nitro/SSR builds keep direct Supabase reads.
 const apiReads = computed(() => !legacy.value && eligible.value && staticFormsInboxReads(runtime.staticDashboard, runtime.rolloutFormsPilot))
@@ -34,6 +38,7 @@ let inboxGeneration = 0
 watch(() => [auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId, props.mode] as const, async ([owner, anonymous, websiteId, mode]) => {
   const generation = ++eligibilityGeneration
   eligible.value = false
+  eligibilityResolved.value = false
   notificationsAvailable.value = false
   if (mode !== 'pilot' || !owner || anonymous === true) return
   try {
@@ -45,11 +50,15 @@ watch(() => [auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId
       : await $fetch<{ eligible: boolean; notifications_available?: unknown }>('/api/forms/pilot-eligibility', { query: { website_id: websiteId }, headers: { Authorization: `Bearer ${token}` }, retry: 0 })
     if (generation === eligibilityGeneration && auth.user.value?.id === owner && auth.user.value?.is_anonymous !== true && props.websiteId === websiteId && props.mode === 'pilot') {
       eligible.value = result.eligible === true
+      eligibilityResolved.value = true
       notificationsAvailable.value = staticPilot && eligible.value && result.notifications_available === true
     }
-  } catch { /* Visibility fails closed on authentication and network failures. */ }
+  } catch {
+    if (generation === eligibilityGeneration && auth.user.value?.id === owner && auth.user.value?.is_anonymous !== true && props.websiteId === websiteId && props.mode === 'pilot') eligibilityResolved.value = true
+  }
 }, { immediate: true, flush: 'sync' })
-const expanded = ref(false), busy = ref(false), error = ref(''), notice = ref('')
+const tab = ref<'responses' | 'setup'>('responses')
+const busy = ref(false), error = ref(''), notice = ref('')
 const hosts = ref<Host[]>([]), forms = ref<Form[]>([]), submissions = ref<Submission[]>([])
 const deleting = ref<string|null>(null)
 const recipients = ref<Recipient[]>([]), deliveries = ref<Delivery[]>([]), recipientEmail = ref('')
@@ -136,6 +145,19 @@ async function load() {
   if (!owner || auth.user.value?.id !== owner) return
   if (hostResult.error || formResult.error) { error.value='Could not load forms. Please try again.'; return }
   hosts.value=(hostResult.data ?? []) as Host[]; forms.value=(formResult.data ?? []) as Form[]
+  if (!selected.value && forms.value.length) void inbox(forms.value[0]!)
+  else if (selected.value && !forms.value.some(form => form.id === selected.value?.id)) {
+    selected.value=null; submissions.value=[]; moreResponses.value=false
+    if (forms.value.length) void inbox(forms.value[0]!)
+  }
+}
+const submissionTableColumns = computed(() => submissionColumns(selected.value?.fields ?? [], submissions.value))
+function selectForm(form: Form) {
+  tab.value = 'responses'
+  // Main cleared the unknown-outcome lock when the user reopened Responses for
+  // a form; the reload that follows makes the fresh state authoritative.
+  responseUnresolved.value = false
+  void inbox(form)
 }
 async function begin() {
   busy.value=true; error.value=''; notice.value=''
@@ -258,7 +280,9 @@ async function retryDelivery(job:Delivery) {
   try { const {data,error:err}=await $supabase.rpc('retry_form_delivery',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_job_id:job.id}); if (err || !data) throw new Error('This delivery cannot be retried.'); await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
 }
 // Snapshot all affinity before obtaining a bearer; never fall back to RPC in static mode.
-async function manageResponse(row: Submission, next?: string) {
+// `reload` is false for bulk rows so one action does not reset the loaded page
+// after every write.
+async function manageResponse(row: Submission, next?: string, reload = true) {
   const form = selected.value, owner = auth.user.value?.id, site = props.websiteId, generation = eligibilityGeneration
   if (!apiResponses.value || busy.value || responseUnresolved.value || !form || !owner || auth.user.value?.is_anonymous === true || !submissions.value.some(item => item.id === row.id) || (next === undefined && deleting.value !== row.id)) return
   const current = () => generation === eligibilityGeneration && apiResponses.value && props.websiteId === site && auth.user.value?.id === owner && auth.user.value?.is_anonymous !== true && selected.value?.id === form.id
@@ -281,14 +305,44 @@ async function manageResponse(row: Submission, next?: string) {
       if (current()) error.value = responseMessage(cause, next === undefined)
       return
     }
-    if (!current()) return
+    if (!current()) return false
     deleting.value = null
-    await inbox(form)
+    if (reload) await inbox(form)
+    return true
   } catch (cause) { if (current()) error.value = responseMessage(cause, next === undefined) }
   finally { busy.value = false }
+  return false
+}
+// Bulk status is status only and acts on every selected loaded row, including
+// rows across API pages. It stops on the first refusal or unknown outcome and
+// reports succeeded, failed, unknown and not-attempted counts.
+async function bulkStatus(ids: string[], next: string) {
+  if (busy.value || responseUnresolved.value || !selected.value) return
+  const rows = ids.map(id => submissions.value.find(row => row.id === id)).filter((row): row is Submission => !!row)
+  if (!rows.length) return
+  if (!apiResponses.value && !(legacy.value && responseControls.value)) return
+  let changed = 0, failed = 0, unknown = false
+  for (const row of rows) {
+    if (responseUnresolved.value) { unknown = true; break }
+    error.value = ''; notice.value = ''
+    if (apiResponses.value) {
+      if (await manageResponse(row, next, false)) { changed++; continue }
+      if (responseUnresolved.value) { unknown = true; break }
+      failed++; break
+    }
+    await status(row, next)
+    if (error.value) { failed++; break }
+    changed++
+  }
+  const notAttempted = rows.length - changed - failed - (unknown ? 1 : 0)
+  // One reload after a successful or refused bulk pass keeps the table on the
+  // bounded first page without dropping selected rows mid-loop.
+  if (apiResponses.value && changed && !unknown) await inbox(selected.value)
+  if (!failed && !unknown) notice.value = `${changed} response${changed === 1 ? '' : 's'} marked ${next}.`
+  else notice.value = `Bulk status: ${changed} succeeded, ${failed} failed, ${unknown ? 1 : 0} unknown, ${notAttempted} not attempted.`
 }
 async function deleteResponse(row:Submission) {
-  if (runtime.staticDashboard === true) { await manageResponse(row); return }
+  if (runtime.staticDashboard === true) { deleting.value = row.id; await manageResponse(row); return }
   if ( !legacy.value || !selected.value) return
   busy.value=true; error.value=''
   try { const {error:err}=await $supabase.rpc('delete_website_form_response',{p_website_id:props.websiteId,p_form_id:selected.value.id,p_response_id:row.id}); if(err) throw err; deleting.value=null; await inbox(selected.value) } catch(cause) { fail(cause) } finally { busy.value=false }
@@ -325,62 +379,134 @@ async function exportCsv() {
     const url=URL.createObjectURL(new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8'})); const link=document.createElement('a'); link.href=url; link.download=`${form.form_key}.csv`; link.click(); URL.revokeObjectURL(url)
   } catch(cause) { fail(cause) } finally { busy.value=false }
 }
-watch(()=>[auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId, props.mode],()=>{ responseUnresolved.value=false; hosts.value=[]; forms.value=[]; submissions.value=[]; recipients.value=[]; deliveries.value=[]; selected.value=null; deleting.value=null; challenge.value=null; verifyUnknown.value=false; moreResponses.value=false; error.value=''; notice.value=''; reset(); expanded.value=false })
+watch(()=>[auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId, props.mode],()=>{ responseUnresolved.value=false; hosts.value=[]; forms.value=[]; submissions.value=[]; recipients.value=[]; deliveries.value=[]; selected.value=null; deleting.value=null; challenge.value=null; verifyUnknown.value=false; moreResponses.value=false; error.value=''; notice.value=''; tab.value='responses'; reset() })
+// Load only after the pilot eligibility read resolves (or immediately in legacy
+// mode), and reload on every site or owner change. The reset watch above clears
+// per-site state first.
+watch(() => [auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId, props.mode, legacy.value, eligible.value] as const, ([owner, anonymous, websiteId, mode, isLegacy, isEligible]) => {
+  if (!owner || anonymous === true || !websiteId) return
+  if (mode === 'pilot' && !isLegacy && !isEligible) return
+  void load()
+}, { immediate: true, flush: 'sync' })
 </script>
 
 <template>
-  <section v-if="legacy || eligible" class="forms-section" :aria-label="`Forms for ${fqdn}`">
-    <UButton color="neutral" variant="ghost" icon="i-lucide-messages-square" @click="expanded = !expanded; if (expanded) load()">{{ expanded ? 'Close forms' : 'Forms' }}</UButton>
-    <div v-if="expanded" class="forms-content">
-      <h3>Forms and responses</h3>
-      <p>Verify each exact host before collecting inquiries. A form can use one or more verified hosts.</p>
+  <section v-if="!legacy && eligibilityResolved && !eligible" class="forms-section forms-unavailable" :aria-label="`Forms for ${fqdn}`">
+    <h2>Forms</h2>
+    <p>Forms aren't enabled for {{ fqdn }}. The Forms pilot is limited to approved websites.</p>
+  </section>
+  <section v-else-if="legacy || eligible" class="forms-section" :aria-label="`Forms for ${fqdn}`">
+    <div class="forms-content">
       <p v-if="error" class="form-error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
-      <div class="forms-block">
-        <h4>Verify a website host</h4>
-        <form @submit.prevent="begin"><label>Hostname <input v-model="hostname" required maxlength="253" placeholder="www.example.com"></label> <UButton type="submit" :loading="busy" :disabled="verifyUnknown">Create DNS challenge</UButton></form>
-        <div v-if="challenge"><p>Add this TXT record to your DNS, then verify it. The challenge expires after 24 hours.</p><p>Name: <code>{{ challenge.txt_name }}</code></p><p>Value: <code>{{ challenge.txt_value }}</code></p><UButton :loading="busy" :disabled="verifyUnknown" @click="verify">Verify DNS record</UButton></div>
-        <ul><li v-for="host in hosts" :key="host.id">{{ host.hostname }} — {{ host.verified_at ? 'Verified' : 'Not verified' }}</li></ul>
+      <div v-if="forms.length" class="form-selector" role="group" aria-label="Choose a form">
+        <button v-for="form in forms" :key="form.id" type="button" class="form-choice" :class="{ selected: selected?.id === form.id }" :aria-pressed="selected?.id === form.id" @click="selectForm(form)">
+          <strong>{{ form.name }}</strong><span class="form-state">{{ form.active ? 'Active' : 'Paused' }}</span>
+        </button>
       </div>
-      <div class="forms-block">
-        <h4>{{ editing ? 'Edit form' : 'Create a form' }}</h4>
-        <form @submit.prevent="save">
-          <label>Form name <input v-model="name" required maxlength="100"></label>
-          <label>Form key <input v-model="formKey" required pattern="[a-z][a-z0-9_]{0,63}" placeholder="cleaning_quote"></label>
-          <fieldset><legend>Fields</legend>
-            <div v-for="(field,index) in fields" :key="index" class="forms-field">
-              <label>Key <input v-model="field.key" required pattern="[a-z][a-z0-9_]{0,63}"></label>
-              <label>Label <input v-model="field.label" required maxlength="100"></label>
-              <label>Type <select v-model="field.kind"><option value="text">Text</option><option value="email">Email</option><option value="telephone">Telephone</option><option value="multiline">Multiline text</option></select></label>
-              <label>Maximum characters <input v-model.number="field.max_length" type="number" min="1" max="5000" required></label>
-              <label><input v-model="field.required" type="checkbox"> Required</label>
-              <UButton type="button" color="neutral" variant="ghost" :disabled="fields.length === 1" @click="fields.splice(index,1)">Remove field</UButton>
-            </div>
-            <UButton type="button" color="neutral" variant="outline" :disabled="fields.length >= 32" @click="fields.push({key:'',label:'',kind:'text',required:false,max_length:500})">Add field</UButton>
-          </fieldset>
-          <fieldset><legend>Permitted verified hosts</legend><label v-for="host in hosts.filter(h=>h.verified_at)" :key="host.id"><input v-model="chosenHosts" type="checkbox" :value="host.id"> {{ host.hostname }} </label><p v-if="!hosts.some(h=>h.verified_at)">Verify a host before activating a form.</p></fieldset>
-          <label><input v-model="enabled" type="checkbox"> Accept submissions</label>
-          <div><UButton type="submit" :loading="busy" :disabled="saveUnknown">Save form</UButton> <UButton v-if="editing" type="button" color="neutral" variant="outline" @click="reset">Cancel edit</UButton></div>
-        </form>
+      <div class="forms-tabs" role="tablist" aria-label="Forms sections">
+        <button type="button" role="tab" :aria-selected="tab === 'responses'" :class="{ active: tab === 'responses' }" @click="tab = 'responses'">Responses</button>
+        <button type="button" role="tab" :aria-selected="tab === 'setup'" :class="{ active: tab === 'setup' }" @click="tab = 'setup'">Setup</button>
       </div>
-      <div class="forms-block"><h4>Your forms</h4><p v-if="!forms.length">No forms yet.</p><ul><li v-for="form in forms" :key="form.id"><strong>{{ form.name }}</strong> — {{ form.active ? 'Active' : 'Paused' }} <UButton color="neutral" variant="ghost" @click="edit(form)">Edit</UButton><UButton color="neutral" variant="ghost" @click="responseUnresolved = false; inbox(form)">Responses</UButton><p>Submission endpoint: <code>{{ config.public.apiBaseUrl }}/public/forms/{{ form.id }}</code></p></li></ul></div>
-      <FormsNotifications v-if="selected && notificationsAvailable && apiReads && runtime.staticDashboard === true && runtime.rolloutFormsNotifications === true" :key="`${websiteId}:${selected.id}:${auth.user.value?.id}`" :website-id="websiteId" :form-id="selected.id" />
-      <div v-if="selected && legacy && runtime.staticDashboard !== true" class="forms-block"><h4>Notification recipients</h4><p>Each recipient must confirm their address before inquiries are sent. Delivery status records whether the email provider accepted the message.</p><form @submit.prevent="addRecipient"><label>Email address <input v-model="recipientEmail" type="email" required maxlength="254"></label><UButton type="submit" :loading="busy">Send verification</UButton></form><ul><li v-for="recipient in recipients" :key="recipient.id">{{ recipient.email }} — {{ !recipient.enabled ? 'Disabled' : recipient.verified_at ? 'Verified' : 'Awaiting verification' }} <UButton v-if="recipient.enabled" color="neutral" variant="ghost" @click="disableRecipient(recipient)">Disable</UButton><ul><li v-for="job in deliveries.filter(item => item.recipient_id === recipient.id && item.kind === 'verification')" :key="job.id">Verification: {{ job.state }} <UButton v-if="job.state === 'failed'" color="neutral" variant="ghost" @click="retryDelivery(job)">Retry</UButton><span v-if="job.state === 'uncertain'"> Request verification again if needed.</span></li></ul></li></ul></div>
-      <div v-if="selected" class="forms-block"><h4>Responses: {{ selected.name }}</h4><p>Showing {{ submissions.length }} responses.</p><UButton :disabled="busy || !submissions.length" color="neutral" variant="outline" @click="exportCsv">Export all CSV</UButton><p v-if="!submissions.length">No responses to display.</p><UButton v-if="moreResponses" color="neutral" variant="outline" @click="inbox(selected, true)">Load more</UButton><ul><li v-for="row in submissions" :key="row.id"><p><time>{{ row.received_at }}</time> — {{ row.status }}</p><dl><template v-for="(value,key) in row.values" :key="key"><dt>{{ key }}</dt><dd>{{ value }}</dd></template></dl><ul v-if="legacy"><li v-for="job in deliveries.filter(item => item.response_id === row.id)" :key="job.id">Notification {{ recipients.find(item => item.id === job.recipient_id)?.email }}: {{ job.state }} <UButton v-if="job.state === 'failed' || job.state === 'uncertain'" color="neutral" variant="ghost" @click="retryDelivery(job)">Retry</UButton><span v-if="job.state === 'uncertain'"> Provider outcome unknown; check before resending.</span></li></ul><UButton v-if="apiResponses" color="neutral" variant="ghost" :disabled="busy || responseUnresolved" @click="status(row,'new')">Mark new</UButton><UButton v-if="responseControls" color="neutral" variant="ghost" :disabled="busy || responseUnresolved" @click="status(row,'reviewed')">Mark reviewed</UButton><UButton v-if="responseControls" color="neutral" variant="ghost" :disabled="busy || responseUnresolved" @click="status(row,'spam')">Mark spam</UButton><UButton v-if="responseControls" color="neutral" variant="ghost" :disabled="busy || responseUnresolved" @click="deleting = row.id">Delete</UButton><div v-if="responseControls && deleting === row.id"><p>Permanently delete this response and its notification history?</p><UButton color="error" :loading="busy" @click="deleteResponse(row)">Delete response</UButton><UButton color="neutral" variant="outline" @click="deleting = null">Cancel</UButton></div></li></ul></div>
+
+      <div v-if="tab === 'responses'" role="tabpanel" aria-label="Responses">
+        <div v-if="selected" class="forms-block">
+          <h3>Responses: {{ selected.name }}</h3>
+          <FormsSubmissionsTable
+            :rows="submissions"
+            :columns="submissionTableColumns"
+            :has-more="moreResponses"
+            :loading="busy"
+            :busy="busy"
+            :locked="responseUnresolved"
+            :can-manage="responseControls"
+            :can-mark-new="apiResponses"
+            @status="status"
+            @delete="deleteResponse"
+            @bulk-status="bulkStatus"
+            @load-more="inbox(selected, true)"
+            @export="exportCsv"
+          >
+            <template #row-extra="{ row }">
+              <ul v-if="legacy" class="legacy-deliveries">
+                <li v-for="job in deliveries.filter(item => item.response_id === row.id)" :key="job.id">Notification {{ recipients.find(item => item.id === job.recipient_id)?.email }}: {{ job.state }} <UButton v-if="job.state === 'failed' || job.state === 'uncertain'" color="neutral" variant="ghost" @click="retryDelivery(job)">Retry</UButton><span v-if="job.state === 'uncertain'"> Provider outcome unknown; check before resending.</span></li>
+              </ul>
+            </template>
+          </FormsSubmissionsTable>
+        </div>
+        <p v-else class="forms-empty">No form selected. Create a form in Setup, then its responses appear here.</p>
+      </div>
+
+      <div v-else role="tabpanel" aria-label="Setup">
+        <div class="forms-block">
+          <h3>Verify a website host</h3>
+          <p>Verify each exact host before collecting inquiries. A form can use one or more verified hosts.</p>
+          <form @submit.prevent="begin"><label>Hostname <input v-model="hostname" required maxlength="253" placeholder="www.example.com"></label> <UButton type="submit" :loading="busy" :disabled="verifyUnknown">Create DNS challenge</UButton></form>
+          <div v-if="challenge"><p>Add this TXT record to your DNS, then verify it. The challenge expires after 24 hours.</p><p>Name: <code>{{ challenge.txt_name }}</code></p><p>Value: <code>{{ challenge.txt_value }}</code></p><UButton :loading="busy" :disabled="verifyUnknown" @click="verify">Verify DNS record</UButton></div>
+          <ul><li v-for="host in hosts" :key="host.id">{{ host.hostname }} — <template v-if="host.verified_at">Verified <time :datetime="host.verified_at" :title="host.verified_at">{{ formatInstant(host.verified_at) }}</time></template><template v-else>Not verified</template></li></ul>
+        </div>
+        <div class="forms-block">
+          <h3>{{ editing ? 'Edit form' : 'Create a form' }}</h3>
+          <form @submit.prevent="save">
+            <label>Form name <input v-model="name" required maxlength="100"></label>
+            <label>Form key <input v-model="formKey" required pattern="[a-z][a-z0-9_]{0,63}" placeholder="cleaning_quote"></label>
+            <fieldset><legend>Fields</legend>
+              <div v-for="(field,index) in fields" :key="index" class="forms-field">
+                <label>Key <input v-model="field.key" required pattern="[a-z][a-z0-9_]{0,63}"></label>
+                <label>Label <input v-model="field.label" required maxlength="100"></label>
+                <label>Type <select v-model="field.kind"><option value="text">Text</option><option value="email">Email</option><option value="telephone">Telephone</option><option value="multiline">Multiline text</option></select></label>
+                <label>Maximum characters <input v-model.number="field.max_length" type="number" min="1" max="5000" required></label>
+                <label><input v-model="field.required" type="checkbox"> Required</label>
+                <UButton type="button" color="neutral" variant="ghost" :disabled="fields.length === 1" @click="fields.splice(index,1)">Remove field</UButton>
+              </div>
+              <UButton type="button" color="neutral" variant="outline" :disabled="fields.length >= 32" @click="fields.push({key:'',label:'',kind:'text',required:false,max_length:500})">Add field</UButton>
+            </fieldset>
+            <fieldset><legend>Permitted verified hosts</legend><label v-for="host in hosts.filter(h=>h.verified_at)" :key="host.id"><input v-model="chosenHosts" type="checkbox" :value="host.id"> {{ host.hostname }} </label><p v-if="!hosts.some(h=>h.verified_at)">Verify a host before activating a form.</p></fieldset>
+            <label><input v-model="enabled" type="checkbox"> Accept submissions</label>
+            <div><UButton type="submit" :loading="busy" :disabled="saveUnknown">Save form</UButton> <UButton v-if="editing" type="button" color="neutral" variant="outline" @click="reset">Cancel edit</UButton></div>
+          </form>
+        </div>
+        <div class="forms-block"><h3>Your forms</h3><p v-if="!forms.length">No forms yet.</p><ul><li v-for="form in forms" :key="form.id"><strong>{{ form.name }}</strong> — {{ form.active ? 'Active' : 'Paused' }} <UButton color="neutral" variant="ghost" @click="edit(form)">Edit</UButton><UButton color="neutral" variant="ghost" @click="selectForm(form)">Responses</UButton><p>Submission endpoint: <code>{{ config.public.apiBaseUrl }}/public/forms/{{ form.id }}</code></p></li></ul></div>
+        <FormsNotifications v-if="selected && notificationsAvailable && apiReads && runtime.staticDashboard === true && runtime.rolloutFormsNotifications === true" :key="`${websiteId}:${selected.id}:${auth.user.value?.id}`" :website-id="websiteId" :form-id="selected.id" />
+        <div v-if="selected && legacy && runtime.staticDashboard !== true" class="forms-block"><h3>Notification recipients</h3><p>Each recipient must confirm their address before inquiries are sent. Delivery status records whether the email provider accepted the message.</p><form @submit.prevent="addRecipient"><label>Email address <input v-model="recipientEmail" type="email" required maxlength="254"></label><UButton type="submit" :loading="busy">Send verification</UButton></form><ul><li v-for="recipient in recipients" :key="recipient.id">{{ recipient.email }} — {{ !recipient.enabled ? 'Disabled' : recipient.verified_at ? 'Verified' : 'Awaiting verification' }} <UButton v-if="recipient.enabled" color="neutral" variant="ghost" @click="disableRecipient(recipient)">Disable</UButton><ul><li v-for="job in deliveries.filter(item => item.recipient_id === recipient.id && item.kind === 'verification')" :key="job.id">Verification: {{ job.state }} <UButton v-if="job.state === 'failed'" color="neutral" variant="ghost" @click="retryDelivery(job)">Retry</UButton><span v-if="job.state === 'uncertain'"> Request verification again if needed.</span></li></ul></li></ul></div>
+      </div>
     </div>
   </section>
 </template>
-
 <style scoped>
-.forms-section { border-top: 1px solid #d9e1e7; padding: 12px 0; }
-.forms-content { padding: 8px 12px 16px; }
-.forms-content h3 { font-weight: 700; font-size: 14px; }
-.forms-block { border-top: 1px solid #d9e1e7; padding: 16px 0; margin-top: 16px; }
-.forms-block h4 { font-weight: 700; margin-bottom: 8px; }
+.forms-section { border-top: 1px solid var(--border); padding: 12px 0; }
+.forms-content { padding: 8px 0 16px; display: grid; gap: 16px; }
+.forms-unavailable h2 { font-size: 24px; margin-bottom: 6px; }
+.forms-unavailable p { color: var(--muted); max-width: 65ch; }
+.forms-content h2, .forms-content h3 { font-weight: 650; letter-spacing: -.02em; }
+.forms-content h2 { font-size: 24px; }
+.forms-content h3 { font-size: 19px; margin-bottom: 8px; }
+.forms-empty { color: var(--muted); font-size: 13px; }
+.form-selector { display: flex; flex-wrap: wrap; gap: 8px; }
+.form-choice { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 4px; background: #fff; color: var(--ink); font-size: 13px; text-align: left; }
+.form-choice.selected { border-color: var(--rust); box-shadow: inset 0 -2px 0 var(--rust); }
+.form-choice strong { font-weight: 600; }
+.form-state { color: var(--muted); font-size: 12px; }
+.forms-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--border); }
+.forms-tabs button { min-height: 44px; padding: 8px 0; color: var(--muted); font-size: 14px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.forms-tabs button.active { color: var(--ink); border-bottom-color: var(--rust); }
+.forms-block { border-top: 1px solid var(--border); padding: 16px 0; }
+.forms-block:first-child { border-top: 0; }
 .forms-block form, .forms-block fieldset, .forms-field { display: grid; gap: 8px; }
-.forms-block fieldset { border: 1px solid #d9e1e7; padding: 12px; }
+/* Primary actions keep a compact width inside the grid forms, matching the
+   sibling controls instead of stretching across the panel. */
+.forms-block form > button { justify-self: start; }
+.forms-block fieldset { border: 1px solid var(--border); padding: 12px; }
 .forms-block label { display: block; }
-.forms-block input:not([type=checkbox]), .forms-block select { border: 1px solid #53677e; border-radius: 4px; padding: 6px 8px; max-width: 100%; }
+.forms-block input:not([type=checkbox]), .forms-block select { border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; max-width: 100%; font-size: 14px; }
 .forms-block code, .forms-block dd { overflow-wrap: anywhere; white-space: pre-wrap; }
 .forms-block dt { font-weight: 600; }
 .forms-block li { margin: 12px 0; }
+.forms-block p { color: var(--muted); max-width: 70ch; }
+.legacy-deliveries { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 6px; }
+@media (max-width: 650px) {
+  .form-choice { width: 100%; }
+  .forms-tabs { gap: 14px; }
+  .forms-tabs button { flex: 1; min-height: 44px; }
+  .forms-block li { margin: 16px 0; }
+}
 </style>

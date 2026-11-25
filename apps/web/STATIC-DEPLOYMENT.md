@@ -20,6 +20,23 @@ production origin, run signed-in checks on the production hostname. Set
 `NUXT_PUBLIC_ROLLOUT_PROVIDER_CONNECT=true` on the production build after both
 registered Fly callbacks and the Rust provider flow have been verified.
 
+### Sign-in route (htp#139)
+
+`/sign-in` is the only sign-in surface. The route middleware sends signed-out
+visitors there with a `redirect` query (same-origin paths only) and returns them
+to the page they requested after signing in. `/sign-in` and `/sign-in/*` are
+served with `Cache-Control: no-store`, `Referrer-Policy: no-referrer` and
+`X-Robots-Tag: noindex` (both `scripts/static-dashboard/_headers` and the
+`routeRules['/sign-in/**']` block in `nuxt.config.ts`); keep those headers when
+changing either file.
+
+`/oauth/consent` and `/forms/confirm` must stay public: consent is how MCP
+agents are approved signed out, and the confirmation link carries its token in
+the URL hash, which a redirect would drop. The auth callback paths
+(`/auth/google/callback`, `/auth/bing/callback`) serve the SPA shell in the
+static artifact; the real exchange stays a Fly/Nitro route and is verified by
+the integration gate, not this build.
+
 The hostname cutover below was completed on 2026-11-25, and the Nitro Fly web
 app `htp-web-kerry-hatcher` was then retired. `HTP_WEB_MANAGEMENT_HOST` now
 accepts only `htp.hatchtech.dev`. The steps are kept as a historical record.

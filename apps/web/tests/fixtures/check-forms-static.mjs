@@ -7,9 +7,8 @@ try {
   const errors = []
   page.on('pageerror', error => errors.push(error.message))
   await page.goto(new URL('/tests/fixtures/forms.html?mode=pilot&static=1', process.env.BING_FIXTURE_BASE_URL ?? 'http://127.0.0.1:4177').href)
-  await page.getByRole('button', { name: /forms/i }).first().click()
-  await page.getByRole('button', { name: 'Responses', exact: true }).click()
-  await page.getByText('<script>unsafe</script>', { exact: true }).waitFor()
+  await page.getByRole('tab', { name: 'Responses', exact: true }).waitFor()
+  await page.getByRole('cell',{name:'<script>unsafe</script>',exact:true}).waitFor()
   assert.equal(await page.locator('#app script').count(), 0)
   const fixture = await page.evaluate(() => ({ queries: globalThis.formFixture.queries, apiCalls: globalThis.formFixture.apiCalls }))
   assert.ok(fixture.apiCalls.some(url => /\/websites\/10000000-0000-0000-0000-000000000001\/forms\/10000000-0000-0000-0000-000000000002\/responses\?limit=100&offset=0$/.test(url)), 'responses must be read via the API')

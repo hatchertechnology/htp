@@ -53,7 +53,8 @@ try {
   for (const scenario of ['no', 'other-site', 'foreign', 'error']) {
     const s = await session(`?mode=pilot&static=1&eligible=${scenario}`)
     await s.page.waitForTimeout(150)
-    assert.equal(await s.page.getByRole('button', { name: 'Forms', exact: true }).count(), 0, `${scenario} must stay hidden`)
+    await s.page.getByText("Forms aren't enabled for www.example.com. The Forms pilot is limited to approved websites.", { exact: true }).waitFor()
+    assert.equal(await s.page.getByRole('tab', { name: 'Responses' }).count(), 0, `${scenario} must not expose the inbox`)
     const state = await assertClean(s, scenario)
     assert.ok(state.apiCalls.every(call => call === ELIGIBILITY), `${scenario}: only the eligibility read may run, got ${state.apiCalls.join(', ')}`)
     await closeSession(s)
@@ -64,14 +65,14 @@ try {
     const s = await session('?mode=pilot&static=1&eligible=slow')
     await s.page.evaluate(op => (op === 'setOwner' ? globalThis.formFixture.setOwner(null) : globalThis.formFixture.setAnonymous()), operation)
     await s.page.waitForTimeout(700)
-    assert.equal(await s.page.getByRole('button', { name: 'Forms', exact: true }).count(), 0, `${operation} must hide`)
+    assert.equal(await s.page.getByRole('tab', { name: 'Responses' }).count(), 0, `${operation} must hide`)
     await closeSession(s)
   }
 
   // 3. Eligible pilot, normal setup: verify a host, save a form, edit it, read responses. Owner API only.
   for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
     const s = await session('?mode=pilot&static=1&eligible=yes', viewport)
-    await s.page.getByRole('button', { name: 'Forms', exact: true }).click()
+    await s.page.getByRole('tab', { name: 'Setup' }).click()
     await s.page.getByRole('button', { name: 'Create DNS challenge' }).click()
     await s.page.getByText('_htp-verification.www.example.com', { exact: true }).waitFor()
     await s.page.getByRole('button', { name: 'Verify DNS record' }).click()
@@ -83,10 +84,10 @@ try {
     await s.page.getByRole('button', { name: 'Edit', exact: true }).first().click()
     await s.page.getByRole('button', { name: 'Save form' }).click()
     await s.page.getByText('Form saved.', { exact: true }).waitFor()
-    await s.page.getByRole('button', { name: 'Responses', exact: true }).first().click()
-    await s.page.getByText('<script>unsafe</script>', { exact: true }).waitFor()
+    await s.page.getByRole('tab', { name: 'Responses' }).click()
+    await s.page.getByRole('cell',{name:'<script>unsafe</script>',exact:true}).waitFor()
     assert.equal(await s.page.locator('#app script').count(), 0)
-    assert.equal(await s.page.getByRole('button', { name: 'Export all CSV' }).isEnabled(), true)
+    assert.equal(await s.page.getByRole('button', { name: 'Export all responses (CSV)' }).isEnabled(), true)
     for (const name of ['Mark reviewed', 'Mark spam', 'Delete', 'Send verification', 'Disable', 'Retry']) {
       assert.equal(await s.page.getByRole('button', { name, exact: true }).count(), 0, `${name} is held`)
     }
@@ -108,7 +109,7 @@ try {
   {
     // A begin transport failure reads as unknown, and a fresh challenge can be requested after reload.
     const s = await session('?mode=pilot&static=1&eligible=yes')
-    await s.page.getByRole('button', { name: 'Forms', exact: true }).click()
+    await s.page.getByRole('tab', { name: 'Setup' }).click()
     await s.fail('begin')
     await s.page.getByRole('button', { name: 'Create DNS challenge' }).click()
     await s.page.getByText(/may or may not have been created/).waitFor()
@@ -120,7 +121,7 @@ try {
   {
     // Confirm committed but the response was lost: reconciliation finds the host verified and closes the challenge.
     const s = await session('?mode=pilot&static=1&eligible=yes')
-    await s.page.getByRole('button', { name: 'Forms', exact: true }).click()
+    await s.page.getByRole('tab', { name: 'Setup' }).click()
     await s.page.getByRole('button', { name: 'Create DNS challenge' }).click()
     await s.page.getByText('_htp-verification.www.example.com', { exact: true }).waitFor()
     await s.fail('confirm', undefined, true)
@@ -133,7 +134,7 @@ try {
   {
     // Confirm outcome unknown and not applied: verify stays off until the page is reloaded, and no token is re-sent.
     const s = await session('?mode=pilot&static=1&eligible=yes')
-    await s.page.getByRole('button', { name: 'Forms', exact: true }).click()
+    await s.page.getByRole('tab', { name: 'Setup' }).click()
     await s.page.getByRole('button', { name: 'Create DNS challenge' }).click()
     await s.page.getByText('_htp-verification.www.example.com', { exact: true }).waitFor()
     await s.fail('confirm')
@@ -148,7 +149,7 @@ try {
   {
     // A save transport failure on create is unknown: the form is not retried, and Save stays off.
     const s = await session('?mode=pilot&static=1&eligible=yes')
-    await s.page.getByRole('button', { name: 'Forms', exact: true }).click()
+    await s.page.getByRole('tab', { name: 'Setup' }).click()
     await s.fail('save')
     await s.page.getByLabel('Form name').fill('New form')
     await s.page.getByLabel('Form key').fill('new_form')
@@ -162,7 +163,7 @@ try {
   {
     // Definite refusals report the stable message and nothing is treated as written.
     const s = await session('?mode=pilot&static=1&eligible=yes')
-    await s.page.getByRole('button', { name: 'Forms', exact: true }).click()
+    await s.page.getByRole('tab', { name: 'Setup' }).click()
     await s.fail('begin', 'host_limit')
     await s.page.getByRole('button', { name: 'Create DNS challenge' }).click()
     await s.page.getByText('This website has reached its limit of 64 hosts.', { exact: true }).waitFor()

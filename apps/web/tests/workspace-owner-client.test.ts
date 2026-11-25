@@ -49,7 +49,7 @@ it.each([true, false])('workspace forwards owner payloads, query, signal and res
   const scope = effectScope(), ws = scope.run(() => useWorkspace())!
   try {
     await nextTick(); await Promise.resolve(); await Promise.resolve()
-    expect(fetch).toHaveBeenCalledWith(staticDashboard ? `${base}/websites?limit=100` : '/api/websites?limit=100', {headers: {Authorization: 'Bearer owner-token'}, retry: 0})
+    expect(fetch).toHaveBeenCalledWith(staticDashboard ? `${base}/websites?limit=100&offset=0` : '/api/websites?limit=100&offset=0', {headers: {Authorization: 'Bearer owner-token'}, retry: 0})
     await vi.waitFor(() => expect(ws.sites.value).toEqual(payload.items))
     expect(ws.selectedId.value).toBe(id)
     const signal = new AbortController().signal

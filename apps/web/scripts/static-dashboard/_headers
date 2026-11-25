@@ -3,6 +3,16 @@
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
 
+/sign-in
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+  X-Robots-Tag: noindex
+
+/sign-in/*
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+  X-Robots-Tag: noindex
+
 /oauth/*
   Cache-Control: no-store
   Referrer-Policy: no-referrer

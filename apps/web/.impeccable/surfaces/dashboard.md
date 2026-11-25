@@ -27,8 +27,11 @@ this ordinary extension does not regenerate their tokens or component examples.
 
 ## Finished implementation
 `app/components/SearchDashboard.vue` precedes the independent Analytics report in
-`app/pages/index.vue`. Shared website/date controls remain in
-`app/components/AppShell.vue`. The Search Console property selector sits beside
+`app/pages/index.vue`. The context bar stays in `app/components/AppShell.vue` and
+holds only the website select plus, on the overview, the date range control with
+its Last 30 days shortcut; the website and report dates are durable context that
+persists per account, and no connection or account status appears in the header
+(account lives in the rail's user menu). The Search Console property selector sits beside
 the Search heading. The chart switches between clicks and impressions and updates
 its accessible Daily data table; four totals show clicks, impressions, CTR and
 average position. Queries and landing pages follow, then URL Inspection, then
@@ -50,7 +53,8 @@ ship in the application.
 The Search chart inherits the existing 263px desktop totals column (220px below
 1280px). Search rankings are side by side on wide screens and stack below 1280px.
 Analytics lower reports form two columns below 1280px. At 960px navigation becomes
-a horizontal strip and Connections stacks. At 650px the chart precedes a
+a horizontal strip and Connections stacks, with the user menu remaining as a
+monogram button. At 650px the chart precedes a
 two-column totals grid, property controls wrap, ranked tables scroll horizontally,
 the URL form stacks and inspection details use one column. Analytics lower
 reports become a single column.

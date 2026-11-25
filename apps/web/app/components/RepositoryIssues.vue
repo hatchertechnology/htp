@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { formatInstant } from '#shared/utils/local-time'
 const { ws, state, result, busy, error, load } = useRepositoryIssues()
 </script>
 
@@ -20,7 +21,7 @@ const { ws, state, result, busy, error, load } = useRepositoryIssues()
         <p class="report-caption">{{ result.repository_url.replace('https://github.com/', '') }} · Most recently updated first</p>
         <div v-if="result.issues.length" class="report-panel table-scroll">
           <table class="repository-issues-table"><caption class="sr-only">GitHub issues labeled HTP</caption><thead><tr><th scope="col">Issue</th><th scope="col">Status</th><th scope="col">Updated</th></tr></thead>
-            <tbody><tr v-for="issue in result.issues" :key="issue.number"><td><a :href="issue.url" target="_blank" rel="noopener noreferrer">#{{ issue.number }} · {{ issue.title }}</a></td><td>{{ issue.state === 'open' ? 'Open' : 'Closed' }}</td><td><time :datetime="issue.updated_at">{{ new Date(issue.updated_at).toLocaleDateString() }}</time></td></tr></tbody>
+            <tbody><tr v-for="issue in result.issues" :key="issue.number"><td><a :href="issue.url" target="_blank" rel="noopener noreferrer">#{{ issue.number }} · {{ issue.title }}</a></td><td>{{ issue.state === 'open' ? 'Open' : 'Closed' }}</td><td><time :datetime="issue.updated_at" :title="issue.updated_at">{{ formatInstant(issue.updated_at) }}</time></td></tr></tbody>
           </table>
         </div>
         <p v-else-if="!busy && !error" class="compact-empty">{{ result.has_more ? 'No matching issues on this page. Load more to continue.' : `No ${state === 'all' ? '' : `${state} `}issues labeled HTP in this repository.` }}</p>

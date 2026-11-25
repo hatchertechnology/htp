@@ -57,6 +57,9 @@ export default defineNuxtConfig({
     },
   },
   routeRules: {
+    // The sign-in page carries query parameters (the return path) and session
+    // state; it must never be cached or indexed.
+    '/sign-in/**': { headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex' } },
     '/oauth/**': { headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow' } },
     '/auth/**': { headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } },
     '/api/**': { headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } },

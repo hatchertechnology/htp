@@ -35,7 +35,7 @@ jobs:
           done
           if [[ "$complete" == true ]]; then
             echo "run_forms=true" >> "$GITHUB_OUTPUT"
-          elif [[ "$required_changed" == true ]] || grep -Eq '^(docs/forms/|supabase/operations/forms-pilot-receipt\.sql$|supabase/rollbacks/20261122|supabase/functions/form-(submit|verify|notifications|confirm-recipient)/|supabase/migrations/20261122|supabase/migrations/20261128000000_forms_host_challenge_quota\.sql$|supabase/migrations/20261201000000_forms_pilot_scope\.sql$|supabase/tests/(website-forms|forms-client-admission|forms-host-challenge-quota|forms-activation-fixture|forms-pilot-scope)\.test\.mjs$|supabase/tests/fixtures/(forms-host-quota-concurrency\.|forms-activation/|forms-pilot-scope/)|apps/api/src/form_ingress\.rs$|apps/web/app/(components/WebsiteForms\.vue|utils/forms-csv\.ts|pages/forms/confirm\.vue)$|apps/web/server/(api/forms/|utils/forms-pilot\.ts$)|apps/web/tests/(forms-(csv|pilot|confirm)|fixtures/(forms|check-forms)))' <<< "$changed"; then
+          elif [[ "$required_changed" == true ]] || grep -Eq '^(docs/forms/|supabase/operations/forms-pilot-receipt\.sql$|supabase/rollbacks/20261122|supabase/functions/form-(submit|verify|notifications|confirm-recipient)/|supabase/migrations/20261122|supabase/migrations/20261128000000_forms_host_challenge_quota\.sql$|supabase/migrations/20261201000000_forms_pilot_scope\.sql$|supabase/tests/(website-forms|forms-client-admission|forms-host-challenge-quota|forms-activation-fixture|forms-pilot-scope)\.test\.mjs$|supabase/tests/fixtures/(forms-host-quota-concurrency\.|forms-activation/|forms-pilot-scope/)|apps/api/src/form_ingress\.rs$|apps/web/app/(components/(WebsiteForms|FormsSubmissionsTable)\.vue|utils/forms-csv\.ts|pages/forms/(confirm|index)\.vue)$|apps/web/shared/utils/forms-submissions-table\.ts$|apps/web/server/(api/forms/|utils/forms-pilot\.ts$)|apps/web/tests/(forms-(csv|pilot|confirm|submissions)|fixtures/(forms|check-forms)))' <<< "$changed"; then
             echo 'Forms-specific files changed but the forms implementation is incomplete' >&2
             exit 1
           else
@@ -164,6 +164,9 @@ jobs:
           node tests/fixtures/check-forms-static.mjs
           node tests/fixtures/check-forms-static-owner.mjs
           node tests/fixtures/check-forms-static-notifications.mjs
+          node tests/fixtures/check-forms-static-responses.mjs
+          node tests/fixtures/check-forms-page.mjs
+          node tests/fixtures/check-forms-table.mjs
       - name: Test actual API cross-origin behavior in Chromium
         working-directory: .
         run: cargo test --locked -p htp-api --lib form_ingress::tests::browser_cors_against_actual_api -- --ignored --nocapture

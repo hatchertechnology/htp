@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { confirmationBody, confirmationUrl, confirmed } from '../../../shared/utils/forms-confirm-client'
 useHead({title:'Confirm form notifications',meta:[{name:'referrer',content:'no-referrer'}]})
+definePageMeta({ layout: 'public' })
 const config = useRuntimeConfig().public
 const formsEnabled = config.staticDashboard === true
   ? config.rolloutFormsConfirmation === true
