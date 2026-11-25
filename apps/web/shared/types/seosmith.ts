@@ -2,19 +2,47 @@ export type Severity = 'critical' | 'alert' | 'warning'
 export interface AuditObservationCounts {
   checked: number; html: number; images: number; http_errors: number; fetch_errors: number; blocked: number
 }
+// Versioned coverage states emitted by the receiver for schema 4. Only a
+// complete verified state reproduces the expected finding population; partial
+// or absent evidence stays unknown and must never be read as clean.
+export type AuditCoverageState = 'complete_verified' | 'unknown_partial'
+// Record-level semantics that separate observations, advisories and explicit
+// policy violations. Missing keys mean the receiver did not report a count.
+export interface AuditRecordCounts {
+  observation?: number
+  advisory_triggered?: number
+  advisory_not_triggered?: number
+  violation?: number
+  no_violation?: number
+  not_applicable?: number
+  unknown?: number
+}
+export interface AuditRuleCoverage {
+  coverage: AuditCoverageState | string
+  reported_findings: number
+}
 export interface AuditSummary {
   summary_version?: number
   evidence_contract_version?: 1 | null
-  evidence_state?: 'legacy_unknown' | 'versioned'
+  evidence_state?: 'legacy_unknown' | 'versioned' | 'policy_versioned' | 'unsupported'
   evaluation_coverage_complete?: boolean | null
   crawl_coverage_complete?: boolean
   evidence_truncated?: boolean; omitted_observations?: number; policy_digest?: string
+  // Schema-4 receiver summary fields. Optional so legacy summaries stay valid.
+  wire_contract_version?: string
+  audit_coverage?: AuditCoverageState
+  manifest_digest?: string; scope_digest?: string
+  record_counts?: AuditRecordCounts
+  omitted_records?: number
+  rule_coverage?: Record<string, AuditRuleCoverage>
   schema_version: number; engine_version: string | null; ruleset_version: string | null
   started_at: string | null; finished_at: string | null; outcome: string; stop_reason: string | null
   coverage_complete: boolean | null; comparison_key: string
   pages: AuditObservationCounts
   resources?: AuditObservationCounts
-  findings: number; severities: Record<Severity, number>; rules: Record<string, number>
+  // Schema-4 summaries keep only the severities that occur, so zero severity
+  // keys may be absent rather than explicitly zero.
+  findings: number; severities: Partial<Record<Severity, number>>; rules: Record<string, number>
 }
 export interface AuditRun { delivery_id: string; scan_at: string; received_at: string; ingestion_source: 'worker' | 'import'; summary: AuditSummary }
 export interface AuditHistory { items: AuditRun[]; has_more: boolean; next_cursor: { before: string; before_id: string } | null }
@@ -57,7 +85,21 @@ export interface AuditReport {
   }
   pages: AuditPage[]; findings: AuditFinding[]
 }
-export interface AuditDetail extends AuditRun { report_json?: string | null; report: AuditReport }
+export interface AuditDetail extends AuditRun {
+  report_json?: string | null
+  // Stored beside the parsed summary, never inside it. The text is the exact
+  // opaque summary the receiver emitted; the digest and length bind those bytes.
+  // Parsed JSON of the summary object cannot be treated as the receiver bytes:
+  // PostgreSQL JSONB and normal object handling may reorder keys or numbers.
+  summary_text?: string | null
+  summary_sha256?: string
+  summary_bytes?: number
+  // Stored beside the summary, never inside it. They bind the summary to the
+  // exact retained report bytes; the summary digest proves only the summary.
+  source_sha256?: string
+  source_bytes?: number
+  report: AuditReport
+}
 
 /** Values are explicit: an empty known value is not unavailable evidence. */
 export type AuditEvidenceValue =

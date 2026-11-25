@@ -1,9 +1,15 @@
-import type { AuditRun, AuditFinding, AuditPage } from '../types/seosmith'
+import type { AuditRun, AuditFinding, AuditPage, AuditSummary, Severity } from '../types/seosmith'
 export type AuditMetric = 'findings' | 'critical' | 'alert' | 'warning' | 'checked' | 'http_errors' | 'rate'
 export const auditMetricLabels: Record<AuditMetric, string> = { findings: 'All findings', critical: 'Critical findings', alert: 'Alerts', warning: 'Warnings', checked: 'URLs checked', http_errors: 'HTTP errors', rate: 'Findings per 100 URLs' }
+// Schema version 5 keeps only the severities that occur, so a zero count may
+// be absent (and a future summary may omit the map entirely). Display reads
+// must treat both as zero rather than throwing or leaving a blank cell.
+export function severityCount(summary: AuditSummary | null | undefined, severity: Severity): number {
+  return summary?.severities?.[severity] ?? 0
+}
 export function auditValue(run: AuditRun, metric: AuditMetric): number | null {
   const s = run.summary
-  const value = metric === 'findings' ? s.findings : metric === 'rate' ? (s.pages.checked ? s.findings / s.pages.checked * 100 : null) : metric === 'checked' || metric === 'http_errors' ? s.pages[metric] : s.severities[metric]
+  const value = metric === 'findings' ? s.findings : metric === 'rate' ? (s.pages.checked ? s.findings / s.pages.checked * 100 : null) : metric === 'checked' || metric === 'http_errors' ? s.pages[metric] : s.severities?.[metric as Severity]
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 }
 export function comparable(a: AuditRun, b: AuditRun): boolean {
