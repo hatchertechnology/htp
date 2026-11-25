@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import type { Access, Operation, PlaygroundResponse, Transport } from '../../shared/types/api'
 import { playgroundTarget } from '../../shared/utils/playground-client'
+import { SIGN_IN_PATH } from '#shared/utils/public-routes'
 const props = defineProps<{ transport: Transport }>()
 const config = useRuntimeConfig()
 const auth = useAuth()
+const route = useRoute()
 const access = ref<Access>('public')
 const operation = ref<Operation>('call')
 const response = ref<PlaygroundResponse | null>(null)
@@ -17,9 +19,9 @@ const toolName = computed(() => secured.value ? 'hello_world_secured' : 'hello_w
 const host = computed(() => config.public.apiBaseUrl.replace(/^https?:\/\//, ''))
 
 function focusSession() {
-  const panel = document.getElementById('your-session')
-  panel?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'center' })
-  document.getElementById('account-email')?.focus({ preventScroll: true })
+  // Defensive: /developer and /mcp are protected, so this only runs when a
+  // session expired between page load and the request.
+  void navigateTo({ path: SIGN_IN_PATH, query: { redirect: route.fullPath } })
 }
 
 function clear() {
@@ -84,6 +86,5 @@ onMounted(sendRequest)
       </div>
       <ResponseViewer :response="response" :loading="loading" :error="error" />
     </section>
-    <AccountPanel />
   </div>
 </template>
