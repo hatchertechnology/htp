@@ -15,6 +15,7 @@ mod insights;
 mod mcp;
 mod oauth;
 mod playground;
+mod provider_oauth;
 mod providers;
 mod repositories;
 mod s14_worker;
@@ -83,6 +84,7 @@ pub fn app_with_capabilities(
     capabilities: RolloutCapabilities,
 ) -> Router {
     let oauth_routes = oauth::router(auth.project_url());
+    let provider_oauth = provider_oauth::OAuth::from_env();
     let seosmith_ingest = seosmith::ingest_router(websites.clone());
     let mcp_limit = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
     let mcp_routes = Router::new()
@@ -99,6 +101,7 @@ pub fn app_with_capabilities(
         )
         .merge(mcp_routes)
         .merge(providers::router())
+        .merge(provider_oauth.protected())
         .merge(analytics::router(websites.clone(), analytics))
         .merge(search::router(
             websites.clone(),
@@ -138,6 +141,7 @@ pub fn app_with_capabilities(
         )
         .nest_service("/mcp", mcp::service())
         .merge(oauth_routes)
+        .merge(provider_oauth.public())
         .merge(seosmith_ingest)
         .merge(s14_worker::router())
         .merge(form_ingress::router())

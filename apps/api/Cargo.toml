@@ -17,6 +17,7 @@ rmcp.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 base64 = "0.22"
+ring = "0.17"
 sha2 = "0.10"
 subtle = "2"
 tempfile = "3"
