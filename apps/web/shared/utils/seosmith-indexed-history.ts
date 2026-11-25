@@ -10,7 +10,7 @@ function complete(row: IndexedHistoryRow | undefined) {
   return row?.evidence_state === 'evaluated' && !!e && e.eligibility === 'eligible' && e.attempt === 'completed' && (e.outcome === 'fail' || e.outcome === 'pass')
 }
 function compatible(a: IndexedHistoryRow, b: IndexedHistoryRow) {
-  return a.schema_version === '2' && b.schema_version === '2' && !!a.comparison_key && a.comparison_key === b.comparison_key
+  return (a.schema_version === '2' || a.schema_version === '4') && a.schema_version === b.schema_version && !!a.comparison_key && a.comparison_key === b.comparison_key
     && !!a.policy_digest && a.policy_digest === b.policy_digest && !!a.engine_version && a.engine_version === b.engine_version
     && !!a.ruleset_version && a.ruleset_version === b.ruleset_version && a.evaluation?.rule_version === b.evaluation?.rule_version
     && a.evaluation?.validator_version === b.evaluation?.validator_version

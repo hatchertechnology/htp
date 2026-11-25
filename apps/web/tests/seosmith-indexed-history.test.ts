@@ -20,4 +20,11 @@ it('requires compatible policy, validator and digest before a transition',()=>{
  expect(indexedTransitions([row('fail'),changed],false)[0]).toBe('not_observed')
 })
 
+it('classifies schema-4 history and keeps the 2/4 boundary unobserved',()=>{
+ expect(indexedTransitions([{...row('pass'),schema_version:'4'},{...row('fail'),schema_version:'4'}],false)).toEqual(['resolved','not_observed'])
+ expect(indexedTransitions([{...row('fail'),schema_version:'4'},{...row('fail'),schema_version:'4'}],false)[0]).toBe('persisting')
+ expect(indexedTransitions([{...row('fail'),schema_version:'4'},{...row('pass'),schema_version:'4'}],false)[0]).toBe('new')
+ expect(indexedTransitions([{...row('fail'),schema_version:'4'},{...row('pass'),schema_version:'2'}],false)).toEqual(['not_observed','not_observed'])
+ expect(indexedTransitions([{...row('fail'),schema_version:'2'},{...row('pass'),schema_version:'4'}],false)).toEqual(['not_observed','not_observed'])
+})
 it('does not infer ordering from tied scan times',()=>{ const a=row('fail'), b={...row('pass'),scan_at:a.scan_at}; expect(indexedTransitions([a,b],false)[0]).toBe('not_observed') })
