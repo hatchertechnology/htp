@@ -1,4 +1,7 @@
--- Run after deploying form-notifications and setting Vault secrets
+-- Schedule only after the scoped database claim fence and shutdown are verified.
+-- The worker must have FORMS_DELIVERY_ENABLED=true and an exact HTTPS
+-- /forms/confirm URL without a trailing slash, query, or fragment.
+-- Deploy form-notifications and set the Vault secrets first.
 -- htp_project_url and htp_forms_notification_secret (matching the function).
 create extension if not exists pg_cron;
 create extension if not exists pg_net with schema extensions;
