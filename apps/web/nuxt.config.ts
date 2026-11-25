@@ -30,6 +30,7 @@ export default defineNuxtConfig({
       rolloutFormsConfirmation: false,
       rolloutFormsPilot: false,
       rolloutFormsResponses: false,
+      rolloutFormsNotifications: false,
       rolloutSearchEvidence: false,
       rolloutComparisons: false,
       rolloutComparisonsReadOnly: false,

@@ -39,6 +39,8 @@ export async function run(deps: Dependencies) {
   let state: "sent" | "failed" | "uncertain" = "uncertain";
   try {
     const message: Record<string, string> = {
+      // Override server tracking so private confirmation fragments stay intact.
+      TrackLinks: "None",
       From: deps.sender,
       To: job.email,
       Subject: job.kind === "verification"
@@ -84,6 +86,45 @@ export async function handle(
     return Response.json({ error: "delivery_unavailable" }, { status: 503 });
   }
 }
+export function validVerifyUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.pathname === "/forms/confirm" &&
+      !url.username && !url.password && !url.search && !url.hash &&
+      !/[?#]/.test(value) && url.href === value;
+  } catch {
+    return false;
+  }
+}
+
+// Keep worker admission separate from database/form rollout flags.
+export function admit(
+  request: Request,
+  config: {
+    enabled: string;
+    base: string;
+    service: string;
+    postmark: string;
+    secret: string;
+  },
+  deps: Dependencies,
+): Promise<Response> {
+  if (config.enabled !== "true") {
+    return Promise.resolve(Response.json({ error: "delivery_disabled" }, {
+      status: 503,
+    }));
+  }
+  if (
+    !config.base || !config.service || !deps.sender || !config.postmark ||
+    !config.secret || !validVerifyUrl(deps.verifyUrl)
+  ) {
+    return Promise.resolve(Response.json({ error: "delivery_not_configured" }, {
+      status: 503,
+    }));
+  }
+  return handle(request, config.secret, deps);
+}
+
 if (import.meta.main) {
   const env = (key: string) => Deno.env.get(key) ?? "";
   const base = env("SUPABASE_URL"),
@@ -91,7 +132,8 @@ if (import.meta.main) {
     sender = env("FORMS_SENDER"),
     verifyUrl = env("FORMS_VERIFY_URL"),
     postmark = env("POSTMARK_SERVER_TOKEN"),
-    secret = env("FORMS_NOTIFICATION_SECRET");
+    secret = env("FORMS_NOTIFICATION_SECRET"),
+    enabled = env("FORMS_DELIVERY_ENABLED");
   async function rpc(name: string, body: unknown) {
     const response = await fetch(`${base}/rest/v1/rpc/${name}`, {
       method: "POST",
@@ -108,15 +150,7 @@ if (import.meta.main) {
     return await response.json();
   }
   Deno.serve((request) => {
-    if (
-      !base || !service || !sender || !postmark || !secret ||
-      !/^https:\/\//.test(verifyUrl)
-    ) {
-      return Response.json({ error: "delivery_not_configured" }, {
-        status: 503,
-      });
-    }
-    return handle(request, secret, {
+    return admit(request, { enabled, base, service, postmark, secret }, {
       sender,
       verifyUrl,
       claim: () => rpc("claim_form_delivery", {}),
