@@ -21,7 +21,8 @@ it('runs the suite in the fixed America/New_York zone (UTC-5 in January), or UTC
     expect(offset).toBe(0)
     expect(userTimeZone()).toBe('UTC')
   } else {
-    expect(process.env.TZ).toBe(NY)
+    // The zone comes from the `test` script; run `npm test` (or the cross-check).
+    expect(process.env.TZ, 'run the suite with npm test (TZ=America/New_York)').toBe(NY)
     expect(offset).toBe(300)
     expect(userTimeZone()).toBe(NY)
   }
@@ -41,9 +42,12 @@ it('leaves invalid or empty instants unchanged and never adds a zone to a calend
   expect(formatInstant('2026-11-24T14:03:00Z', { timeZone: NY, dateOnly: true })).toBe('Nov 24, 2026')
 })
 
-it('labels a zone with its short name at a given instant', () => {
+it('labels a zone with the same short name formatInstant renders', () => {
   expect(zoneLabel(NY, new Date('2026-11-24T14:03:00Z'))).toBe('EST')
   expect(zoneLabel(NY, new Date('2026-07-24T14:03:00Z'))).toBe('EDT')
+  for (const [zone, instant] of [[NY, '2026-07-24T14:03:00Z'], ['Europe/London', '2026-07-01T12:00:00Z'], [KOLKATA, '2026-11-24T14:03:00Z']]) {
+    expect(formatInstant(instant, { timeZone: zone }), zone).toContain(zoneLabel(zone, new Date(instant)))
+  }
 })
 
 it('reads the local calendar day of an instant', () => {
@@ -65,6 +69,13 @@ it('bounds a local day in UTC and spans the DST days correctly', () => {
 
 it('uses offsets for a zone without an abbreviation', () => {
   expect(localDayBounds('2026-11-24', KOLKATA)).toEqual({ start: at('2026-11-23T18:30:00Z'), end: at('2026-11-24T18:30:00Z') })
+})
+
+it('returns null for a calendar day the zone skipped entirely, not just for bad input', () => {
+  // Samoa skipped 2011-12-30 when it crossed the date line.
+  expect(localDayBounds('2011-12-30', 'Pacific/Apia')).toBeNull()
+  expect(localDayBounds('2011-12-29', 'Pacific/Apia')).toEqual({ start: at('2011-12-29T10:00:00Z'), end: at('2011-12-30T10:00:00Z') })
+  expect(localDayBounds('2011-12-31', 'Pacific/Apia')).toEqual({ start: at('2011-12-30T10:00:00Z'), end: at('2011-12-31T10:00:00Z') })
 })
 
 it('rejects malformed days', () => {

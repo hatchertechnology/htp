@@ -38,9 +38,11 @@ export function formatInstant(iso: string, opts: { timeZone?: string; locale?: s
   } catch { return iso }
 }
 
+// Uses the same default locale as formatInstant so a label next to a timestamp
+// always names the zone the same way (en-GB gives BST, en-US gives GMT+1).
 export function zoneLabel(timeZone: string = userTimeZone(), at: Date = new Date()): string {
   try {
-    const name = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'short' }).formatToParts(at).find(part => part.type === 'timeZoneName')
+    const name = new Intl.DateTimeFormat(undefined, { timeZone, timeZoneName: 'short' }).formatToParts(at).find(part => part.type === 'timeZoneName')
     return name?.value ?? timeZone
   } catch { return timeZone }
 }
@@ -52,6 +54,7 @@ const partFormatters = new Map<string, Intl.DateTimeFormat>()
 function zonedParts(at: Date, timeZone: string): ZonedParts {
   let formatter = partFormatters.get(timeZone)
   if (!formatter) {
+    // en-US so the numeric fields are always ASCII digits (Number() parses them).
     formatter = new Intl.DateTimeFormat('en-US', {
       timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
     })
@@ -110,15 +113,31 @@ function startOfLocalDay(day: { year: number; month: number; day: number }, time
   return Math.min(...matching)
 }
 
+function addDays(day: { year: number; month: number; day: number }, days: number): { year: number; month: number; day: number } {
+  const next = new Date(Date.UTC(day.year, day.month - 1, day.day + days))
+  return { year: next.getUTCFullYear(), month: next.getUTCMonth() + 1, day: next.getUTCDate() }
+}
+
 // Half-open UTC epoch bounds of a local calendar day: [00:00 day, 00:00 day+1).
+// Returns null for malformed input and for a well-formed calendar day the zone
+// skipped entirely (e.g. Pacific/Apia 2011-12-30, which has no local instants),
+// so callers must treat null as "no such local day here" and disable that filter
+// bound. The end of the day before a skipped day is the instant the clock jumped.
 export function localDayBounds(day: string, timeZone: string = userTimeZone()): { start: number; end: number } | null {
   const parsed = parseDay(day)
   if (!parsed) return null
   try {
     const start = startOfLocalDay(parsed, timeZone)
-    const next = new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day + 1))
-    const end = startOfLocalDay({ year: next.getUTCFullYear(), month: next.getUTCMonth() + 1, day: next.getUTCDate() }, timeZone)
-    if (start === null || end === null) return null
+    if (start === null) return null
+    // A zone can skip the next local day (date-line moves); the day still ends at
+    // the first instant of the next day that exists.
+    let cursor = addDays(parsed, 1)
+    let end: number | null = null
+    for (let step = 0; step < 3 && end === null; step++) {
+      end = startOfLocalDay(cursor, timeZone)
+      if (end === null) cursor = addDays(cursor, 1)
+    }
+    if (end === null) return null
     return { start, end }
   } catch { return null }
 }
