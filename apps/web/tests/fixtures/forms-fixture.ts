@@ -11,6 +11,7 @@ const form={id:FORM,name:'Cleaning Quote',form_key:'cleaning_quote',active:true,
 const data:Record<string,any[]>={website_form_hosts:[{id:HOST,hostname:'www.example.com',verified_at:'2026-01-01'}],website_forms:[form],website_form_responses:[{id:'40000000-0000-0000-0000-000000000001',status:'new',received_at:'2026-01-01',values:{name:'<script>unsafe</script>'}}],website_form_origins:[{form_id:FORM,host_id:HOST}],website_form_recipients:[{id:'recipient-id',email:'fixture@example.invalid',verified_at:'2026-01-01',enabled:true}],website_form_delivery_jobs:[{id:'job-id',recipient_id:'recipient-id',response_id:'40000000-0000-0000-0000-000000000001',kind:'response',state:'failed',attempts:1}]}
 const params=new URLSearchParams(location.search), mode=params.get('mode')==='pilot'?'pilot':'legacy', visibility=params.get('eligible') ?? 'yes'
 const staticMode=params.get('static')==='1'
+const fixtureSite=ref(SITE)
 const user=ref<{id:string;is_anonymous?:boolean}|null>({id:'owner'}), calls:string[]=[], queries:string[]=[], apiCalls:string[]=[], bodies:{method:string;path:string;body:any}[]=[]
 // One-shot failure injection for the static owner API. `applied` commits the write, then loses the response.
 type Injected={route:string;code?:string;applied:boolean}
@@ -29,7 +30,7 @@ function pageOf(items:any[]){return {items,has_more:false}}
 // Local stand-in for the HTP owner API. The page-level wrapper records every method, path, query and body.
 async function apiFetch(target:URL, method:string, body:any){
   const path=target.pathname
-  if(path===`/websites/${SITE}/forms/pilot-eligibility`){ if(visibility==='slow') await delay(500); return {eligible:eligibleValue()} }
+  if(path===`/websites/${SITE}/forms/pilot-eligibility`){ if(visibility==='slow') await delay(500); return {eligible:eligibleValue(), ...(params.get('capability')==='old' ? {} : {notifications_available:params.get('capability')!=='secondary'&&params.get('capability')!=='off'})} }
   if(path===`/websites/${SITE}/forms/hosts`) return pageOf(data.website_form_hosts)
   if(path===`/websites/${SITE}/forms/origins`){ const formId=target.searchParams.get('form_id'); return pageOf(data.website_form_origins.filter(row=>!formId||row.form_id===formId)) }
   if(path===`/websites/${SITE}/forms`&&method==='GET') return pageOf(data.website_forms)
@@ -96,7 +97,7 @@ const apiOrNitroFetch=async(url:string,options:{method?:string;body?:any;headers
   return apiFetch(target,method,options.body)
 }
 const {default:WebsiteForms}=await import('../../app/components/WebsiteForms.vue')
-Object.assign(globalThis,vue,{formFixture:{calls,queries,apiCalls,bodies,setOwner:(id:string|null)=>{user.value=id?{id}:null},setAnonymous:()=>{user.value={id:'owner',is_anonymous:true}},failNext:(route:string,code?:string,applied=false)=>{nextFailures.push({route,code,applied})},state:()=>({calls:[...calls],queries:[...queries],apiCalls:[...apiCalls],bodies:[...bodies]})},setChallengeError:(value:string)=>{challengeError=value},useNuxtApp:()=>({$supabase:supabase}),useAuth:()=>({user,accessToken:async()=>user.value?'fixture-token':null}),useRuntimeConfig:()=>({public:{supabaseUrl:'https://example.test',apiBaseUrl:'https://api.example.test',staticDashboard:staticMode,rolloutFormsPilot:true,rolloutFormsNotifications:params.get('notifications')==='1',rolloutFormsResponses:params.get('responses')==='1'}}),$fetch:apiOrNitroFetch})
-const app=createApp(WebsiteForms,{websiteId:SITE,fqdn:'www.example.com',mode})
+Object.assign(globalThis,vue,{formFixture:{calls,queries,apiCalls,bodies,setSite:(id:string)=>{fixtureSite.value=id},setOwner:(id:string|null)=>{user.value=id?{id}:null},setAnonymous:()=>{user.value={id:'owner',is_anonymous:true}},failNext:(route:string,code?:string,applied=false)=>{nextFailures.push({route,code,applied})},state:()=>({calls:[...calls],queries:[...queries],apiCalls:[...apiCalls],bodies:[...bodies]})},setChallengeError:(value:string)=>{challengeError=value},useNuxtApp:()=>({$supabase:supabase}),useAuth:()=>({user,accessToken:async()=>user.value?'fixture-token':null}),useRuntimeConfig:()=>({public:{supabaseUrl:'https://example.test',apiBaseUrl:'https://api.example.test',staticDashboard:staticMode,rolloutFormsPilot:true,rolloutFormsNotifications:params.get('notifications')==='1',rolloutFormsResponses:params.get('responses')==='1'}}),$fetch:apiOrNitroFetch})
+const app=createApp({setup:()=>()=>h(WebsiteForms,{websiteId:fixtureSite.value,fqdn:'www.example.com',mode})})
 app.component('UButton',defineComponent({inheritAttrs:false,setup(_,{slots,attrs}){return()=>h('button',attrs,slots.default?.())}}))
 app.mount('#app')
