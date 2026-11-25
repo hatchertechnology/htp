@@ -100,6 +100,12 @@ impl DashboardCors {
 
 /// The methods exposed to the static dashboard for an exact route shape.
 fn dashboard_methods(path: &str) -> Option<&'static str> {
+    if matches!(
+        path,
+        "/providers/google/connect" | "/providers/bing/connect"
+    ) {
+        return Some("POST");
+    }
     if matches!(path, "/playground/public" | "/playground/secured") {
         return Some("POST");
     }
@@ -748,7 +754,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn provider_cors_is_exact_and_only_allows_status_and_disconnect() {
+    async fn provider_cors_is_exact_and_allows_only_owned_operations() {
         for path in ["/providers/google/connection", "/providers/bing/connection"] {
             assert_eq!(dashboard_methods(path), Some("GET, DELETE"));
             for method in ["GET", "DELETE", "POST"] {
@@ -781,9 +787,29 @@ mod tests {
                 );
             }
         }
+        for path in ["/providers/google/connect", "/providers/bing/connect"] {
+            assert_eq!(dashboard_methods(path), Some("POST"));
+            for (origin, method, allowed) in [
+                (ORIGIN, "POST", true),
+                (ORIGIN, "GET", false),
+                ("https://evil.example", "POST", false),
+            ] {
+                let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                    .oneshot(preflight(path, origin, method))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                    allowed.then_some(ORIGIN)
+                );
+                assert!(
+                    header_value(&response, header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none()
+                );
+            }
+        }
         for path in [
             "/providers/google/connection/",
-            "/providers/bing/connect",
+            "/providers/bing/connect/",
             "/providers/other/connection",
             "/providers/google/connection/extra",
         ] {

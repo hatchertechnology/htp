@@ -16,3 +16,8 @@ identity is forwarded, and redirects remain disabled.
 This setting does not change OAuth, consent, callback URLs, or hosted services.
 It must be set on the API process explicitly before a static dashboard cutover;
 this code change does not activate the Fly selection or deploy anything.
+
+Native Google/Bing consent migration is opt-in and held by default. See
+[PROVIDER-OAUTH.md](PROVIDER-OAUTH.md) for the static-browser contract, required
+Fly callback registrations, matching legacy grant keys, and handshake routing
+limits before activation.
