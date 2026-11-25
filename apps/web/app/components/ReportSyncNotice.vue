@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { SyncStatus } from '../../shared/types/sync'
+import { formatInstant } from '#shared/utils/local-time'
 defineProps<{ sync?: SyncStatus | null; label?: string; provider?: string }>()
 </script>
 <template>
   <p v-if="sync" class="report-caption" role="status">
     <strong v-if="label">{{ label }} · </strong>
-    <template v-if="sync.fetched_at">Last synced {{ new Date(sync.fetched_at).toLocaleString() }} · Updates {{ sync.cadence || 'hourly' }}.</template>
+    <template v-if="sync.fetched_at">Last synced <time :datetime="sync.fetched_at" :title="sync.fetched_at">{{ formatInstant(sync.fetched_at) }}</time> · Updates {{ sync.cadence || 'hourly' }}.</template>
     <template v-else>No saved observations for this selection. Collection runs on its own schedule.</template>
     <span v-if="sync.coverage">Stored coverage: {{ sync.coverage.state }} · {{ sync.coverage.observed_days }} observed days. Additive totals use available days only.</span>
     <span v-if="sync.coverage?.missing_dates.length">Missing dates: {{ sync.coverage.missing_dates.join(', ') }}.</span>
