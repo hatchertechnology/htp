@@ -15,7 +15,8 @@ export interface LifecycleComparison {
 
 function compatible(a: AuditDetail, b: AuditDetail): boolean {
   const x = a.report.evidence_contract, y = b.report.evidence_contract
-  return a.summary.schema_version === 2 && b.summary.schema_version === 2 && x?.version === 1 && y?.version === 1
+  // Schemas 2 and 4 both carry S01 evidence v1, but never compare across schemas.
+  return (a.summary.schema_version === 2 || a.summary.schema_version === 4) && a.summary.schema_version === b.summary.schema_version && x?.version === 1 && y?.version === 1
     && !!a.summary.engine_version && a.summary.engine_version === b.summary.engine_version
     && !!a.summary.ruleset_version && a.summary.ruleset_version === b.summary.ruleset_version
     && !!a.summary.comparison_key && a.summary.comparison_key === b.summary.comparison_key

@@ -1,0 +1,311 @@
+import { describe, expect, it } from 'vitest'
+import { readFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { isSavedDetail } from '../shared/utils/saved-detail-validation'
+import { auditCoverageLabel, digestStatus, recordCountRows, recordCounts, reportExport, ruleClaim, ruleClaimLabels, ruleClaimTotals, semanticsSupport, sha256Hex, sha256Matches, summaryExport, SCHEMA4_SUMMARY_VERSION } from '../shared/utils/saved-semantics'
+import { auditPoints, auditValue, severityCount } from '../shared/utils/seosmith'
+import type { AuditDetail, AuditRun, AuditSummary } from '../shared/types/seosmith'
+
+const sha256 = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex')
+const pinnedSummaries = [
+  ['summary-complete-verified.json', 'report-complete-verified.json', '284b0faac82212ed6283faf51c839a8d5e25b71fd581cd278b319458e2eb5b4d', '2443936d93da699595bdb135995e3d1d1503b96d973f5be4f3b82d9f243f4342'],
+  ['summary-partial-mixed.json', 'report-partial-mixed.json', '572efbada7fec9f67920ea2a4def1bfec61c51d7c35f95724415af6d393fbc9c', 'e95085661f1cbddc165e3acf47fb05a69e47bbe6c4be4dbffe480b385f15902e'],
+  ['summary-partial-omitted.json', 'report-partial-omitted.json', '167150c3a2b95b3608a0a2361db8ca24874a10e6d2b74df37537fcff66390895', '9cd361d79c93e40ddb57b0043c201fea0090836c500dd726849d055ec6b5efe9'],
+  ['summary-violation.json', 'report-violation.json', '9afe3ff3d307dbb193050269b595ffbe2ac5e7e37e35ab3caf62c59e76c0b4c1', '530c1c822d56ad151a8d9c17bc39b6c9a8c5ad6d103699af01917319e8e54139'],
+] as const
+
+async function fixture<T>(name: string): Promise<T> {
+  return JSON.parse(await readFile(new URL(`./fixtures/s14-saved-display/${name}`, import.meta.url), 'utf8')) as T
+}
+function detail(summary: AuditSummary, report: unknown, id = '00000000-0000-4000-8000-000000000001'): AuditDetail {
+  return { delivery_id: id, scan_at: '2026-11-16T12:01:00Z', received_at: '2026-11-16T12:02:00Z', ingestion_source: 'worker', summary, report } as AuditDetail
+}
+
+describe('receiver-verified schema 4 semantics', () => {
+  it('selects the supported summary version and leaves legacy or missing summaries alone', () => {
+    expect(semanticsSupport(undefined)).toBe('none')
+    expect(semanticsSupport({ schema_version: 2 } as AuditSummary)).toBe('legacy')
+    expect(semanticsSupport({ schema_version: 4, summary_version: SCHEMA4_SUMMARY_VERSION } as AuditSummary)).toBe('schema4-summary5')
+    expect(semanticsSupport({ schema_version: 4, summary_version: 6 } as AuditSummary)).toBe('schema4-unsupported')
+    expect(semanticsSupport({ schema_version: 4 } as AuditSummary)).toBe('schema4-unsupported')
+  })
+
+  it('classifies a rule clean only when its verified population was reproduced', () => {
+    expect(ruleClaim({ coverage: 'complete_verified', reported_findings: 0 })).toBe('verified-clean')
+    expect(ruleClaim({ coverage: 'complete_verified', reported_findings: 2 })).toBe('findings-observed')
+    expect(ruleClaim({ coverage: 'unknown_partial', reported_findings: 0 })).toBe('unverified')
+    expect(ruleClaim(undefined)).toBe('unverified')
+    expect(ruleClaimLabels.unverified).toMatch(/absence is not a pass/)
+  })
+
+  it('keeps observation, advisory, violation and unknown counts distinct', () => {
+    const rows = recordCounts({ observation: 3, advisory_triggered: 2, violation: 1, unknown: 4 })
+    expect(rows.map(row => row.key)).toEqual(['observation', 'advisory_triggered', 'advisory_not_triggered', 'violation', 'no_violation', 'not_applicable', 'unknown'])
+    expect(rows.find(row => row.key === 'observation')?.count).toBe(3)
+    expect(rows.find(row => row.key === 'violation')?.count).toBe(1)
+    // An omitted receiver key is unavailable, never a reported zero.
+    expect(rows.find(row => row.key === 'no_violation')?.count).toBeNull()
+    expect(recordCounts(undefined).every(row => row.count === null)).toBe(true)
+  })
+
+  it('summarises per-rule claim totals without turning absence into a clean site', () => {
+    expect(ruleClaimTotals({ a: { coverage: 'complete_verified', reported_findings: 0 }, b: { coverage: 'complete_verified', reported_findings: 1 }, c: { coverage: 'unknown_partial', reported_findings: 0 } }))
+      .toEqual({ rules: 3, verified: 1, findings: 1, unknown: 1 })
+    expect(auditCoverageLabel('complete_verified')).toBe('Complete verified')
+    expect(auditCoverageLabel('unknown_partial')).toBe('Partial or unknown')
+    expect(auditCoverageLabel(undefined)).toBe('Unavailable')
+  })
+
+  it('reports no verified population when the rule_coverage map is absent or empty', () => {
+    // The panel gates its all-clean sentence on a nonempty verified population,
+    // so absent coverage must not look like every rule verified clean.
+    expect(ruleClaimTotals(undefined)).toEqual({ rules: 0, verified: 0, findings: 0, unknown: 0 })
+    expect(ruleClaimTotals({})).toEqual({ rules: 0, verified: 0, findings: 0, unknown: 0 })
+  })
+})
+
+describe('saved schema 4 details generated by the receiver', () => {
+  it('accepts the reviewer-approved complete-verified example with sparse severities', async () => {
+    const summary = await fixture<AuditSummary>('summary-complete-verified.json')
+    const report = await fixture<unknown>('report-complete-verified.json')
+    const value = detail(summary, report)
+    expect(isSavedDetail(value, value.delivery_id)).toBe(true)
+    expect(summary.severities.critical).toBeUndefined()
+    expect(auditValue({ summary } as AuditRun, 'critical')).toBe(0)
+    expect(summary.audit_coverage).toBe('complete_verified')
+    expect(ruleClaimTotals(summary.rule_coverage)).toEqual({ rules: 88, verified: 82, findings: 6, unknown: 0 })
+  })
+
+  it('keeps mixed per-rule coverage partial instead of inferring clean', async () => {
+    const summary = await fixture<AuditSummary>('summary-partial-mixed.json')
+    const report = await fixture<unknown>('report-partial-mixed.json')
+    const value = detail(summary, report, '00000000-0000-4000-8000-000000000002')
+    expect(isSavedDetail(value, value.delivery_id)).toBe(true)
+    expect(summary.audit_coverage).toBe('unknown_partial')
+    const totals = ruleClaimTotals(summary.rule_coverage)
+    expect(totals.verified).toBeGreaterThan(0)
+    expect(totals.unknown).toBeGreaterThan(0)
+  })
+
+  it('keeps omitted records and observations explicit and unknown', async () => {
+    const summary = await fixture<AuditSummary>('summary-partial-omitted.json')
+    const report = await fixture<unknown>('report-partial-omitted.json')
+    const value = detail(summary, report, '00000000-0000-4000-8000-000000000004')
+    expect(isSavedDetail(value, value.delivery_id)).toBe(true)
+    expect(summary.omitted_records).toBeGreaterThan(0)
+    expect(summary.omitted_observations).toBeGreaterThan(0)
+    expect(ruleClaimTotals(summary.rule_coverage).verified).toBe(0)
+  })
+
+  it('accepts a generated violation example and separates advisory from violation counts', async () => {
+    const summary = await fixture<AuditSummary>('summary-violation.json')
+    const report = await fixture<unknown>('report-violation.json')
+    const value = detail(summary, report, '00000000-0000-4000-8000-000000000003')
+    expect(isSavedDetail(value, value.delivery_id)).toBe(true)
+    expect(summary.record_counts?.violation).toBeGreaterThan(0)
+    expect(summary.record_counts?.advisory_triggered).toBeGreaterThan(0)
+    // The full audit is unknown, so no rule may be rendered as verified clean.
+    expect(ruleClaimTotals(summary.rule_coverage).verified).toBe(0)
+  })
+
+  it('keeps an unknown future summary version loadable but unsupported', async () => {
+    const summary = await fixture<AuditSummary>('summary-complete-verified.json')
+    const report = await fixture<unknown>('report-complete-verified.json')
+    const future = { ...summary, summary_version: SCHEMA4_SUMMARY_VERSION + 1 }
+    const value = detail(future, report)
+    expect(isSavedDetail(value, value.delivery_id)).toBe(true)
+    expect(semanticsSupport(future)).toBe('schema4-unsupported')
+  })
+
+  it('rejects malformed schema 4 receiver fields', async () => {
+    const summary = await fixture<AuditSummary>('summary-complete-verified.json')
+    const report = await fixture<unknown>('report-complete-verified.json')
+    const bad = (overrides: Record<string, unknown>) => detail({ ...summary, ...overrides } as unknown as AuditSummary, report)
+    for (const [name, value] of [
+      ['rule_coverage', { rule: { coverage: 'complete_verified' } }],
+      ['record_counts', { observation: 'many' }],
+      ['pages', { checked: 'many', html: 1, images: 0, http_errors: 0, fetch_errors: 0 }],
+      ['outcome', 5],
+    ] as const) {
+      const saved = bad({ [name]: value })
+      expect(isSavedDetail(saved, saved.delivery_id), name).toBe(false)
+    }
+  })
+
+  it('validates the retained source binding stored beside the summary', async () => {
+    const summary = await fixture<AuditSummary>('summary-complete-verified.json')
+    const report = await fixture<unknown>('report-complete-verified.json')
+    const value = { ...detail(summary, report), source_sha256: 'sha256:2443936d93da699595bdb135995e3d1d1503b96d973f5be4f3b82d9f243f4342', source_bytes: 26567 }
+    expect(isSavedDetail(value, value.delivery_id)).toBe(true)
+    expect(isSavedDetail({ ...value, source_sha256: 5 }, value.delivery_id)).toBe(false)
+    expect(isSavedDetail({ ...value, source_bytes: '26567' }, value.delivery_id)).toBe(false)
+  })
+
+  it('validates the retained summary text and binding stored beside the parsed summary', async () => {
+    const summary = await fixture<AuditSummary>('summary-complete-verified.json')
+    const report = await fixture<unknown>('report-complete-verified.json')
+    const value = { ...detail(summary, report), summary_text: '{"summary_version":5}', summary_sha256: '284b0faac82212ed6283faf51c839a8d5e25b71fd581cd278b319458e2eb5b4d', summary_bytes: 7867 }
+    expect(isSavedDetail(value, value.delivery_id)).toBe(true)
+    expect(isSavedDetail({ ...value, summary_text: 5 }, value.delivery_id)).toBe(false)
+    expect(isSavedDetail({ ...value, summary_sha256: 5 }, value.delivery_id)).toBe(false)
+    expect(isSavedDetail({ ...value, summary_bytes: '7867' }, value.delivery_id)).toBe(false)
+    // Absent text stays valid so the UI can label the reconstruction explicitly.
+    expect(isSavedDetail({ ...value, summary_text: undefined }, value.delivery_id)).toBe(true)
+  })
+})
+
+describe('retained summary text and retained report exports', () => {
+  it('exports the exact receiver summary text and matches the pinned summary digest', async () => {
+    for (const [summaryName, , summarySha] of pinnedSummaries) {
+      const summary = await fixture<AuditSummary>(summaryName)
+      const text = await readFile(new URL(`./fixtures/s14-saved-display/${summaryName}`, import.meta.url), 'utf8')
+      const exported = summaryExport({ summary, summary_text: text })
+      expect(exported.exact).toBe(true)
+      expect(exported.reason).toBeNull()
+      expect(exported.text).toBe(text)
+      expect(sha256(exported.text)).toBe(summarySha)
+      expect(await sha256Hex(exported.text)).toBe(summarySha)
+      expect(sha256Matches(await sha256Hex(exported.text), `sha256:${summarySha}`)).toBe(true)
+    }
+  })
+
+  it('does not treat a JSONB-reordered parsed summary as the receiver bytes', async () => {
+    const text = await readFile(new URL('./fixtures/s14-saved-display/summary-native-e2e.json', import.meta.url), 'utf8')
+    const reordered = await readFile(new URL('./fixtures/s14-saved-display/summary-native-e2e.jsonb.json', import.meta.url), 'utf8')
+    const summary = JSON.parse(reordered) as AuditSummary
+    const reconstructed = JSON.stringify(summary)
+    expect(reconstructed).not.toBe(text)
+    expect(sha256(reconstructed)).not.toBe('f55ee1b3390b05a33e2001dd7b3f5891e099698d331942b9e56bf0e68c9c5b27')
+    const exported = summaryExport({ summary, summary_text: text })
+    expect(exported.exact).toBe(true)
+    expect(exported.text).toBe(text)
+    expect(sha256(exported.text)).toBe('f55ee1b3390b05a33e2001dd7b3f5891e099698d331942b9e56bf0e68c9c5b27')
+  })
+
+  it('labels a summary serialization as reconstructed when retained text is absent or invalid', async () => {
+    const summary = await fixture<AuditSummary>('summary-complete-verified.json')
+    const absent = summaryExport({ summary })
+    expect(absent.exact).toBe(false)
+    expect(absent.reason).toBe('absent')
+    expect(absent.text).toBe(JSON.stringify(summary))
+    const invalid = summaryExport({ summary, summary_text: 'not json' })
+    expect(invalid.exact).toBe(false)
+    expect(invalid.reason).toBe('invalid')
+    expect(invalid.text).toBe(JSON.stringify(summary))
+  })
+
+  it('exports the exact retained report bytes and matches the source digest', async () => {
+    for (const [, reportName, , reportSha] of pinnedSummaries) {
+      const rawReport = await readFile(new URL(`./fixtures/s14-saved-display/${reportName}`, import.meta.url), 'utf8')
+      const exported = reportExport({ report: JSON.parse(rawReport), report_json: rawReport })
+      expect(exported.exact).toBe(true)
+      expect(exported.text).toBe(rawReport)
+      expect(sha256(exported.text)).toBe(reportSha)
+      expect(await sha256Hex(exported.text)).toBe(reportSha)
+      expect(sha256Matches(await sha256Hex(exported.text), `sha256:${reportSha}`)).toBe(true)
+    }
+  })
+
+  it('labels a reconstructed report export that cannot match the retained digest', async () => {
+    const reportSha = '2443936d93da699595bdb135995e3d1d1503b96d973f5be4f3b82d9f243f4342'
+    const parsed = await fixture<unknown>('report-complete-verified.json')
+    const exported = reportExport({ report: parsed })
+    expect(exported.exact).toBe(false)
+    expect(sha256(exported.text)).not.toBe(reportSha)
+    expect(sha256Matches(await sha256Hex(exported.text), `sha256:${reportSha}`)).toBe(false)
+  })
+
+  it('distinguishes an unavailable digest computation from an observed mismatch', () => {
+    // No stored binding is a distinct state from a binding we could not compute.
+    expect(digestStatus('abc', undefined)).toBe('no-binding')
+    expect(digestStatus('abc', null)).toBe('no-binding')
+    expect(digestStatus(null, 'sha256:abc')).toBe('unavailable')
+    expect(digestStatus(undefined, 'abc')).toBe('unavailable')
+    expect(digestStatus('ABC', 'sha256:abc')).toBe('match')
+    expect(digestStatus('abc', 'sha256:def')).toBe('mismatch')
+    // The boolean view stays null for both non-comparison states.
+    expect(sha256Matches('abc', undefined)).toBeNull()
+    expect(sha256Matches(null, 'sha256:abc')).toBeNull()
+    expect(sha256Matches(undefined, 'abc')).toBeNull()
+    expect(sha256Matches('ABC', 'sha256:abc')).toBe(true)
+    expect(sha256Matches('abc', 'sha256:def')).toBe(false)
+  })
+})
+
+describe('sparse schema-4 severity contract is render-safe', () => {
+  it('shows zero for an omitted severity key and a gap for a missing severity map', () => {
+    const summary = { schema_version: 4, summary_version: 5, severities: { alert: 2 } } as unknown as AuditSummary
+    expect(severityCount(summary, 'critical')).toBe(0)
+    expect(auditValue({ summary } as AuditRun, 'critical')).toBe(0)
+    expect(severityCount(summary, 'alert')).toBe(2)
+    const noMap = { schema_version: 4, summary_version: 5 } as unknown as AuditSummary
+    expect(severityCount(noMap, 'critical')).toBe(0)
+    expect(severityCount(undefined, 'warning')).toBe(0)
+    // The map itself is absent: unknown, so the trend leaves a gap.
+    expect(auditValue({ summary: noMap } as AuditRun, 'critical')).toBeNull()
+  })
+
+  it('rejects a v5 summary without severities but keeps an unsupported future version loadable', async () => {
+    const report = await fixture<unknown>('report-complete-verified.json')
+    const summary = await fixture<AuditSummary>('summary-complete-verified.json')
+    const noMap = { ...summary } as Record<string, unknown>
+    delete noMap.severities
+    const value = detail(noMap as unknown as AuditSummary, report)
+    expect(isSavedDetail(value, value.delivery_id)).toBe(false)
+    expect(auditPoints([{ ...value, summary: noMap as unknown as AuditSummary }], 'critical')[0]?.value).toBeNull()
+    // A future version still loads its base shape so the panel can say it is unsupported.
+    const future = { ...summary, summary_version: SCHEMA4_SUMMARY_VERSION + 1 } as Record<string, unknown>
+    delete future.severities
+    const futureValue = detail(future as unknown as AuditSummary, report)
+    expect(isSavedDetail(futureValue, futureValue.delivery_id)).toBe(true)
+  })
+})
+
+describe('legacy saved summary contract is preserved', () => {
+  it('still requires all three severities for schemas 1 and 2', () => {
+    const report = { schema_version: 2, request: {}, pages: [], findings: [] }
+    const base = { schema_version: 2, outcome: 'completed', pages: { checked: 1, html: 1, images: 0, http_errors: 0, fetch_errors: 0 } }
+    const complete = detail({ ...base, severities: { critical: 0, alert: 0, warning: 0 } } as unknown as AuditSummary, report)
+    const sparse = detail({ ...base, severities: { critical: 0, alert: 0 } } as unknown as AuditSummary, report)
+    expect(isSavedDetail(complete, complete.delivery_id)).toBe(true)
+    expect(isSavedDetail(sparse, sparse.delivery_id)).toBe(false)
+    expect(semanticsSupport({ ...base, severities: { critical: 0, alert: 0, warning: 0 } } as AuditSummary)).toBe('legacy')
+  })
+})
+
+describe('trend points for schema-4 runs with omitted severity keys', () => {
+  const v5 = (id: string, severities: Record<string, number>): AuditRun => ({
+    delivery_id: id, scan_at: `2026-11-${id}T00:00:00Z`,
+    summary: { schema_version: 4, summary_version: 5, finished_at: `2026-11-${id}T00:01:00Z`, findings: 1, pages: { checked: 10 }, severities },
+  } as unknown as AuditRun)
+  it('plots a zero-critical run as 0, not as a gap', () => {
+    const runs = [v5('10', { warning: 1 }), v5('11', { warning: 1 }), v5('12', { critical: 2, warning: 1 })]
+    expect(auditPoints(runs, 'critical').map(p => p.value)).toEqual([0, 0, 2])
+    expect(auditPoints(runs, 'alert').map(p => p.value)).toEqual([0, 0, 0])
+    expect(auditPoints(runs, 'warning').map(p => p.value)).toEqual([1, 1, 1])
+  })
+})
+
+describe('schema-4 summary v5 required fields', () => {
+  it('rejects a v5 summary that omits required receiver fields', async () => {
+    const report = await fixture<unknown>('report-complete-verified.json')
+    const summary = await fixture<AuditSummary>('summary-complete-verified.json')
+    for (const key of ['record_counts', 'severities', 'started_at', 'finished_at', 'engine_version', 'ruleset_version', 'findings']) {
+      const broken = { ...summary } as Record<string, unknown>
+      delete broken[key]
+      const value = detail(broken as unknown as AuditSummary, report)
+      expect(isSavedDetail(value, value.delivery_id), key).toBe(false)
+    }
+  })
+
+  it('rejects a v5 record_counts map that omits a receiver key', async () => {
+    const report = await fixture<unknown>('report-complete-verified.json')
+    const summary = await fixture<AuditSummary>('summary-complete-verified.json')
+    for (const key of recordCountRows.map(row => row.key)) {
+      const counts = { ...summary.record_counts } as Record<string, unknown>
+      delete counts[key]
+      const value = detail({ ...summary, record_counts: counts } as unknown as AuditSummary, report)
+      expect(isSavedDetail(value, value.delivery_id), key).toBe(false)
+    }
+  })
+})

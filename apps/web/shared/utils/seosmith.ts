@@ -1,10 +1,28 @@
-import type { AuditRun, AuditFinding, AuditPage } from '../types/seosmith'
+import type { AuditRun, AuditFinding, AuditPage, AuditSummary, Severity } from '../types/seosmith'
 export type AuditMetric = 'findings' | 'critical' | 'alert' | 'warning' | 'checked' | 'http_errors' | 'rate'
 export const auditMetricLabels: Record<AuditMetric, string> = { findings: 'All findings', critical: 'Critical findings', alert: 'Alerts', warning: 'Warnings', checked: 'URLs checked', http_errors: 'HTTP errors', rate: 'Findings per 100 URLs' }
+// Schema version 5 keeps only the severities that occur, so a zero count may
+// be absent. An absent key is a reported zero, but an absent severity map is
+// unknown: the trend must leave a gap rather than draw a zero it never saw.
+export function severityCount(summary: AuditSummary | null | undefined, severity: Severity): number {
+  return summary?.severities?.[severity] ?? 0
+}
 export function auditValue(run: AuditRun, metric: AuditMetric): number | null {
   const s = run.summary
-  const value = metric === 'findings' ? s.findings : metric === 'rate' ? (s.pages.checked ? s.findings / s.pages.checked * 100 : null) : metric === 'checked' || metric === 'http_errors' ? s.pages[metric] : s.severities[metric]
+  const value = metric === 'findings' ? s.findings : metric === 'rate' ? (s.pages.checked ? s.findings / s.pages.checked * 100 : null) : metric === 'checked' || metric === 'http_errors' ? s.pages[metric] : s.severities ? severityCount(s, metric as Severity) : null
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
+export const evidenceSchema = (version: number | undefined) => version === 2 || version === 4
+// Evidence-path eligibility for the dashboard's compare button: equal evidence
+// schema (2/2 or 4/4, never 2/4) with matching comparison key, engine and ruleset.
+export function sameEvidenceScope(a: AuditRun, b: AuditRun): boolean {
+  return evidenceSchema(a.summary.schema_version) && a.summary.schema_version === b.summary.schema_version
+    && !!a.summary.comparison_key && a.summary.comparison_key === b.summary.comparison_key
+    && !!a.summary.engine_version && a.summary.engine_version === b.summary.engine_version
+    && !!a.summary.ruleset_version && a.summary.ruleset_version === b.summary.ruleset_version
+}
+export function canCompareRuns(a: AuditRun | null | undefined, b: AuditRun | null | undefined): boolean {
+  return !!(a && b && (comparable(a, b) || sameEvidenceScope(a, b)))
 }
 export function comparable(a: AuditRun, b: AuditRun): boolean {
   return [a, b].every(run => (run.summary.schema_version === 1 || run.summary.schema_version === 2)
