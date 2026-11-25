@@ -8,6 +8,9 @@ import textwrap
 workflow = (Path(__file__).resolve().parents[1] / 'workflows/forms-pr.yml').read_text()
 script = textwrap.dedent(workflow.split('        run: |\n', 1)[1].split('\n      - name: Test scope detector', 1)[0])
 required = [
+    'supabase/migrations/20261208000000_forms_notification_claim_fence.sql',
+    'supabase/tests/forms-delivery-claim-local.py',
+    'supabase/tests/forms-delivery-scoped-claim-local.py',
     'apps/web/app/components/FormsNotifications.vue',
     'apps/web/shared/utils/forms-notification-client.ts',
     'apps/web/tests/forms-notification-client.test.ts',
@@ -78,7 +81,7 @@ with tempfile.TemporaryDirectory(prefix='forms-ci-scope-') as temporary:
         missing = commit(f'delete {name}')
         check(base, missing, 1, '')
     # Notification-only edits on an incomplete checkout must fail, never skip.
-    for index, name in enumerate(required[:4]):
+    for index, name in enumerate(required[:7]):
         git('checkout', '-qB', f'notification-only-{index}', stale)
         put(name)
         changed = commit(f'notification-only {name}')
