@@ -1,4 +1,4 @@
-import { handle, run } from "./index.ts";
+import { admit, handle, run, validVerifyUrl } from "./index.ts";
 function equal(a: unknown, b: unknown) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
     throw new Error(`${JSON.stringify(a)} != ${JSON.stringify(b)}`);
@@ -31,6 +31,8 @@ Deno.test("sends from configured sender with visitor reply-to and records outcom
   });
   equal(result, { processed: true, state: "sent" });
   equal(message.ReplyTo, "customer@example.com");
+  equal(message.TrackLinks, "None");
+  equal(message.HtmlBody, undefined);
   equal(finished, "sent");
 });
 Deno.test("ambiguous provider failures remain uncertain", async () => {
@@ -131,6 +133,8 @@ Deno.test("verification contains a confirmation fragment and empty queue sends n
     ),
     true,
   );
+  equal(captured.TrackLinks, "None");
+  equal(captured.HtmlBody, undefined);
   let sends = 0;
   equal(
     await run({
@@ -159,4 +163,89 @@ Deno.test("known rejection is recorded as failed for owner retry", async () => {
   });
   equal(result, { processed: true, state: "failed" });
   equal(saved, "failed");
+});
+
+Deno.test("worker delivery requires explicit independent enablement before admission", async () => {
+  let calls = 0;
+  const deps = {
+    claim: () => {
+      calls++;
+      return Promise.resolve(null);
+    },
+    finish: () => {
+      calls++;
+      return Promise.resolve(true);
+    },
+    send: () => {
+      calls++;
+      return Promise.resolve("sent" as const);
+    },
+    sender: "sender@example.com",
+    verifyUrl: "https://htp.test/forms/confirm",
+  };
+  const config = {
+    enabled: "true",
+    base: "https://database.test",
+    service: "fixture",
+    postmark: "fixture",
+    secret: "fixture-secret",
+  };
+  const request = () =>
+    new Request("https://worker.test", {
+      method: "POST",
+      headers: { "x-htp-sync-secret": "fixture-secret" },
+    });
+  for (const enabled of ["", "false", "TRUE", "1", " true "]) {
+    const response = await admit(request(), { ...config, enabled }, deps);
+    equal(response.status, 503);
+    equal(await response.json(), { error: "delivery_disabled" });
+  }
+  equal(calls, 0);
+  for (
+    const verifyUrl of [
+      "https://htp.test/other",
+      "https://htp.test/forms/confirm#private",
+    ]
+  ) {
+    const response = await admit(request(), config, { ...deps, verifyUrl });
+    equal(response.status, 503);
+    equal(await response.json(), { error: "delivery_not_configured" });
+  }
+  equal(calls, 0);
+  equal(
+    (await admit(
+      new Request("https://worker.test", { method: "POST" }),
+      config,
+      deps,
+    )).status,
+    401,
+  );
+  equal(
+    (await admit(new Request("https://worker.test"), config, deps)).status,
+    405,
+  );
+  equal(calls, 0);
+  const response = await admit(request(), config, deps);
+  equal(response.status, 200);
+  equal(await response.json(), { processed: false });
+  equal(calls, 1);
+});
+
+Deno.test("confirmation target is an exact HTTPS route without credentials, query or fragment", () => {
+  equal(validVerifyUrl("https://htp.test/forms/confirm"), true);
+  for (
+    const value of [
+      "",
+      "https://",
+      "http://htp.test/forms/confirm",
+      "https://user:pass@htp.test/forms/confirm",
+      "https://htp.test/forms/confirm/",
+      "https://htp.test/forms/confirm?x=1",
+      "https://htp.test/forms/confirm?",
+      "https://htp.test/forms/confirm#token",
+      "https://htp.test/forms/confirm#",
+      "https://htp.test/other/../forms/confirm",
+      " https://htp.test/forms/confirm",
+    ]
+  ) equal(validVerifyUrl(value), false);
 });
