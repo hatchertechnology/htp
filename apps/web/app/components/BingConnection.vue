@@ -4,7 +4,13 @@ const { bing, bingReady, bingError } = ws
 const busy = ref(false)
 const error = ref('')
 const route = useRoute()
-const outcome = computed(() => ({ invalid_state: 'The Bing connection request expired. Try again.', denied: 'Bing access was not approved.', failed: 'Bing could not complete the connection. Try again.', connected: 'Bing connected. Daily collection will start shortly.' }[String(route.query.bing)] || ''))
+const outcome = computed(() => ({
+  invalid_state: 'The Bing connection request expired. Try again.',
+  denied: 'Bing access was not approved.',
+  failed: 'Bing could not complete the connection. Try again.',
+  connected: 'Bing connected. Daily collection will start shortly.',
+  stale_consent: 'The Bing connection changed while you were authorizing it. Start a new connection request.',
+}[String(route.query.bing)] || ''))
 async function connect() {
   busy.value = true; error.value = ''
   try { const result = await ws.request<{ url: string }>('/api/bing/connect', { method: 'POST' }); window.location.assign(result.url) }
