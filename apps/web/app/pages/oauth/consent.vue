@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import type { OAuthAuthorizationDetails } from '@supabase/supabase-js'
 import { authorizationId, consentRedirect, scopeDescription } from '#shared/utils/oauth'
+import { SIGN_IN_PATH } from '#shared/utils/public-routes'
 useHead({ title: 'Hatch · Approve app access', meta: [{ name: 'robots', content: 'noindex, nofollow' }] })
+definePageMeta({ layout: 'public' })
+const signInHref = computed(() => `${SIGN_IN_PATH}?redirect=${encodeURIComponent(route.fullPath)}`)
 const route = useRoute()
 const { user, ready } = useAuth()
 const { $supabase } = useNuxtApp()
@@ -50,13 +53,13 @@ async function decide(approve: boolean) {
 </script>
 
 <template>
-  <div class="page-heading"><h1>Approve app access</h1><p>Connect an AI agent to your Hatch account.</p></div>
-  <div class="connections-layout">
+  <div class="page-heading consent-heading"><h1>Approve app access</h1><p>Connect an AI agent to your Hatch account.</p></div>
     <section class="connection-settings surface oauth-consent" aria-labelledby="consent-heading">
       <h2 id="consent-heading">{{ details ? `${details.client.name || 'This app'} wants access` : 'Review this connection' }}</h2>
       <p v-if="!id" class="form-error" role="alert">This page needs a valid authorization request. Start the connection from your agent’s MCP settings.</p>
       <p v-else-if="!ready || loading" role="status">{{ loading ? 'Loading the app’s request…' : 'Checking your account…' }}</p>
       <p v-else-if="!user">Sign in to review the app and approve or deny its access. Your connection request will stay open here.</p>
+      <UButton v-if="ready && !user" :to="signInHref" size="lg">Sign in to review</UButton>
       <template v-if="details">
         <p>Only approve apps you recognize and trust. This app will act as <strong>{{ user?.email }}</strong>.</p>
         <ul class="oauth-permissions">
@@ -72,8 +75,6 @@ async function decide(approve: boolean) {
       <p v-if="error" class="form-error" role="alert">{{ error }}</p>
       <UButton v-if="error && user && id && !details" color="neutral" variant="outline" @click="load">Try again</UButton>
     </section>
-    <AccountPanel />
-  </div>
 </template>
 
 <style scoped>

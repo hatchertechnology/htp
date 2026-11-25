@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { createIndependentAuditClient } from '#shared/utils/independent-audit-client'
 import { compareIndependent, parseControlledCsv, CURRENT_SEMANTICS, PROVENANCE_FIELDS, normalizeProvenance, provenanceEntries, summarizeComparison, sourceByteLength } from '#shared/utils/independent-audit'
+import { formatInstant } from '#shared/utils/local-time'
 useHead({ title: 'Hatch · Independent audit comparisons' })
 const config = useRuntimeConfig().public
 const readOnly = config.rolloutComparisonsReadOnly === true
@@ -183,8 +184,7 @@ onBeforeUnmount(() => { generation++ })
     <p v-if="!comparisonEnabled" role="status">Independent audit comparisons are not available yet.</p>
     <p v-else-if="!ws.user.value">Sign in to access your websites.</p>
     <template v-else>
-      <label>Website <select v-model="ws.selectedId.value"><option v-for="site in ws.sites.value" :key="site.id" :value="site.id">{{ site.fqdn }}</option></select></label>
-      <p v-if="!ws.selected.value">Choose or add a website first.</p>
+      <p v-if="!ws.selected.value">Choose a website in the header, or add one on <NuxtLink to="/websites">Websites</NuxtLink>.</p>
       <template v-else>
         <p v-if="readOnly" role="status">Read-only: showing saved independent evidence and comparisons.</p>
         <template v-if="canWrite">
@@ -205,16 +205,16 @@ onBeforeUnmount(() => { generation++ })
         <button :disabled="busy || !exportFingerprint || deleteConfirmation !== 'DELETE INDEPENDENT EVIDENCE'" @click="deleteEvidence">Delete independent evidence</button>
         </template>
         <p v-if="readOnly && error" role="alert">{{ error }}</p>
-        <h2>Saved comparisons</h2><ul><li v-for="item in snapshots" :key="item.id"><button @click="openComparison(item)">{{ item.created_at }} · {{ item.fqdn }} · {{ item.semantics }}</button></li></ul><button v-if="snapshotCursor" @click="more('snapshots')">More comparisons</button>
+        <h2>Saved comparisons</h2><ul><li v-for="item in snapshots" :key="item.id"><button @click="openComparison(item)"><time :datetime="item.created_at" :title="item.created_at">{{ formatInstant(item.created_at) }}</time> · {{ item.fqdn }} · {{ item.semantics }}</button></li></ul><button v-if="snapshotCursor" @click="more('snapshots')">More comparisons</button>
         <h2>Saved evidence</h2>
         <p v-if="!imports.length">No independent imports found.</p>
-        <ul><li v-for="item in imports" :key="item.id"><button @click="choose(item.id)">{{ item.metadata?.filename || 'CSV import' }} · {{ item.fqdn }} · {{ item.created_at }}</button> · SHA-256 {{ item.source_sha256 }}</li></ul><button v-if="importCursor" @click="more('imports')">More imports</button>
+        <ul><li v-for="item in imports" :key="item.id"><button @click="choose(item.id)">{{ item.metadata?.filename || 'CSV import' }} · {{ item.fqdn }} · <time :datetime="item.created_at" :title="item.created_at">{{ formatInstant(item.created_at) }}</time></button> · SHA-256 {{ item.source_sha256 }}</li></ul><button v-if="importCursor" @click="more('imports')">More imports</button>
         <template v-if="selected">
           <h3>Source metadata</h3>
           <dl><template v-for="field in sourceProvenance" :key="field.key"><dt>{{ field.label }}</dt><dd>{{ field.value ?? 'Unknown / not provided' }}</dd></template></dl>
           <p>Original file: {{ selected.metadata?.filename || 'unnamed' }} · {{ sourceByteLength(selected.source_text) }} bytes · SHA-256 {{ selected.source_sha256 }}</p>
           <button @click="download">Download original CSV</button>
-          <template v-if="canWrite"><label>SEOsmith run <select v-model="run" @change="chooseRun"><option value="">Choose a run</option><option v-if="run && !runs.some(item => item.delivery_id === run)" :value="run">Saved run {{ run }}</option><option v-for="item in runs" :key="item.delivery_id" :value="item.delivery_id">{{ item.scan_at }} · {{ item.summary?.outcome }}</option></select></label><button v-if="runCursor" @click="more('runs')">More SEOsmith runs</button>
+          <template v-if="canWrite"><label>SEOsmith run <select v-model="run" @change="chooseRun"><option value="">Choose a run</option><option v-if="run && !runs.some(item => item.delivery_id === run)" :value="run">Saved run {{ run }}</option><option v-for="item in runs" :key="item.delivery_id" :value="item.delivery_id">{{ formatInstant(item.scan_at) }} · {{ item.summary?.outcome }}</option></select></label><button v-if="runCursor" @click="more('runs')">More SEOsmith runs</button>
           <label><input v-model="asserted" type="checkbox"> I verified this is the unmodified controlled SEOsmith 0.2.0 engine and 2026-11-01.1 ruleset. Version strings alone do not establish this.</label></template>
           <p v-else-if="report">Saved assertion: {{ asserted ? 'verified by the original author' : 'not asserted' }}.</p>
           <p>Only the two S15 metadata rules have a mapping. Other rules are unmapped; unavailable and partial evidence stays unknown. Differences may arise from scope, rendering, parsing, fetch results, thresholds or rule meaning.</p>

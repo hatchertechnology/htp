@@ -56,7 +56,8 @@ try {
   const deepLinks = [
     '/', '/websites', '/connections', '/guide', '/mcp', '/developer',
     '/independent-audits', '/forms/confirm?token=synthetic',
-    '/oauth/consent?authorization_id=synthetic',
+    '/oauth/consent?authorization_id=synthetic', '/sign-in?redirect=%2F',
+    '/forms',
   ]
   for (const path of deepLinks) {
     // Follow Cloudflare's html_handling redirect (e.g. /websites -> /websites/).
@@ -92,6 +93,9 @@ try {
   const consent = await get('/oauth/consent?authorization_id=synthetic')
   check('/oauth/* no-store', /no-store/.test(consent.headers.get('cache-control') || ''))
   check('/oauth/* noindex', /noindex/.test(consent.headers.get('x-robots-tag') || ''))
+  const signIn = await get('/sign-in', { redirect: 'follow' })
+  check('/sign-in no-store', /no-store/.test(signIn.headers.get('cache-control') || ''))
+  check('/sign-in no-referrer', /no-referrer/.test(signIn.headers.get('referrer-policy') || ''))
   check('frame denial on app routes', /DENY/i.test((await get('/websites/', { redirect: 'follow' })).headers.get('x-frame-options') || ''))
 
   // Read-only static hosting.
