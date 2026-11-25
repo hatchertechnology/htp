@@ -1,5 +1,6 @@
 //! Phase-one receiver skeleton. Inspection is not semantic validation or admission.
 //! No proof writer, DB adapter, capability, or acceptance authority is implemented.
+mod admission;
 mod advisories;
 mod bindings;
 pub mod budget;
@@ -15,6 +16,7 @@ pub mod roles;
 mod saved_summary;
 mod shape;
 
+pub use admission::{AdmissionError, AdmissionStage, Admitted, VALIDATOR_REVISION, admit};
 pub use advisories::check_scalar_advisories;
 pub use bindings::check_source_bindings;
 pub use compatibility::check_compatibility_findings;
