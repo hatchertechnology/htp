@@ -26,7 +26,7 @@ const urlHistorySelection = ref<{ entity_id: string; url: string } | null>(null)
 const urlHistoryBusy = ref(false), urlHistoryError = ref('')
 let urlHistoryGeneration = 0
 const urlDeltas = computed(() => urlHistory.value ? urlHistoryDeltas(urlHistory.value.items) : [])
-const observationIds = computed(() => { const result = new Map<AuditPage,string>(); const report=selected.value?.report; if (!report || report.schema_version !== 2 || report.evidence_contract?.version !== 1) return result; for (const o of report.evidence_contract.observations) { const m=o.source_locator.match(/^\/pages\/(0|[1-9][0-9]*)$/); const p=m ? report.pages[Number(m[1])] : undefined; if (p) result.set(p,o.entity_id) } return result })
+const observationIds = computed(() => { const result = new Map<AuditPage,string>(); const report=selected.value?.report; if (!report || (report.schema_version !== 2 && report.schema_version !== 4) || report.evidence_contract?.version !== 1) return result; for (const o of report.evidence_contract.observations) { const m=o.source_locator.match(/^\/pages\/(0|[1-9][0-9]*)$/); const p=m ? report.pages[Number(m[1])] : undefined; if (p) result.set(p,o.entity_id) } return result })
 const historyTransitions = computed(() => findingHistory.value ? indexedTransitions(findingHistory.value.items, findingHistory.value.has_more) : [])
 const historyFailures = computed(() => findingHistory.value?.items.filter(item => item.evidence_state === 'evaluated' && item.evaluation?.outcome === 'fail') ?? [])
 let historyGeneration = 0
@@ -35,7 +35,7 @@ const changes = ref<{ added: number; resolved: number; persistent: number; unver
 let comparisonGeneration = 0
 const summary = computed(() => selected.value?.summary)
 const findings = computed(() => selected.value?.report.findings ?? [])
-const findingEvaluations = computed(() => { const result = new Map<string,{entity_id:string;rule:string}>(); const report=selected.value?.report; if (report?.schema_version !== 2 || report.evidence_contract?.version !== 1) return result; for (const evaluation of report.evidence_contract.evaluations) if (evaluation.finding_key) result.set(evaluation.finding_key,{entity_id:evaluation.entity_id,rule:evaluation.rule}); return result })
+const findingEvaluations = computed(() => { const result = new Map<string,{entity_id:string;rule:string}>(); const report=selected.value?.report; if ((report?.schema_version !== 2 && report?.schema_version !== 4) || report.evidence_contract?.version !== 1) return result; for (const evaluation of report.evidence_contract.evaluations) if (evaluation.finding_key) result.set(evaluation.finding_key,{entity_id:evaluation.entity_id,rule:evaluation.rule}); return result })
 const ruleOptions = computed(() => [...new Set(findings.value.map(f => f.rule))].sort())
 const filtered = computed(() => findings.value.filter(f => (severity.value === 'all' || f.severity === severity.value) && (rule.value === 'all' || f.rule === rule.value) && `${f.url} ${f.rule} ${f.evidence}`.toLowerCase().includes(search.value.toLowerCase())).sort((a, b) => ['critical', 'alert', 'warning'].indexOf(a.severity) - ['critical', 'alert', 'warning'].indexOf(b.severity) || a.url.localeCompare(b.url)))
 const displayed = computed(() => filtered.value.slice((page.value - 1) * 50, page.value * 50))
@@ -44,12 +44,13 @@ const baselineOptions = computed(() => { const index = runs.value.findIndex(r =>
 const previous = computed(() => baselineOptions.value.find(r => r.delivery_id === baselineId.value) || baselineOptions.value[0])
 const canCompare = computed(() => {
   const a = selected.value, b = previous.value
-  return !!(a && b && (comparable(a, b) || (a.summary.schema_version === 2 && b.summary.schema_version === 2 && !!a.summary.comparison_key && a.summary.comparison_key === b.summary.comparison_key && !!a.summary.engine_version && a.summary.engine_version === b.summary.engine_version && !!a.summary.ruleset_version && a.summary.ruleset_version === b.summary.ruleset_version)))
+  return !!(a && b && (comparable(a, b) || (evidenceSchema(a.summary.schema_version) && a.summary.schema_version === b.summary.schema_version && !!a.summary.comparison_key && a.summary.comparison_key === b.summary.comparison_key && !!a.summary.engine_version && a.summary.engine_version === b.summary.engine_version && !!a.summary.ruleset_version && a.summary.ruleset_version === b.summary.ruleset_version)))
 })
 watch(() => [selected.value?.delivery_id, urlSearch.value, urlStatus.value], () => { urlPage.value = 1 })
 watch(() => [selected.value?.delivery_id, severity.value, rule.value, search.value], () => { page.value = 1 })
 watch(() => selected.value?.delivery_id, () => { rule.value = 'all'; urlHistoryGeneration++; urlHistory.value = null; urlHistorySelection.value = null; urlHistoryError.value = ''; urlHistoryBusy.value = false; historyGeneration++; findingHistory.value = null; historySelection.value = null; historyError.value = ''; historyBusy.value = false; baselineId.value = ''; changes.value = null; lifecycle.value = null; comparisonError.value = ''; comparisonGeneration++; comparisonBusy.value = false })
 onBeforeUnmount(() => { comparisonGeneration++; historyGeneration++; urlHistoryGeneration++ })
+const evidenceSchema = (version: number | undefined) => version === 2 || version === 4
 function stamp(value: string) { return formatInstant(value) }
 function label(value: string) { return value.replaceAll('_', ' ') }
 function displayEvidence(value: unknown) { const text = JSON.stringify(value) ?? 'Unavailable'; return text.length > 500 ? text.slice(0, 500) + '… (truncated; see source report)' : text }
@@ -61,11 +62,11 @@ async function compareRuns() {
   try {
     const detail = await ws.request<AuditDetail>(`/api/websites/${ws.selectedId.value}/seo/audits/${older.delivery_id}`)
     const selectedIndex = runs.value.findIndex(r => r.delivery_id === current.delivery_id)
-    const earlier = current.summary.schema_version === 2 ? runs.value.slice(selectedIndex + 1, selectedIndex + 10) : []
+    const earlier = evidenceSchema(current.summary.schema_version) ? runs.value.slice(selectedIndex + 1, selectedIndex + 10) : []
     const history: AuditDetail[] = []
     // Stop at the first incompatible report; do not bridge gaps in comparable history.
     for (const run of earlier) {
-      if (run.summary.schema_version !== 2 || run.summary.comparison_key !== current.summary.comparison_key || run.summary.engine_version !== current.summary.engine_version || run.summary.ruleset_version !== current.summary.ruleset_version) break
+      if (run.summary.schema_version !== current.summary.schema_version || run.summary.comparison_key !== current.summary.comparison_key || run.summary.engine_version !== current.summary.engine_version || run.summary.ruleset_version !== current.summary.ruleset_version) break
       history.unshift(run.delivery_id === older.delivery_id ? detail : await ws.request<AuditDetail>(`/api/websites/${ws.selectedId.value}/seo/audits/${run.delivery_id}`))
     }
     if (gen === comparisonGeneration) {
@@ -123,7 +124,7 @@ function download() {
         <p v-if="summary.coverage_complete === false" class="form-notice" role="status">This run has incomplete coverage: {{ label(summary.stop_reason || summary.outcome) }}. Missing findings do not mean issues were fixed.</p>
         <p v-else-if="summary.coverage_complete == null" class="form-notice" role="status">Coverage for this run is unknown. Missing findings do not mean issues were fixed.</p>
         <p class="report-caption"><time :datetime="selected.scan_at" :title="selected.scan_at">{{ stamp(selected.scan_at) }}</time> · {{ summary.outcome }} · {{ summary.pages.html }} successful HTML pages · {{ summary.pages.images }} images · {{ summary.pages.fetch_errors }} fetch errors.<span>Engine {{ summary.engine_version || 'unknown' }} · Ruleset {{ summary.ruleset_version || 'unknown' }} · {{ selected.report.request.max_pages }}-URL cap · {{ selected.ingestion_source === 'import' ? 'Imported report' : 'Worker delivery' }} · Received <time :datetime="selected.received_at" :title="selected.received_at">{{ stamp(selected.received_at) }}</time>.</span></p>
-        <AuditCoverage :audit="selected" />
+        <AuditCoverage v-if="selected.report.schema_version !== 4 || selected.report.evidence_contract?.version === 1" :audit="selected" />
         <AuditSemantics :audit="selected" />
         <SeosmithRemediation v-if="remediationEnabled" :audit="selected" />
         <div class="seo-actions"><button class="refresh-control" @click="download">Download run JSON</button><label v-if="baselineOptions.length">Baseline <select v-model="baselineId" aria-label="Comparison baseline" @change="changes = null; lifecycle = null; comparisonError = ''; comparisonGeneration++; comparisonBusy = false"><option value="">Previous run</option><option v-for="run in baselineOptions" :key="run.delivery_id" :value="run.delivery_id">{{ stamp(run.scan_at) }} · {{ run.delivery_id }}</option></select></label><button v-if="canCompare" class="refresh-control" :disabled="comparisonBusy" @click="compareRuns">{{ comparisonBusy ? 'Comparing…' : 'Compare findings with baseline' }}</button></div>
