@@ -96,7 +96,8 @@ class Session:
         assert select.select([self.proc.stdout], [], [], 8)[0], 'session output timeout'
         line = self.proc.stdout.readline().strip()
         if not line:
-            raise AssertionError('session failed: ' + self.proc.stderr.read())
+            details = self.proc.stderr.read() if self.proc.poll() is not None else 'empty SQL result'
+            raise AssertionError('session failed: ' + details)
         return line
 
     def end(self):
