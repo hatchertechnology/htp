@@ -272,6 +272,9 @@ tbody tr:last-child td { border-bottom: 0; }
   .table-scroll { border: 1px solid var(--border); border-radius: 4px; }
   th:first-child, td:first-child { position: sticky; left: 0; background: #fff; z-index: 1; }
   table.has-selection th:nth-child(2), table.has-selection td:nth-child(2) { position: sticky; left: 34px; background: #fff; z-index: 1; }
-  .value-cell { max-width: 210px; }
+  /* Narrow screens scroll the table instead of squeezing the text columns
+     into mid-word wrapping; the sticky first column stays readable. */
+  table { min-width: 720px; }
+  .value-cell { min-width: 150px; max-width: 260px; }
 }
 </style>

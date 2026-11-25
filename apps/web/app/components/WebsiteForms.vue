@@ -492,6 +492,9 @@ watch(() => [auth.user.value?.id, auth.user.value?.is_anonymous, props.websiteId
 .forms-block { border-top: 1px solid var(--border); padding: 16px 0; }
 .forms-block:first-child { border-top: 0; }
 .forms-block form, .forms-block fieldset, .forms-field { display: grid; gap: 8px; }
+/* Primary actions keep a compact width inside the grid forms, matching the
+   sibling controls instead of stretching across the panel. */
+.forms-block form > button { justify-self: start; }
 .forms-block fieldset { border: 1px solid var(--border); padding: 12px; }
 .forms-block label { display: block; }
 .forms-block input:not([type=checkbox]), .forms-block select { border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; max-width: 100%; font-size: 14px; }

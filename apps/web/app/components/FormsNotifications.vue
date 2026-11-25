@@ -79,5 +79,5 @@ onMounted(() => read())
 </template>
 <style scoped>
 .forms-block { border-top: 1px solid var(--border); padding: 16px 0; margin-top: 16px; overflow-wrap: anywhere; }
-h4 { font-weight: 650; font-size: 19px; margin: 8px 0; } form { display: grid; gap: 8px; margin: 12px 0; } input { border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; max-width: 100%; } p { color: var(--muted); max-width: 70ch; } li { margin: 12px 0; } time { font-variant-numeric: tabular-nums; }
+h4 { font-weight: 650; font-size: 19px; margin: 8px 0; } form { display: grid; gap: 8px; margin: 12px 0; } form > button { justify-self: start; } input { border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; max-width: 100%; } p { color: var(--muted); max-width: 70ch; } li { margin: 12px 0; } time { font-variant-numeric: tabular-nums; }
 </style>

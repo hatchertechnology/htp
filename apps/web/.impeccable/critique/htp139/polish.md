@@ -28,23 +28,31 @@ zone America/New_York, zero page errors. Screenshots:
    paragraphs and section headings flush. Fixed with scoped spacing and an
    explicit empty state for the Saved comparisons list.
 
-## Findings — deferred to their owning part (fix requests, not B files)
+## Findings — reassigned to B after Part C retired (fixed in this pass)
 
-- **C (`app/components/WebsiteForms.vue`, `FormsNotifications.vue`):** the
-  "Create DNS challenge" and "Request verification" buttons render full
-  panel width while sibling actions ("Save form", "Reload notification
-  metadata") are compact — inconsistent control sizing on the Setup tab.
-- **C (`app/components/FormsSubmissionsTable.vue`):** at 390px the Name and
-  Email columns wrap mid-word ("Robi n Hatc her", "visit o r1@…"); give the
-  text columns a min-width so the horizontal scroll (which works well,
-  sticky first column) carries the wrapping instead.
-- **C/D (detector advisories, `detect.json`):** ten `design-system-font-size`
-  and two `design-system-color` advisories sit in `WebsiteForms.vue`,
-  `FormsNotifications.vue`, `FormsSubmissionsTable.vue` and
-  `pages/websites.vue`. The 11px/12px table sizes and the danger colors are
-  documented in DESIGN.md prose (11px column headings, pale rust danger
-  backgrounds); the 17px/19px steps match the documented "narrow report
-  headers 19–21px" and settings subtitle uses. Advisories only; no B action.
+- **Setup-tab button widths** (`app/components/WebsiteForms.vue`,
+  `app/components/FormsNotifications.vue`): the "Create DNS challenge" and
+  "Request verification" buttons rendered full panel width while sibling
+  actions ("Save form", "Reload notification metadata") were compact. Fixed
+  with a scoped `justify-self: start` for direct button children of the grid
+  forms — scoped styles only; no logic, gate or fetch change, and every Forms
+  gate expression stays byte-identical.
+- **390px submissions-table column wrapping**
+  (`app/components/FormsSubmissionsTable.vue`): the Name and Email columns
+  wrapped mid-word ("Robi n Hatc her", "visit o r1@…"). Fixed in the ≤650px
+  block with `table { min-width: 720px }` and a 150px floor on value cells, so
+  the working sticky-column horizontal scroll carries the rows instead.
+  Scoped styles only.
+
+## Findings — deferred (detector advisories, `detect.json`)
+
+- **D (`pages/websites.vue`):** two `design-system-color` advisories — the
+  danger-section outline `#e3c3b4` and copy `#943311`, which DESIGN.md prose
+  documents as the pale rust danger treatment. Advisories only; no action.
+- The remaining eight `design-system-font-size` advisories sit in the Forms
+  components and `pages/websites.vue` (11px/12px table sizes and 17/19px
+  steps), all matching documented DESIGN.md prose (11px column headings,
+  narrow report headers 19–21px). Advisories only; no action.
 
 ## Verified and unchanged
 
@@ -53,4 +61,9 @@ zone America/New_York, zero page errors. Screenshots:
   `tests/fixtures/check-shell-static.mjs` after the polish edits (both
   viewports, both artifacts).
 - No changes to Forms gate expressions, fetch builders or safety behaviour;
-  no edits to C- or D-owned files in this pass.
+  the two reassigned C fixes touch scoped styles only.
+- After the reassigned fixes: `npm test` 497/497, `typecheck` clean,
+  `check-forms-page.mjs` and `check-forms-table.mjs` PASS at both viewports,
+  the five existing static Forms fixtures and `fixture:forms:check` PASS,
+  `build:static` + `static:smoke` green, and `check-shell-static.mjs` green on
+  both artifacts. Evidence captures refreshed.
