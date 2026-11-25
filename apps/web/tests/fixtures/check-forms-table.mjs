@@ -80,11 +80,17 @@ try {
     }))
     assert.deepEqual(rowScores, [...rowScores].sort((a, b) => a - b))
 
-    // Status filter: spam only.
+    // Status filter: spam only. Clearing the last checked status keeps it
+    // applied, and the checkbox must snap back to match the filter.
     await page.getByRole('checkbox', { name: 'New', exact: true }).uncheck()
     await page.getByRole('checkbox', { name: 'Reviewed', exact: true }).uncheck()
     values = await statuses(page)
     assert.ok(values.length > 0 && values.every(value => value === 'spam'))
+    const spamBox = page.getByRole('checkbox', { name: 'Spam', exact: true })
+    await spamBox.click()
+    assert.equal(await spamBox.isChecked(), true, 'the last status checkbox remains checked')
+    values = await statuses(page)
+    assert.ok(values.length > 0 && values.every(value => value === 'spam'), 'spam remains the applied filter')
     await page.getByRole('checkbox', { name: 'New', exact: true }).check()
     await page.getByRole('checkbox', { name: 'Reviewed', exact: true }).check()
 

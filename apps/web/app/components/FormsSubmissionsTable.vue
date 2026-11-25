@@ -59,7 +59,12 @@ function hasStatus(status: SubmissionStatus): boolean {
   return query.value.statuses.includes(status)
 }
 function onStatusChange(status: SubmissionStatus, event: Event) {
-  toggleStatus(status, (event.target as HTMLInputElement).checked)
+  const input = event.target as HTMLInputElement
+  toggleStatus(status, input.checked)
+  // Removing the last status keeps that status applied. The DOM has already
+  // flipped the box, and the VDOM value did not change, so restore it directly
+  // to keep the checkbox state equal to the applied filter.
+  if (input.checked !== hasStatus(status)) input.checked = hasStatus(status)
 }
 function toggleStatus(status: SubmissionStatus, checked: boolean) {
   const current = new Set(query.value.statuses)
