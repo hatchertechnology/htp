@@ -29,13 +29,12 @@ begin
  -- presence or absence without adding any privilege in this migration.
  pilot_delete_grant := item.signature='public.delete_website_form_response(uuid,uuid,uuid)'
    and exists(select 1 from aclexplode(p.proacl) a where a.grantee='authenticated'::regrole);
- -- Managed Supabase defaults can grant service_role EXECUTE on trigger
- -- functions that have no worker call site. Preserve either exact profile.
+ -- Supabase's ambient default grants may be present on trigger and owner
+ -- routines. Only ingress and public confirmation require explicit worker grants.
  worker_grant := case
    when item.signature='public.forms_pilot_site_allowed(uuid)' then false
-   when item.signature in ('public.queue_form_response_notifications()','public.guard_website_form_deletion()')
-     then exists(select 1 from aclexplode(p.proacl) a where a.grantee='service_role'::regrole)
-   else true
+   when item.signature in ('public.accept_website_form(uuid,uuid,text,jsonb)','public.confirm_form_recipient(uuid,text)') then true
+   else exists(select 1 from aclexplode(p.proacl) a where a.grantee='service_role'::regrole)
  end;
  if (select count(*) from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner)))) <>
     1 + worker_grant::integer + pilot_delete_grant::integer
@@ -44,13 +43,13 @@ begin
    or (a.grantee not in ('postgres'::regrole,'service_role'::regrole)
        and not (pilot_delete_grant and a.grantee='authenticated'::regrole))
    or a.is_grantable or a.privilege_type<>'EXECUTE') then
- raise exception 'notification_producer_acl_drift'; end if;
+ raise exception 'notification_producer_acl_drift: %',item.signature; end if;
  foreach r in array array['anon','authenticated','service_role'] loop
  for reachable in select rolname from pg_roles where pg_has_role(r,oid,'MEMBER') loop
  if pg_has_role(reachable,'postgres','MEMBER') or has_function_privilege(reachable,p.oid,'EXECUTE') <>
    ((r='service_role' and worker_grant)
     or (r='authenticated' and pilot_delete_grant and reachable='authenticated')) then
- raise exception 'notification_producer_effective_acl_drift'; end if;
+ raise exception 'notification_producer_effective_acl_drift: %',item.signature; end if;
  end loop; end loop;
  end loop;
 end $guard$;
