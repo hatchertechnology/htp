@@ -49,19 +49,34 @@ const MAX_EVIDENCE_BYTES: usize = 1_048_576;
 /// The optional `evidence_contract` carries S01 evidence v1 only.
 ///
 /// # Errors
-/// Rejects evidence over `MAX_EVIDENCE_BYTES`, evidence that is not a JSON
-/// object, and any version other than 1. The evidence content is otherwise
-/// opaque here: the receiver crate does not interpret it, SQL does.
+/// Rejects evidence over `MAX_EVIDENCE_BYTES` (`Bounds`), evidence that is not
+/// a JSON object or carries no `version` (`Shape`), and any version other than
+/// the integer 1 (`UnsupportedSchema`). An explicit `null` reaches this check
+/// as a present member and is rejected here. The evidence content is otherwise
+/// opaque: the receiver crate does not interpret it, SQL does.
 fn check_evidence(evidence: &RawValue) -> Result<(), InspectionError> {
     if evidence.get().len() > MAX_EVIDENCE_BYTES {
         return Err(InspectionError::Bounds);
     }
     let parsed: serde_json::Value =
         serde_json::from_str(evidence.get()).map_err(|_| InspectionError::Shape)?;
-    if !parsed.is_object() || parsed.get("version") != Some(&serde_json::Value::from(1)) {
+    if !parsed.is_object() {
         return Err(InspectionError::Shape);
     }
-    Ok(())
+    match parsed.get("version") {
+        Some(version) if version.as_u64() == Some(1) => Ok(()),
+        Some(_) => Err(InspectionError::UnsupportedSchema),
+        None => Err(InspectionError::Shape),
+    }
+}
+/// Presence-preserving evidence decode. serde maps a JSON `null` onto
+/// `Option<&RawValue>` as `None`, which would silently downgrade a present but
+/// null `evidence_contract` to an absent one; wrapping the value keeps it
+/// `Some` so `check_evidence` rejects it.
+fn present_evidence<'de: 'a, 'a, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<&'a RawValue>, D::Error> {
+    <&'a RawValue as Deserialize<'de>>::deserialize(d).map(Some)
 }
 /// Admission stays fail-closed until independent full semantics are implemented.
 ///
@@ -134,8 +149,11 @@ struct Report<'a> {
     _finding_coverage: Option<&'a RawValue>,
     // Optional schema-4 evidence extension (S01 v1). Shape-checked here only;
     // it is opaque to this crate and excluded from the population comparison.
+    // `present_evidence` keeps an explicit `null` visible as `Some`, so a
+    // present member is never mistaken for an absent one.
     #[serde(default)]
     #[serde(borrow)]
+    #[serde(deserialize_with = "present_evidence")]
     evidence_contract: Option<&'a RawValue>,
 }
 #[derive(Deserialize, PartialEq)]

@@ -1,10 +1,11 @@
 //! E-r: the optional schema-4 `evidence_contract` extension.
 //!
 //! Shape-level contract only: absent evidence inspects, a v1 object inspects,
-//! and non-object, non-v1 or over-cap evidence is rejected. The evidence
+//! and null, non-object, non-v1 or over-cap evidence is rejected. The evidence
 //! content itself is opaque to this crate; SQL validates it on admission.
 use htp_s14_receiver::{InspectionError, inspect, validate_for_admission};
 use std::{
+    fmt::Write as _,
     fs,
     time::{Duration, Instant},
 };
@@ -44,12 +45,12 @@ fn evidence_of_len(target: usize) -> String {
         if i > 0 {
             s.push(',');
         }
-        s.push_str(&format!("\"k{i:05}\":0"));
+        write!(s, "\"k{i:05}\":0").unwrap();
         i += 1;
     }
     let pad = target - s.len() - 8;
     s.push(',');
-    s.push_str(&format!("\"p\":\"{}\"}}", "0".repeat(pad)));
+    write!(s, "\"p\":\"{}\"}}", "0".repeat(pad)).unwrap();
     assert_eq!(s.len(), target);
     s
 }
@@ -79,11 +80,24 @@ fn evidence_v1_object_inspects_and_leaves_the_rest_of_the_shape_alone() {
     ));
 }
 #[test]
+fn evidence_that_is_null_is_rejected_not_treated_as_absent() {
+    let raw = fixture("v4-candidate-complete.json");
+    let with = with_evidence(&raw, "null");
+    // A present `null` member is a shape fault, not a missing extension.
+    assert!(matches!(
+        inspect(&with, deadline()),
+        Err(InspectionError::Shape)
+    ));
+}
+#[test]
 fn evidence_that_is_not_an_object_is_rejected() {
     let raw = fixture("v4-candidate-complete.json");
     for evidence in ["[1,2]", "\"x\"", "42", "true"] {
         let with = with_evidence(&raw, evidence);
-        assert!(inspect(&with, deadline()).is_err(), "{evidence}");
+        assert!(
+            matches!(inspect(&with, deadline()), Err(InspectionError::Shape)),
+            "{evidence}"
+        );
     }
 }
 #[test]
@@ -92,13 +106,24 @@ fn evidence_version_must_be_exactly_one() {
     for evidence in [
         r#"{"version":2}"#,
         r#"{"version":0}"#,
-        r"{}",
         r#"{"version":"1"}"#,
         r#"{"version":1.0}"#,
     ] {
         let with = with_evidence(&raw, evidence);
-        assert!(inspect(&with, deadline()).is_err(), "{evidence}");
+        assert!(
+            matches!(
+                inspect(&with, deadline()),
+                Err(InspectionError::UnsupportedSchema)
+            ),
+            "{evidence}"
+        );
     }
+    // A missing version is a shape fault rather than an unsupported version.
+    let with = with_evidence(&raw, r"{}");
+    assert!(matches!(
+        inspect(&with, deadline()),
+        Err(InspectionError::Shape)
+    ));
 }
 #[test]
 fn evidence_over_the_cap_is_rejected() {
