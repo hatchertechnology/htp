@@ -54,6 +54,53 @@ struct Pending {
     state: String,
     verifier: String,
     until: i64,
+    fence: ConsentFence,
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct ConsentFence {
+    epoch: uuid::Uuid,
+    generation: Option<uuid::Uuid>,
+}
+async fn consent_rpc(config: &Config, operation: &str, body: Value) -> Option<Value> {
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(15))
+        .build()
+        .ok()?;
+    let mut response = client
+        .post(format!("{}/rest/v1/rpc/{operation}", config.project))
+        .header("apikey", &config.service)
+        .bearer_auth(&config.service)
+        .json(&body)
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if bytes.len() + chunk.len() > 65536 {
+            return None;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).ok()
+}
+const OWNER_PENDING_LIMIT: usize = 8;
+fn insert_pending(
+    tickets: &mut HashMap<String, Pending>,
+    ticket: String,
+    pending: Pending,
+) -> bool {
+    tickets.retain(|_, p| p.until > now());
+    if tickets.len() >= 1024
+        || tickets.values().filter(|p| p.user == pending.user).count() >= OWNER_PENDING_LIMIT
+    {
+        return false;
+    }
+    tickets.insert(ticket, pending);
+    true
 }
 fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|s| !s.is_empty())
@@ -165,7 +212,19 @@ async fn connect(
     if !body.is_empty() {
         return private(StatusCode::BAD_REQUEST.into_response());
     }
+    // Never hold the process ledger lock across database I/O. Concurrent issuance
+    // is bounded by the final locked insertion, including in-flight snapshots.
+    let Some(fence) = consent_rpc(
+        config,
+        "begin_provider_consent",
+        json!({"p_owner_id":user.id,"p_provider":name}),
+    )
+    .await
+    .and_then(|v| serde_json::from_value::<ConsentFence>(v).ok()) else {
+        return held();
+    };
     let pending = Pending {
+        fence,
         user: user.id.to_string(),
         provider: name.clone(),
         state: random(),
@@ -174,11 +233,9 @@ async fn connect(
     };
     let ticket = random();
     let mut tickets = oauth.tickets.lock().unwrap();
-    tickets.retain(|_, p| p.until > now());
-    if tickets.len() >= 1024 {
+    if !insert_pending(&mut tickets, format!("ticket:{ticket}"), pending) {
         return held();
     }
-    tickets.insert(format!("ticket:{ticket}"), pending);
     private(
         Json(json!({"url":format!("{}/auth/{name}/start?ticket={ticket}", config.api)}))
             .into_response(),
@@ -230,11 +287,16 @@ async fn start(
     if params.len() != 1 {
         return private(StatusCode::BAD_REQUEST.into_response());
     }
-    let pending = params
-        .get("ticket")
-        .and_then(|t| oauth.tickets.lock().unwrap().remove(&format!("ticket:{t}")));
-    let Some(pending) = pending.filter(|p| p.until > now() && p.provider == name) else {
-        return private(StatusCode::BAD_REQUEST.into_response());
+    let pending = {
+        let mut tickets = oauth.tickets.lock().unwrap();
+        let pending = params
+            .get("ticket")
+            .and_then(|t| tickets.remove(&format!("ticket:{t}")));
+        let Some(pending) = pending.filter(|p| p.until > now() && p.provider == name) else {
+            return private(StatusCode::BAD_REQUEST.into_response());
+        };
+        tickets.insert(format!("state:{}", pending.state), pending.clone());
+        pending
     };
     let mut url = reqwest::Url::parse(if name == "google" {
         "https://accounts.google.com/o/oauth2/v2/auth"
@@ -268,11 +330,6 @@ async fn start(
             ),
         ]);
     }
-    oauth
-        .tickets
-        .lock()
-        .unwrap()
-        .insert(format!("state:{}", pending.state), pending.clone());
     let Ok(sealed) = seal(
         &serde_json::to_value(pending).unwrap(),
         &settings.key,
@@ -433,10 +490,7 @@ async fn exchange(
         } else {
             "https://www.bing.com/webmasters/oauth/token"
         },
-        &format!(
-            "{}/rest/v1/{name}_connections?on_conflict=owner_id",
-            config.project
-        ),
+        &format!("{}/rest/v1/rpc/complete_provider_consent", config.project),
     )
     .await
 }
@@ -540,20 +594,33 @@ async fn exchange_at(
     if grant.len() > 8192 {
         return None;
     } // Legacy unseal consumers enforce this bound.
-    let mut row = json!({"owner_id":pending.user,"generation":uuid::Uuid::new_v4(),"status":"connected","encrypted_grant":grant,"updated_at":chrono::Utc::now().to_rfc3339()});
-    if name == "google" {
-        row["scopes"] = json!(scopes);
-    }
+    let row = json!({"p_owner_id":pending.user,"p_provider":name,
+        "p_epoch":pending.fence.epoch,"p_generation":pending.fence.generation,
+        "p_encrypted_grant":grant,"p_scopes":scopes});
     let response = client
         .post(store_url)
         .header("apikey", &config.service)
         .bearer_auth(&config.service)
-        .header("prefer", "resolution=merge-duplicates,return=minimal")
         .json(&row)
         .send()
         .await
         .ok()?;
-    response.status().is_success().then_some("connected")
+    if !response.status().is_success() {
+        return None;
+    }
+    let mut response = response;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if bytes.len() + chunk.len() > 64 {
+            return None;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    if serde_json::from_slice::<bool>(&bytes).ok()? {
+        Some("connected")
+    } else {
+        Some("stale_consent")
+    }
 }
 
 #[cfg(test)]
@@ -581,6 +648,29 @@ mod tests {
             })),
             ..OAuth::default()
         }
+    }
+    async fn online_fixture() -> OAuth {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/rest/v1/rpc/begin_provider_consent",
+                    post(|headers: HeaderMap, Json(body): Json<Value>| async move {
+                        assert_eq!(headers["authorization"], "Bearer synthetic-service");
+                        assert_eq!(body["p_owner_id"], uuid::Uuid::from_u128(1).to_string());
+                        assert!(["google", "bing"].contains(&body["p_provider"].as_str().unwrap()));
+                        Json(json!({"epoch":uuid::Uuid::from_u128(9),"generation":null}))
+                    }),
+                ),
+            )
+            .await
+            .unwrap();
+        });
+        let mut oauth = fixture();
+        Arc::make_mut(oauth.config.as_mut().unwrap()).project = base;
+        oauth
     }
     fn app(oauth: &OAuth) -> Router {
         oauth
@@ -656,6 +746,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(pending.user, uuid::Uuid::from_u128(1).to_string());
+        assert_eq!(pending.fence.epoch, uuid::Uuid::from_u128(9));
+        assert!(pending.fence.generation.is_none());
         if name == "google" {
             assert_eq!(params["code_challenge_method"], "S256");
             assert_eq!(
@@ -686,7 +778,7 @@ mod tests {
     #[tokio::test]
     async fn browser_binding_denial_and_replay_are_local() {
         for name in ["google", "bing"] {
-            let oauth = fixture();
+            let oauth = online_fixture().await;
             let (cookie, state, _) = begin(&oauth, name).await;
             for (cookies, query, expected) in [
                 (
@@ -820,6 +912,7 @@ mod tests {
         assert!(origin("http://api.example".into()).is_none());
     }
     #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Keep the shared token/store fixture and its failure cases together.
     async fn synthetic_token_exchange_stores_legacy_grant_and_fails_without_refresh_or_scope() {
         let writes = Arc::new(Mutex::new(Vec::<Value>::new()));
         let captured = writes.clone();
@@ -838,8 +931,12 @@ mod tests {
         })).route("/store",post(move |headers:HeaderMap,Json(row):Json<Value>| {let captured=captured.clone();async move {
             assert_eq!(headers["authorization"],"Bearer synthetic-service");
             assert!(!headers.contains_key("cookie"));
-            captured.lock().unwrap().push(row);StatusCode::CREATED
-        }})).route("/fail-store",post(||async{StatusCode::SERVICE_UNAVAILABLE}));
+            captured.lock().unwrap().push(row);Json(json!(true))
+        }})).route("/fail-store",post(||async{StatusCode::SERVICE_UNAVAILABLE}))
+        .route("/stale-store",post(||async{Json(json!(false))}))
+        .route("/malformed-store",post(||async{Json(json!({"connected":true}))}))
+        .route("/empty-store",post(||async{StatusCode::NO_CONTENT}))
+        .route("/large-store",post(||async{"x".repeat(65)}));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
@@ -851,6 +948,10 @@ mod tests {
             .build()
             .unwrap();
         let pending = Pending {
+            fence: ConsentFence {
+                epoch: uuid::Uuid::from_u128(9),
+                generation: Some(uuid::Uuid::from_u128(17)),
+            },
             user: uuid::Uuid::from_u128(1).to_string(),
             provider: "google".into(),
             state: random(),
@@ -892,13 +993,37 @@ mod tests {
             .await,
             None
         );
+        for (store, expected) in [
+            ("stale-store", Some("stale_consent")),
+            ("malformed-store", None),
+            ("empty-store", None),
+            ("large-store", None),
+        ] {
+            assert_eq!(
+                exchange_at(
+                    config,
+                    "google",
+                    &pending,
+                    &client,
+                    "code=synthetic-code".into(),
+                    &format!("{base}/token/ok"),
+                    &format!("{base}/{store}")
+                )
+                .await,
+                expected
+            );
+        }
         let rows = writes.lock().unwrap();
         assert_eq!(rows.len(), 2);
         for (row, name) in rows.iter().zip(["google", "bing"]) {
-            assert_eq!(row["owner_id"], pending.user);
-            assert!(uuid::Uuid::parse_str(row["generation"].as_str().unwrap()).is_ok());
+            assert_eq!(row["p_owner_id"], pending.user);
+            assert_eq!(row["p_epoch"], pending.fence.epoch.to_string());
+            assert_eq!(
+                row["p_generation"],
+                pending.fence.generation.unwrap().to_string()
+            );
             let grant = unseal(
-                row["encrypted_grant"].as_str().unwrap(),
+                row["p_encrypted_grant"].as_str().unwrap(),
                 &[7; 32],
                 &format!("htp_{name}_grant:{}", pending.user),
             )
@@ -911,7 +1036,7 @@ mod tests {
     }
     #[tokio::test]
     async fn launch_requires_dashboard_referrer_and_expired_state_fails_closed() {
-        let oauth = fixture();
+        let oauth = online_fixture().await;
         for referer in [
             None,
             Some("https://evil.example/connections"),
@@ -928,6 +1053,10 @@ mod tests {
             assert_eq!(response.status(), StatusCode::FORBIDDEN);
         }
         let pending = Pending {
+            fence: ConsentFence {
+                epoch: uuid::Uuid::from_u128(9),
+                generation: None,
+            },
             user: uuid::Uuid::from_u128(1).to_string(),
             provider: "google".into(),
             state: random(),
@@ -974,11 +1103,136 @@ mod tests {
             "https://dashboard.example/connections?google=invalid_state"
         );
     }
+    #[tokio::test]
+    async fn issuance_is_bounded_per_owner_across_providers_and_prunes_expiry() {
+        let oauth = online_fixture().await;
+        let _active_state = begin(&oauth, "google").await;
+        let mut calls = Vec::new();
+        for i in 0..32 {
+            let app = app(&oauth);
+            calls.push(tokio::spawn(async move {
+                app.oneshot(
+                    Request::post(format!(
+                        "/providers/{}/connect",
+                        if i % 2 == 0 { "google" } else { "bing" }
+                    ))
+                    .header("origin", "https://dashboard.example")
+                    .body(Body::empty())
+                    .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+            }));
+        }
+        let mut accepted = 0;
+        for call in calls {
+            match call.await.unwrap() {
+                StatusCode::OK => accepted += 1,
+                StatusCode::SERVICE_UNAVAILABLE => {}
+                status => panic!("unexpected {status}"),
+            }
+        }
+        assert_eq!(accepted, OWNER_PENDING_LIMIT - 1);
+        assert!(
+            oauth
+                .tickets
+                .lock()
+                .unwrap()
+                .keys()
+                .any(|key| key.starts_with("state:"))
+        );
+        let mut tickets = oauth.tickets.lock().unwrap();
+        let mut pending = tickets.values().next().unwrap().clone();
+        pending.user = uuid::Uuid::from_u128(2).to_string();
+        assert!(insert_pending(
+            &mut tickets,
+            "other".into(),
+            pending.clone()
+        ));
+        // Expired entries stop consuming either budget; ticket and state entries
+        // both count, and the same owner cannot bypass the cap by switching provider.
+        for p in tickets.values_mut() {
+            p.until = now() - 1;
+        }
+        pending.until = now() + 600_000;
+        assert!(insert_pending(
+            &mut tickets,
+            "fresh".into(),
+            pending.clone()
+        ));
+        assert_eq!(tickets.len(), 1);
+        for i in 1..1024 {
+            pending.user = uuid::Uuid::from_u128(i + 10).to_string();
+            assert!(insert_pending(
+                &mut tickets,
+                format!("global:{i}"),
+                pending.clone()
+            ));
+        }
+        pending.user = uuid::Uuid::from_u128(9999).to_string();
+        assert!(!insert_pending(&mut tickets, "overflow".into(), pending));
+    }
+    #[tokio::test]
+    async fn snapshot_failure_never_issues_a_ticket() {
+        for value in [
+            json!(false),
+            json!({"epoch":"invalid","generation":null}),
+            json!({"generation":null}),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                axum::serve(
+                    listener,
+                    Router::new().fallback(post(move || {
+                        let value = value.clone();
+                        async move { Json(value) }
+                    })),
+                )
+                .await
+                .unwrap();
+            });
+            let mut oauth = fixture();
+            Arc::make_mut(oauth.config.as_mut().unwrap()).project = base;
+            let r = app(&oauth)
+                .oneshot(
+                    Request::post("/providers/google/connect")
+                        .header("origin", "https://dashboard.example")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert!(oauth.tickets.lock().unwrap().is_empty());
+            server.abort();
+        }
+        let oauth = fixture(); // closed loopback port: no database snapshot
+        assert_eq!(
+            app(&oauth)
+                .oneshot(
+                    Request::post("/providers/bing/connect")
+                        .header("origin", "https://dashboard.example")
+                        .body(Body::empty())
+                        .unwrap()
+                )
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert!(oauth.tickets.lock().unwrap().is_empty());
+    }
     #[test]
     fn exchange_form_keeps_redirect_and_google_pkce_fixed() {
         let oauth = fixture();
         let config = oauth.config.as_ref().unwrap();
         let pending = Pending {
+            fence: ConsentFence {
+                epoch: uuid::Uuid::from_u128(9),
+                generation: None,
+            },
             user: uuid::Uuid::from_u128(1).to_string(),
             provider: "google".into(),
             state: random(),

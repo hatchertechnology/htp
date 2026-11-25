@@ -25,6 +25,5 @@ limits before activation.
 With `HTP_ROLLOUT_PROVIDER_OAUTH=true`, provider status/disconnect and Google
 owner URL Inspection use Rust directly for REST and MCP. The held gate retains
 the bridge above. See [PROVIDER-OAUTH.md](PROVIDER-OAUTH.md) for native contracts,
-legacy-cookie migration, and the unresolved atomic consent/disconnect fence.
-Native activation remains blocked; no rollout or Fly configuration changes are
-included in the management implementation.
+legacy-cookie migration, the required consent-fence migration, and remaining
+singleton/no-auto-stop qualification. Rollout and Fly configuration remain held.

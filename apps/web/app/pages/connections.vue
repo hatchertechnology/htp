@@ -6,7 +6,14 @@ const { user, google, connectionReady } = workspace
 const route = useRoute()
 const busy = ref(false)
 const error = ref('')
-const outcome = computed(() => ({ invalid_state: 'The connection request expired. Try connecting again.', denied: 'Google access was not approved. You can try again.', missing_scope: 'No supported Google access was granted. Connect again and allow the services you want to use.', failed: 'Google could not complete the connection. Try again.' }[String(route.query.google)] || ''))
+const outcome = computed(() => ({
+  invalid_state: 'The connection request expired. Try connecting again.',
+  denied: 'Google access was not approved. You can try again.',
+  missing_scope: 'No supported Google access was granted. Connect again and allow the services you want to use.',
+  failed: 'Google could not complete the connection. Try again.',
+  connected: 'Google connected.',
+  stale_consent: 'The Google connection changed while you were authorizing it. Start a new connection request.',
+}[String(route.query.google)] || ''))
 async function connect() {
   busy.value = true; error.value = ''
   try { window.location.assign(await workspace.connectProvider('google')) }
