@@ -43,11 +43,12 @@ const transport = async (url: string, options: { method?: string; body?: any; he
   const target = new URL(String(url), 'https://fixture.invalid')
   if (target.pathname === '/api/forms/pilot-eligibility') {
     if (eligibleMode === 'error') throw new Error('fixture auth failure')
-    return { eligible: eligibleMode === 'yes' }
+    // A different site may report the notification capability, but not eligibility.
+    return eligibleMode === 'foreign' ? { eligible: false, notifications_available: true } : { eligible: eligibleMode === 'yes' }
   }
   if (target.pathname === `/websites/${SITE}/forms/pilot-eligibility`) {
     if (eligibleMode === 'error') throw new Error('fixture auth failure')
-    return { eligible: eligibleMode === 'yes', notifications_available: false }
+    return { eligible: eligibleMode === 'yes', notifications_available: eligibleMode === 'foreign' }
   }
   if (!staticMode) throw new Error(`unexpected non-static request ${target.pathname}`)
   apiCalls.push(`${method} ${target.pathname}${target.search}`)

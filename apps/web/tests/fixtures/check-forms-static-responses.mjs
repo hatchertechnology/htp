@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import { chromium } from 'playwright'
 const browser = await chromium.launch({headless:true})
-const base = 'http://127.0.0.1:4177'
+const base = process.env.BING_FIXTURE_BASE_URL ?? 'http://127.0.0.1:4177'
 async function open(enabled) {
   const page = await browser.newPage()
   const errors = []; page.on('pageerror', error => errors.push(error.message))
-  await page.goto(`${base}/tests/fixtures/forms.html?mode=pilot&static=1${enabled?'&responses=1':''}`)
+  await page.goto(new URL(`/tests/fixtures/forms.html?mode=pilot&static=1${enabled?'&responses=1':''}`, base).href)
   await page.getByRole('tab',{name:'Responses'}).waitFor()
   return { page, errors }
 }

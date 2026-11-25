@@ -52,9 +52,13 @@ try {
     assert.equal(await page.getByRole('columnheader', { name: 'Received' }).getAttribute('aria-sort'), 'descending')
 
     // The local-day From/To filter converts Nov 24 to UTC instants.
+    const beforeDateRows = await page.locator('tbody tr').count()
     await page.getByLabel(/Received from/).fill('2026-11-24')
     await page.getByLabel(/Received to/).fill('2026-11-24')
     await page.getByRole('cell', { name: 'Local day insider', exact: true }).waitFor()
+    await page.waitForFunction(expected => document.querySelectorAll('tbody tr').length < expected, beforeDateRows)
+    const dayRows = await page.locator('tbody tr').count()
+    assert.ok(dayRows > 0 && dayRows < beforeDateRows, 'the local-day filter reduces the row count')
     assert.equal(await page.getByRole('cell', { name: 'Before local day', exact: true }).count(), 0)
     await page.getByLabel(/Received from/).fill('')
     await page.getByLabel(/Received to/).fill('')
@@ -112,34 +116,73 @@ try {
     await page.getByRole('columnheader', { name: 'Received' }).getByRole('button').click()
     await page.waitForFunction(() => document.querySelector('th[aria-sort="descending"] button')?.textContent?.trim() === 'Received')
 
-    // Bulk status sends sequential PATCH bodies for selected visible rows.
+    // Bulk status acts on every selected loaded row, including a selection that
+    // spans the first API page boundary (row 0 and row 120 of 150).
     const boxes = page.getByRole('checkbox', { name: /^Select response received/ })
     await boxes.nth(0).check()
-    await boxes.nth(1).check()
-    await boxes.nth(2).check()
+    await boxes.nth(120).check()
+    await page.getByText('2 selected', { exact: true }).waitFor()
     await page.getByRole('group', { name: 'Bulk response actions' }).getByRole('button', { name: 'Mark reviewed' }).click()
-    await page.waitForFunction(() => globalThis.formFixture.state().bodies.filter(entry => entry.method === 'PATCH').length === 3)
-    let bodies = await page.evaluate(() => globalThis.formFixture.state().bodies.filter(entry => entry.method === 'PATCH').map(entry => entry.body))
-    assert.deepEqual(bodies, [{ status: 'reviewed' }, { status: 'reviewed' }, { status: 'reviewed' }])
+    await page.waitForFunction(() => globalThis.formFixture.state().bodies.filter(entry => entry.method === 'PATCH').length === 2)
+    let patches = await page.evaluate(() => globalThis.formFixture.state().bodies.filter(entry => entry.method === 'PATCH'))
+    assert.deepEqual(patches.map(entry => entry.body), [{ status: 'reviewed' }, { status: 'reviewed' }])
+    assert.equal(new Set(patches.map(entry => entry.path)).size, 2, 'both selected rows were patched across the page boundary')
+    await page.getByText('2 responses marked reviewed.', { exact: true }).waitFor()
 
-    // An injected unknown outcome stops the sequence and keeps the lock.
+    // Mark spam uses the same all-selected path.
+    await boxes.nth(0).check()
+    await page.getByRole('group', { name: 'Bulk response actions' }).getByRole('button', { name: 'Mark spam' }).click()
+    await page.waitForFunction(() => globalThis.formFixture.state().bodies.filter(entry => entry.method === 'PATCH').length === 3)
+    patches = await page.evaluate(() => globalThis.formFixture.state().bodies.filter(entry => entry.method === 'PATCH'))
+    assert.deepEqual(patches[2].body, { status: 'spam' })
+    await page.getByText('1 response marked spam.', { exact: true }).waitFor()
+
+    // An injected unknown outcome stops the sequence, reports counts and keeps the lock.
     await boxes.nth(0).check()
     await boxes.nth(1).check()
     await page.evaluate(() => globalThis.formFixture.failNext('response'))
     await page.getByRole('group', { name: 'Bulk response actions' }).getByRole('button', { name: 'Mark reviewed' }).click()
     await page.getByRole('alert').filter({ hasText: 'outcome is unknown' }).waitFor()
     await page.waitForFunction(() => globalThis.formFixture.state().bodies.filter(entry => entry.method === 'PATCH').length === 4)
-    bodies = await page.evaluate(() => globalThis.formFixture.state().bodies.filter(entry => entry.method === 'PATCH').map(entry => entry.body))
-    assert.equal(bodies.length, 4, 'the sequence stops after the unknown outcome')
+    patches = await page.evaluate(() => globalThis.formFixture.state().bodies.filter(entry => entry.method === 'PATCH'))
+    assert.equal(patches.length, 4, 'the sequence stops after the unknown outcome')
+    await page.getByText('Bulk status: 0 succeeded, 0 failed, 1 unknown, 1 not attempted.', { exact: true }).waitFor()
     assert.equal(await boxes.nth(0).isDisabled(), true)
     await page.locator('summary').filter({ hasText: 'Actions' }).first().click()
     assert.equal(await page.getByRole('button', { name: 'Mark reviewed' }).last().isDisabled(), true)
 
     assert.deepEqual(errors, [])
     await context.close()
+
+    // A definite refusal also stops the sequence and reports the counts.
+    const refused = await open(viewport)
+    const refusedBoxes = refused.page.getByRole('checkbox', { name: /^Select response received/ })
+    await refusedBoxes.nth(0).check()
+    await refusedBoxes.nth(1).check()
+    await refused.page.evaluate(() => globalThis.formFixture.failNext('response', 'invalid_request'))
+    await refused.page.getByRole('group', { name: 'Bulk response actions' }).getByRole('button', { name: 'Mark reviewed' }).click()
+    await refused.page.getByRole('alert').filter({ hasText: /refused|unavailable/i }).waitFor()
+    await refused.page.waitForFunction(() => globalThis.formFixture.state().bodies.filter(entry => entry.method === 'PATCH').length === 1)
+    await refused.page.getByText('Bulk status: 0 succeeded, 1 failed, 0 unknown, 1 not attempted.', { exact: true }).waitFor()
+    assert.deepEqual(refused.errors, [])
+    await refused.context.close()
+
+    // No 100-row cap: select all 150 loaded rows and act on every one.
+    if (viewport.width === 1280) {
+      const many = await open(viewport)
+      await many.page.getByRole('button', { name: 'Load next 100' }).click()
+      await many.page.getByText(/More responses exist/).waitFor({ state: 'detached' })
+      await many.page.getByRole('checkbox', { name: 'Select all visible responses' }).check()
+      await many.page.getByText('150 selected', { exact: true }).waitFor()
+      await many.page.getByRole('group', { name: 'Bulk response actions' }).getByRole('button', { name: 'Mark reviewed' }).click()
+      await many.page.waitForFunction(() => globalThis.formFixture.state().bodies.filter(entry => entry.method === 'PATCH').length === 150, undefined, { timeout: 60000 })
+      await many.page.getByText('150 responses marked reviewed.', { exact: true }).waitFor()
+      assert.deepEqual(many.errors, [])
+      await many.context.close()
+    }
   }
 
-  console.log('PASS: submissions table local time, sort, filters, search, paging, CSV and bulk status at both viewports')
+  console.log('PASS: submissions table local time, sort, filters, search, paging, CSV and all-selected bulk status at both viewports')
 } finally {
   await browser.close()
 }

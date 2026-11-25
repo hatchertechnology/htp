@@ -4,6 +4,7 @@ const origin = process.env.HTP_TEST_ORIGIN || 'http://127.0.0.1:3105'
 const target = new URL(origin)
 if (target.protocol !== 'http:' || target.hostname !== '127.0.0.1') throw new Error('This test only runs against loopback HTTP.')
 let rpcCalls = 0
+const unmatchedApi = []
 const browser=await chromium.launch({headless:true}), page=await browser.newPage(), errors=[]
 page.on('pageerror',e=>errors.push(e.message))
 const id='00000000-0000-0000-0000-000000000003', a='00000000-0000-0000-0000-000000000004', b='00000000-0000-0000-0000-000000000005', src='00000000-0000-0000-0000-000000000006', exp=Math.floor(Date.now()/1000)+3600
@@ -23,6 +24,11 @@ await page.route('**/*',async route=>{
    if(path.endsWith('/independent_comparison_history')) return json({items:[snapshot,unsupported],next_cursor:null})
    if(path.endsWith('/independent_comparison_detail')) return json({comparison:body.p_comparison_id === unsupported.id ? unsupported : snapshot,source,seosmith:{report,report_json:'original report',sha256:'abc'}})
    if(path.endsWith('/independent_evidence_fingerprint')) return json('fingerprint')
+   // The enabled legacy Forms page reads its synthetic owner data through Supabase.
+   if(path.endsWith('/website_forms')) return json([{id:'00000000-0000-0000-0000-000000000009',form_key:'fixture_form',name:'Fixture form',fields:[{key:'name',label:'Name',kind:'text',required:true,max_length:100}],active:true}])
+   if(path.endsWith('/website_form_hosts')) return json([{id:'00000000-0000-0000-0000-000000000011',hostname:'example.com',verified_at:'2026-11-24'}])
+   if(path.endsWith('/website_form_responses')) return json([{id:'00000000-0000-0000-0000-000000000010',received_at:'2026-11-24T12:00:00Z',status:'new',values:{name:'Fixture response'}}])
+   if(path.endsWith('/website_form_recipients')||path.endsWith('/website_form_delivery_jobs')) return json([])
    return json(null)
  }
  // Static builds call the Fly API origin directly (no /api prefix); SSR previews use same-origin proxies.
@@ -31,12 +37,17 @@ await page.route('**/*',async route=>{
    if(path===`/websites/${id}/seo/audits`) return json({items:[{delivery_id:a,scan_at:'run one',summary:{outcome:'completed'}},{delivery_id:b,scan_at:'run two',summary:{outcome:'completed'}}],next_cursor:null})
    if(path.startsWith(`/websites/${id}/seo/audits/`)) return json({report})
    if(path.startsWith('/providers/google/')||path.startsWith('/providers/bing/')) return json({connected:false,configured:false})
-   return json(null)
+   unmatchedApi.push(`fly ${path}`)
+   return route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'unmatched fixture API route'})})
  }
  if(path==='/api/websites') return json({items:[{id,fqdn:'example.com'}],has_more:false})
  if(path===`/api/websites/${id}/seo/audits`) return json({items:[{delivery_id:a,scan_at:'run one',summary:{outcome:'completed'}},{delivery_id:b,scan_at:'run two',summary:{outcome:'completed'}}],next_cursor:null})
  if(path.startsWith(`/api/websites/${id}/seo/audits/`)) return json({report})
  if(path.startsWith('/api/google/')||path.startsWith('/api/bing/')) return json({connected:false,configured:false})
+ if(path.startsWith('/api/')){
+   unmatchedApi.push(`api ${path}`)
+   return route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'unmatched fixture API route'})})
+ }
  return route.continue()
 })
 if (process.env.HTP_ENABLED === '1') {
@@ -46,8 +57,11 @@ if (process.env.HTP_ENABLED === '1') {
   await page.getByRole('heading',{name:'Forms',exact:true}).waitFor()
   await page.getByRole('tab',{name:'Responses'}).waitFor()
   if (await page.getByText('Forms are not available in this workspace yet.').count()) throw Error('enabled forms page showed the held message')
+  await page.getByRole('button',{name:/Fixture form/}).waitFor()
+  await page.getByRole('cell',{name:'Fixture response',exact:true}).waitFor()
   await page.goto(`${origin}/forms/confirm`)
   await page.getByRole('button',{name:'Confirm notifications'}).waitFor()
+  if(unmatchedApi.length) throw Error(`unmatched API routes: ${unmatchedApi.join(', ')}`)
   if(errors.length) throw Error(JSON.stringify(errors))
   console.log('enabled app: forms page and confirmation controls available')
   await browser.close()
@@ -66,6 +80,7 @@ if (await page.getByRole('link',{name:'Forms',exact:true}).count()) throw Error(
 await page.goto(`${origin}/forms/confirm`)
 await page.getByText('Form notifications are not available yet.').waitFor()
 if (await page.getByRole('button',{name:'Confirm notifications'}).count()) throw Error('held confirmation visible')
+if(unmatchedApi.length) throw Error(`unmatched API routes: ${unmatchedApi.join(', ')}`)
 if(errors.length) throw Error(JSON.stringify(errors))
 console.log('held app: comparison makes no RPC, forms and confirmation controls hidden')
 await browser.close()
