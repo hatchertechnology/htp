@@ -81,6 +81,82 @@ try {
     assert.ok(deletes[0].url.endsWith('/websites/00000000-0000-0000-0000-000000000009'))
     assert.equal(deletes[0].body, undefined)
 
+    // (h) A selection switch mid-request must never write the old site's values
+    // into the newly selected site's form (no stale-form-data race).
+    // GA4: the held PUT belongs to one.example.com; two.example.com keeps its own
+    // property value and no error appears.
+    await page.evaluate(() => globalThis.websitesFixture.holdNext('PUT'))
+    await page.getByLabel('GA4 property ID').fill('999999999')
+    await page.getByRole('button', { name: 'Save property' }).click()
+    await page.waitForFunction(() => globalThis.websitesFixture.calls.some(call => call.method === 'PUT' && call.body?.property_id === '999999999'))
+    await page.evaluate(id => globalThis.websitesFixture.select(id), TWO)
+    await page.waitForFunction(() => document.querySelector('[data-testid="website-settings-fqdn"]')?.textContent?.trim() === 'www.example.com')
+    await page.evaluate(() => globalThis.websitesFixture.release())
+    await page.waitForFunction(() => globalThis.websitesFixture.calls.filter(call => call.method === 'PUT').length === 2)
+    await page.waitForTimeout(100)
+    assert.equal(await page.getByLabel('GA4 property ID').inputValue(), '557292489')
+    assert.equal(await page.locator('.form-error').count(), 0)
+
+    // Add: the held POST belongs to the previous site; the switch wins and the
+    // newly created record is not force-selected.
+    await page.evaluate(() => globalThis.websitesFixture.holdNext('POST'))
+    await page.getByTestId('new-website-fqdn').fill('late.example.com')
+    await page.getByRole('button', { name: 'Add website' }).click()
+    await page.waitForFunction(() => globalThis.websitesFixture.calls.some(call => call.method === 'POST' && call.body?.fqdn === 'late.example.com'))
+    await page.evaluate(id => globalThis.websitesFixture.select(id), ONE)
+    await page.waitForFunction(() => document.querySelector('[data-testid="website-settings-fqdn"]')?.textContent?.trim() === 'one.example.com')
+    await page.evaluate(() => globalThis.websitesFixture.release())
+    await page.waitForFunction(() => globalThis.websitesFixture.calls.filter(call => call.method === 'POST').length === 2)
+    await page.waitForTimeout(100)
+    assert.equal(await page.getByTestId('website-settings-fqdn').textContent(), 'one.example.com')
+    assert.equal(await page.locator('.form-error').count(), 0)
+
+    // Domain (MAJOR-1): the held PATCH belongs to one.example.com; after the
+    // switch the field shows two.example.com, never the previous site's FQDN.
+    await page.evaluate(() => globalThis.websitesFixture.holdNext('PATCH'))
+    await page.locator('#website-fqdn').fill('changed.example.com')
+    await page.getByRole('button', { name: 'Save domain' }).click()
+    await page.waitForFunction(() => globalThis.websitesFixture.calls.some(call => call.method === 'PATCH' && call.body?.fqdn === 'changed.example.com'))
+    await page.evaluate(id => globalThis.websitesFixture.select(id), TWO)
+    await page.waitForFunction(() => document.querySelector('[data-testid="website-settings-fqdn"]')?.textContent?.trim() === 'www.example.com')
+    assert.equal(await page.locator('#website-fqdn').inputValue(), 'www.example.com')
+    await page.evaluate(() => globalThis.websitesFixture.release())
+    await page.waitForFunction(() => globalThis.websitesFixture.calls.filter(call => call.method === 'PATCH').length === 2)
+    await page.waitForTimeout(100)
+    assert.equal(await page.locator('#website-fqdn').inputValue(), 'www.example.com')
+    assert.equal(await page.locator('.form-error').count(), 0)
+    const finalSites = await page.evaluate(() => globalThis.websitesFixture.server())
+    assert.equal(finalSites.find(entry => entry.id === TWO).fqdn, 'www.example.com')
+    assert.equal(finalSites.find(entry => entry.id === ONE).fqdn, 'changed.example.com')
+
+    // A save that fails for the previous site must not surface its error on the
+    // newly selected site (the guard covers the error write-back too).
+    await page.evaluate(() => { globalThis.websitesFixture.holdNext('PATCH'); globalThis.websitesFixture.failNext('PATCH') })
+    await page.locator('#website-fqdn').fill('never.example.com')
+    await page.getByRole('button', { name: 'Save domain' }).click()
+    await page.waitForFunction(() => globalThis.websitesFixture.calls.some(call => call.method === 'PATCH' && call.body?.fqdn === 'never.example.com'))
+    await page.evaluate(id => globalThis.websitesFixture.select(id), ONE)
+    await page.waitForFunction(() => document.querySelector('[data-testid="website-settings-fqdn"]')?.textContent?.trim() !== 'www.example.com')
+    const otherFqdn = await page.getByTestId('website-settings-fqdn').textContent()
+    await page.evaluate(() => globalThis.websitesFixture.release())
+    await page.waitForFunction(() => globalThis.websitesFixture.calls.filter(call => call.method === 'PATCH').length === 3)
+    await page.waitForTimeout(100)
+    assert.equal(await page.locator('.form-error').count(), 0)
+    assert.equal(await page.locator('#website-fqdn').inputValue(), otherFqdn)
+
+    // A delete whose list refresh fails must not keep presenting the removed
+    // site as the editable settings; the retry recovers the list.
+    await page.evaluate(() => globalThis.websitesFixture.failNextLoad())
+    await page.getByRole('button', { name: 'Delete this website' }).click()
+    await page.getByRole('group', { name: 'Confirm deletion of one.example.com' }).waitFor()
+    await page.getByRole('button', { name: 'Delete record' }).click()
+    await page.getByRole('heading', { name: 'Website deleted' }).waitFor()
+    assert.equal(await page.getByTestId('website-settings-fqdn').count(), 0)
+    assert.equal(await page.getByRole('heading', { name: 'Domain' }).count(), 0)
+    await page.getByRole('button', { name: 'Reload website list' }).click()
+    await page.waitForFunction(() => document.querySelector('[data-testid="website-settings-fqdn"]')?.textContent?.trim() === 'www.example.com')
+    assert.equal(await page.getByRole('heading', { name: 'Domain' }).count(), 1)
+
     // The settings page never runs the old list read.
     assert.equal(calls.filter(call => call.method === 'GET' && call.url.includes('limit=50')).length, 0)
 

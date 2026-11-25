@@ -59,7 +59,8 @@ export function useWebsites() {
   // Returns the created/updated website, or the deleted record for DELETE.
   // `null` means the mutation failed; `error` carries the message.
   async function mutate(method: 'POST' | 'PATCH' | 'DELETE', id?: string, fqdn?: string): Promise<Website | null> {
-    if (saving.value || !auth.user.value) return null
+    if (saving.value) { error.value = 'A change is already being saved. Try again in a moment.'; return null }
+    if (!auth.user.value) { error.value = 'Your session has ended. Sign in again.'; return null }
     const owner = auth.user.value.id
     const current = ++generation
     controller?.abort()

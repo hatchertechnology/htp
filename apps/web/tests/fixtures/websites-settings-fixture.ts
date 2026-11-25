@@ -7,6 +7,10 @@ const TWO = '00000000-0000-0000-0000-000000000002'
 const NEW = '00000000-0000-0000-0000-000000000009'
 const staticMode = new URLSearchParams(location.search).get('static') === '1'
 const calls: { url: string; method: string; body?: unknown; headers?: Record<string, string> }[] = []
+let holdMethod: string | null = null
+let gate: Promise<void> | null = null
+let releaseGate: (() => void) | null = null
+let failMethod: string | null = null
 const server = { sites: [
   { id: ONE, fqdn: 'one.example.com', ga4_property_id: '111111111' },
   { id: TWO, fqdn: 'two.example.com', ga4_property_id: null },
@@ -29,9 +33,26 @@ function reload() {
   return sites.value
 }
 
+let failLoad = false
+async function load() {
+  if (failLoad) { failLoad = false; error.value = 'Fixture load failed'; return sites.value }
+  error.value = ''
+  return reload()
+}
+
 async function transport(url: string, options: { method?: string; body?: { fqdn?: string; property_id?: string | null } } = {}) {
   const method = options.method ?? 'GET'
   calls.push({ url, method, body: options.body, headers: { Authorization: 'Bearer fixture-token' } })
+  if (holdMethod === method) {
+    holdMethod = null
+    const waiting = gate
+    gate = null
+    await waiting
+  }
+  if (failMethod === method) {
+    failMethod = null
+    throw { data: { error: 'Fixture write failed' } }
+  }
   if (method === 'POST') {
     const created = { id: NEW, fqdn: options.body?.fqdn ?? '', ga4_property_id: null }
     server.sites = [...server.sites, created]
@@ -54,9 +75,10 @@ async function transport(url: string, options: { method?: string; body?: { fqdn?
   return null
 }
 
+const fixtureUser = ref<{ id: string } | null>({ id: 'fixture-owner' })
 const workspace = {
-  sites, selectedId, selected, contextReady, sitesTruncated, loading, error,
-  load: async () => reload(),
+  user: fixtureUser, sites, selectedId, selected, contextReady, sitesTruncated, loading, error,
+  load: () => load(),
   selectWebsite: (id: string) => { if (!sites.value.some(site => site.id === id)) return false; selectedId.value = id; return true },
   request: (url: string, options: Record<string, unknown> = {}) => transport(url, options as never),
 }
@@ -66,7 +88,7 @@ Object.assign(globalThis, vue, {
   useWorkspace: () => workspace,
   useHead: () => undefined,
   useToast: () => ({ add: () => undefined }),
-  useAuth: () => ({ user: ref({ id: 'fixture-owner' }), ready: ref(true), accessToken: async () => 'fixture-token' }),
+  useAuth: () => ({ user: fixtureUser, ready: ref(true), accessToken: async () => 'fixture-token' }),
   useRuntimeConfig: () => ({ public: { staticDashboard: staticMode, apiBaseUrl: 'https://api.example.test' } }),
   $fetch: transport,
   failureMessage: (cause: unknown) => (cause as { message?: string })?.message ?? 'Something went wrong. Please try again.',
@@ -74,6 +96,10 @@ Object.assign(globalThis, vue, {
     calls,
     select: (id: string) => { selectedId.value = id },
     server: () => copy(),
+    holdNext: (method: string) => { holdMethod = method; gate = new Promise(resolve => { releaseGate = resolve }) },
+    failNext: (method: string) => { failMethod = method },
+    failNextLoad: () => { failLoad = true },
+    release: () => { releaseGate?.(); releaseGate = null },
   },
 })
 

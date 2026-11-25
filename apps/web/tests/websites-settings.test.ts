@@ -67,6 +67,17 @@ it('returns null and reports the message when a mutation fails or the session en
   expect(await websites.mutate('POST', undefined, 'new.example.com')).toBeNull()
 })
 
+it('reports a second concurrent save instead of silently doing nothing', async () => {
+  let finish: (value: unknown) => void = () => {}
+  vi.stubGlobal('$fetch', vi.fn(() => new Promise(resolve => { finish = resolve })))
+  const websites = useWebsites()
+  const first = websites.mutate('POST', undefined, 'one.example.com')
+  expect(await websites.mutate('POST', undefined, 'two.example.com')).toBeNull()
+  expect(websites.error.value).toBe('A change is already being saved. Try again in a moment.')
+  finish(created)
+  expect(await first).toEqual(created)
+})
+
 it('does not auto-load the website list for the settings page', () => {
   useWebsites()
   expect(calls).toHaveLength(0)

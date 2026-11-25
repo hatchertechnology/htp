@@ -3,8 +3,13 @@ import type { AuditRun } from '../../shared/types/seosmith'
 import { auditPoints, auditMetricLabels, comparable, type AuditMetric } from '#shared/utils/seosmith'
 import { formatInstant, userTimeZone, zoneLabel } from '#shared/utils/local-time'
 const props = defineProps<{ runs: AuditRun[]; metric: AuditMetric; selectedId?: string }>()
-const zone = zoneLabel()
-const axisFormat = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: userTimeZone(), timeZoneName: 'short' })
+function zone() { return zoneLabel() }
+// A compact local axis label; the caption names the zone. A formatter failure
+// falls back to the full shared format.
+function axisFormatter(): Intl.DateTimeFormat | null {
+  try { return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: userTimeZone() }) } catch { return null }
+}
+const axisFormat = axisFormatter()
 const emit = defineEmits<{ select: [id: string] }>()
 const svg = ref<SVGSVGElement | null>(null), width = ref(900)
 let observer: ResizeObserver | undefined
@@ -17,7 +22,7 @@ function x(time: number) { return last.value === first.value ? width.value / 2 :
 function y(value: number) { return 208 - value / maximum.value * 180 }
 const path = computed(() => points.value.map((p, i) => p.value === null ? '' : `${i && points.value[i - 1]?.value !== null && comparable(points.value[i - 1]!.run, p.run) ? 'L' : 'M'} ${x(p.time)} ${y(p.value)}`).join(' '))
 function stamp(time: number) { return formatInstant(new Date(time).toISOString()) }
-function axisStamp(time: number) { return axisFormat.format(new Date(time)) }
+function axisStamp(time: number) { const at = new Date(time); return axisFormat ? axisFormat.format(at) : formatInstant(at.toISOString()) }
 </script>
 <template>
   <div class="seo-trend">
@@ -27,6 +32,6 @@ function axisStamp(time: number) { return axisFormat.format(new Date(time)) }
       <template v-for="point in points" :key="point.run.delivery_id"><circle v-if="point.value !== null" :cx="x(point.time)" :cy="y(point.value)" :r="point.run.delivery_id === selectedId ? 7 : 5" :fill="point.run.summary.coverage_complete ? '#182c3d' : '#fff'" :stroke="point.run.summary.coverage_complete ? '#182c3d' : '#b94d28'" stroke-width="2" role="button" tabindex="0" :aria-label="`${stamp(point.time)}: ${point.value.toLocaleString()} ${auditMetricLabels[metric]}, ${point.run.summary.outcome}`" :aria-pressed="point.run.delivery_id === selectedId" @click="emit('select', point.run.delivery_id)" @keydown.enter.prevent="emit('select', point.run.delivery_id)" @keydown.space.prevent="emit('select', point.run.delivery_id)"><title>{{ new Date(point.time).toISOString() }} · {{ point.value }} · {{ point.run.summary.outcome }}</title></circle></template>
       <text v-if="points.length" x="45" y="240">{{ axisStamp(first) }}</text><text v-if="points.length > 1" :x="width - 20" y="240" text-anchor="end">{{ axisStamp(last) }}</text>
     </svg>
-    <p class="report-caption">Scan time ({{ zone }}) · Filled: complete coverage · Hollow: partial or failed.<span>Lines connect only complete runs with matching crawl settings, engine, and ruleset. Each point is one run; no daily averaging. Runs without scan timestamps remain in history but are not plotted.</span></p>
+    <p class="report-caption">Scan time ({{ zone() }}) · Filled: complete coverage · Hollow: partial or failed.<span>Lines connect only complete runs with matching crawl settings, engine, and ruleset. Each point is one run; no daily averaging. Runs without scan timestamps remain in history but are not plotted.</span></p>
   </div>
 </template>

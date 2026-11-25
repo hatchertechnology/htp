@@ -15,14 +15,27 @@ const addFqdn = ref('')
 const addError = ref('')
 const confirmingDelete = ref(false)
 const deleteError = ref('')
+// A successful delete whose list refresh failed: the removed record is still in
+// `ws.sites`, so the page must not keep presenting it as the editable site.
+const deletedId = ref('')
+// Every async continuation is gated on the selection it started for, so a header
+// switch mid-save can never write one site's values into another site's form.
+const selectionEpoch = ref(0)
+const staleDeleted = computed(() => deletedId.value !== '' && ws.selectedId.value === deletedId.value && ws.sites.value.some(entry => entry.id === deletedId.value))
+
+function current(targetId: string, epoch: number) {
+  return epoch === selectionEpoch.value && ws.selectedId.value === targetId
+}
 
 // The header select is the source of truth: a site change replaces every
 // per-site value, so no stale form data survives the switch.
 watch(() => ws.selectedId.value, () => {
+  selectionEpoch.value++
   domain.value = site.value?.fqdn ?? ''
   propertyId.value = site.value?.ga4_property_id ?? ''
   domainError.value = ''
   propertyError.value = ''
+  propertyBusy.value = false
   confirmingDelete.value = false
   deleteError.value = ''
 }, { flush: 'sync', immediate: true })
@@ -30,51 +43,84 @@ watch(() => ws.selectedId.value, () => {
 async function saveDomain() {
   const target = site.value
   if (!target) return
+  const targetId = target.id
+  const epoch = selectionEpoch.value
   domainError.value = ''
   const canonical = normalizeFqdn(domain.value)
   if (!canonical) { domainError.value = FQDN_ERROR; return }
-  const updated = await mutate('PATCH', target.id, canonical)
+  const updated = await mutate('PATCH', targetId, canonical)
+  if (!current(targetId, epoch)) return
   if (!updated) { domainError.value = mutationError.value || 'Could not save your changes. Please try again.'; return }
   domain.value = updated.fqdn
   await ws.load()
+  if (!current(targetId, epoch)) return
+  domain.value = site.value?.fqdn ?? ''
   toast.add({ title: 'Website updated', description: 'Forms, if any, were paused. Verify their hosts again before reactivating them.', color: 'success', icon: 'i-lucide-check' })
 }
 
 async function saveProperty() {
   const target = site.value
   if (!target) return
+  const targetId = target.id
+  const epoch = selectionEpoch.value
   if (propertyId.value && !/^[1-9][0-9]{0,19}$/.test(propertyId.value)) { propertyError.value = 'Enter a numeric GA4 property ID.'; return }
   propertyBusy.value = true; propertyError.value = ''
   try {
-    await ws.request(`/api/websites/${target.id}/analytics/property`, { method: 'PUT', body: { property_id: propertyId.value || null } })
+    await ws.request(`/api/websites/${targetId}/analytics/property`, { method: 'PUT', body: { property_id: propertyId.value || null } })
+    if (!current(targetId, epoch)) return
     await ws.load()
+    if (!current(targetId, epoch)) return
     propertyId.value = site.value?.ga4_property_id ?? ''
     toast.add({ title: 'Analytics property saved', color: 'success' })
-  } catch (cause) { propertyError.value = failureMessage(cause) }
-  finally { propertyBusy.value = false }
+  } catch (cause) {
+    if (current(targetId, epoch)) propertyError.value = failureMessage(cause)
+  } finally {
+    if (current(targetId, epoch)) propertyBusy.value = false
+  }
 }
 
 async function addWebsite() {
+  const epoch = selectionEpoch.value
   addError.value = ''
   const canonical = normalizeFqdn(addFqdn.value)
   if (!canonical) { addError.value = FQDN_ERROR; return }
   const created = await mutate('POST', undefined, canonical)
-  if (!created) { addError.value = mutationError.value || 'Could not save your changes. Please try again.'; return }
+  if (!created) { if (epoch === selectionEpoch.value) addError.value = mutationError.value || 'Could not save your changes. Please try again.'; return }
   addFqdn.value = ''
   await ws.load()
-  ws.selectWebsite(created.id)
+  if (epoch !== selectionEpoch.value) {
+    toast.add({ title: 'Website added', description: 'Choose it in the header to edit it.', color: 'success', icon: 'i-lucide-check' })
+    return
+  }
+  if (!ws.selectWebsite(created.id)) {
+    addError.value = 'Website added, but it could not be selected. Reload the website list and choose it in the header.'
+    return
+  }
   toast.add({ title: 'Website added', color: 'success', icon: 'i-lucide-check' })
 }
 
 async function removeWebsite() {
   const target = site.value
   if (!target) return
+  const targetId = target.id
+  const epoch = selectionEpoch.value
   deleteError.value = ''
-  const removed = await mutate('DELETE', target.id, target.fqdn)
-  if (!removed) { deleteError.value = mutationError.value || 'Could not delete this website. Please try again.'; return }
-  confirmingDelete.value = false
+  const removed = await mutate('DELETE', targetId, target.fqdn)
+  if (!removed) { if (current(targetId, epoch)) deleteError.value = mutationError.value || 'Could not delete this website. Please try again.'; return }
   await ws.load()
+  if (!current(targetId, epoch)) return
+  if (ws.error.value) {
+    deletedId.value = targetId
+    toast.add({ title: 'Website deleted', description: 'The website list could not be refreshed.', color: 'success', icon: 'i-lucide-check' })
+    return
+  }
+  deletedId.value = ''
   toast.add({ title: 'Website deleted', color: 'success', icon: 'i-lucide-check' })
+}
+
+async function reloadDeleted() {
+  await ws.load()
+  if (!ws.sites.value.some(entry => entry.id === deletedId.value)) deletedId.value = ''
 }
 </script>
 
@@ -82,13 +128,21 @@ async function removeWebsite() {
   <div class="site-settings-page">
     <div class="page-heading">
       <h1>Website settings</h1>
-      <p v-if="site" data-testid="website-settings-fqdn" class="site-settings-fqdn">{{ site.fqdn }}</p>
+      <p v-if="site && !staleDeleted" data-testid="website-settings-fqdn" class="site-settings-fqdn">{{ site.fqdn }}</p>
+      <p v-else-if="staleDeleted">This website was deleted.</p>
       <p v-else-if="ws.contextReady.value">Add your first website to start collecting reports.</p>
+      <p v-else-if="!ws.user.value">Sign in to manage your websites.</p>
       <p v-else>Reading your websites…</p>
     </div>
     <p v-if="ws.sitesTruncated.value" class="report-caption">Only the first 1,000 websites are available in the selector.</p>
-    <p v-if="ws.contextReady.value && ws.error.value" class="form-error" role="alert">{{ ws.error.value }} <UButton variant="link" @click="ws.load()">Try again</UButton></p>
-    <div v-if="!ws.contextReady.value" class="surface settings-loading" role="status">Loading website settings…</div>
+    <p v-if="ws.contextReady.value && ws.error.value && !staleDeleted" class="form-error" role="alert">{{ ws.error.value }} <UButton variant="link" @click="ws.load()">Try again</UButton></p>
+    <div v-if="!ws.user.value" class="surface settings-loading" role="status">Sign in to manage your websites. <NuxtLink to="/sign-in?redirect=/websites">Sign in</NuxtLink></div>
+    <div v-else-if="!ws.contextReady.value" class="surface settings-loading" role="status">Loading website settings…</div>
+    <section v-else-if="staleDeleted" class="surface settings-section" role="status" aria-labelledby="deleted-heading">
+      <h2 id="deleted-heading">Website deleted</h2>
+      <p>This website was removed, but the website list could not be refreshed. It may still appear in the header.</p>
+      <div class="settings-actions"><UButton @click="reloadDeleted">Reload website list</UButton></div>
+    </section>
     <template v-else-if="site">
       <section class="surface settings-section" aria-labelledby="domain-heading">
         <h2 id="domain-heading">Domain</h2>
@@ -122,7 +176,7 @@ async function removeWebsite() {
       </section>
     </template>
 
-    <section v-if="ws.contextReady.value" class="surface settings-section" aria-labelledby="add-website-heading">
+    <section v-if="ws.user.value && ws.contextReady.value && !staleDeleted" class="surface settings-section" aria-labelledby="add-website-heading">
       <h2 id="add-website-heading">Add a website</h2>
       <p>Enter the full domain name, including any subdomain. For example, www.example.com.</p>
       <form @submit.prevent="addWebsite">
@@ -133,9 +187,9 @@ async function removeWebsite() {
       </form>
     </section>
 
-    <section v-if="site" class="surface settings-section danger-section" aria-labelledby="delete-heading">
+    <section v-if="site && !staleDeleted" class="surface settings-section danger-section" aria-labelledby="delete-heading">
       <h2 id="delete-heading">Delete this website</h2>
-      <p>Removes the website record, its saved reports, and any empty form configuration. This cannot be undone.</p>
+      <p>Removes the website record for this domain. This cannot be undone.</p>
       <p v-if="deleteError" class="form-error" role="alert">{{ deleteError }}</p>
       <div v-if="confirmingDelete" class="delete-confirm" role="group" :aria-label="`Confirm deletion of ${site.fqdn}`">
         <p>Delete <strong>{{ site.fqdn }}</strong>? This removes the website record and any empty form configuration. Websites with saved form responses or independent audit evidence cannot be deleted until those records are explicitly removed. If a notification is sending, try again after delivery.</p>
