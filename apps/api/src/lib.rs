@@ -8,6 +8,7 @@ mod dashboard_cors;
 mod form_confirmation;
 mod form_inbox;
 mod form_ingress;
+mod form_notifications;
 mod form_responses;
 mod form_save;
 mod form_verification;
@@ -131,6 +132,12 @@ pub fn app_with_capabilities(
         .merge(form_responses::router(form_responses::state_from_env(
             websites.forms_response_writer(),
         )))
+        .merge(form_notifications::router(
+            form_notifications::state_from_env(
+                websites.forms_notification_client(),
+                websites.forms_reader(),
+            ),
+        ))
         .merge(websites::router(websites))
         .layer(middleware::from_fn_with_state(capabilities, rollout_gate))
         .layer(middleware::from_fn_with_state(auth, auth::require_user));

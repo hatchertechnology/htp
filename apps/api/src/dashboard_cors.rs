@@ -186,6 +186,18 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
     if let Some(inbox) = resource.strip_prefix("forms/") {
         let (form, responses) = inbox.split_once('/')?;
         uuid::Uuid::parse_str(form).ok()?;
+        if site.len() == 36 && form.len() == 36 {
+            match responses.split('/').collect::<Vec<_>>().as_slice() {
+                ["recipients"] => return Some("GET, POST"),
+                ["delivery-jobs"] => return Some("GET"),
+                ["recipients", id, "disable"] | ["delivery-jobs", id, "retry"]
+                    if id.len() == 36 && uuid::Uuid::parse_str(id).is_ok() =>
+                {
+                    return Some("POST");
+                }
+                _ => {}
+            }
+        }
         return match responses.split('/').collect::<Vec<_>>().as_slice() {
             ["responses"] => Some("GET"),
             ["responses", response]
@@ -942,6 +954,44 @@ mod tests {
                 dashboard_methods(&format!("/websites/{site}/{resource}")),
                 None
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn owner_notification_cors_is_exact() {
+        let id = "00000000-0000-0000-0000-000000000001";
+        for (suffix, methods) in [
+            ("recipients".to_owned(), "GET, POST"),
+            ("delivery-jobs".to_owned(), "GET"),
+            (format!("recipients/{id}/disable"), "POST"),
+            (format!("delivery-jobs/{id}/retry"), "POST"),
+        ] {
+            let path = format!("/websites/{id}/forms/{id}/{suffix}");
+            assert_eq!(dashboard_methods(&path), Some(methods));
+            for method in ["GET", "POST", "DELETE", "PATCH"] {
+                for origin in [ORIGIN, "https://foreign.example"] {
+                    let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                        .oneshot(preflight(&path, origin, method))
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                        (origin == ORIGIN && methods.split(", ").any(|m| m == method))
+                            .then_some(ORIGIN)
+                    );
+                    assert!(
+                        header_value(&response, header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none()
+                    );
+                }
+            }
+            for bad in [
+                format!("{path}/"),
+                format!("{path}/extra"),
+                path.replace(id, "bad"),
+                path.replace(id, &id.replace('-', "")),
+            ] {
+                assert_eq!(dashboard_methods(&bad), None);
+            }
         }
     }
 
