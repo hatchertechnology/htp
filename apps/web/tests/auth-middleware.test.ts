@@ -57,7 +57,7 @@ it('returns a signed-in visitor from sign-in to a safe return path', async () =>
 
 it('ignores an open-redirect attempt and falls back to the overview', async () => {
   control.user = { id: 'owner' }
-  for (const redirect of ['//evil.test', 'https://evil.test', '/\\evil.test', 'javascript:alert(1)', '/sign-in']) {
+  for (const redirect of ['//evil.test', 'https://evil.test', '/\\evil.test', 'javascript:alert(1)', '/sign-in', '/sign-in//', '/%73ign-in', '/SIGN-IN']) {
     control.navigations = []
     await middleware({ path: '/sign-in', fullPath: '/sign-in', query: { redirect } })
     expect(control.navigations).toEqual([{ to: '/', options: { replace: true } }])
@@ -67,6 +67,20 @@ it('ignores an open-redirect attempt and falls back to the overview', async () =
 it('keeps a signed-out visitor on the sign-in page', async () => {
   expect(await middleware({ path: '/sign-in', fullPath: '/sign-in?redirect=%2F', query: { redirect: '/' } })).toBeUndefined()
   expect(control.navigations).toEqual([])
+})
+
+it('treats every sign-in spelling as the sign-in page, never as a protected 404', async () => {
+  for (const path of ['/sign-in//', '/SIGN-IN', '/%73ign-in', '/Sign-In']) {
+    control.navigations = []
+    expect(await middleware({ path, fullPath: path, query: {} })).toBeUndefined()
+    expect(control.navigations, path).toEqual([])
+  }
+  control.user = { id: 'owner' }
+  for (const path of ['/sign-in//', '/SIGN-IN', '/%73ign-in', '/Sign-In']) {
+    control.navigations = []
+    await middleware({ path, fullPath: path, query: {} })
+    expect(control.navigations, path).toEqual([{ to: '/', options: { replace: true } }])
+  }
 })
 
 it('skips the hydration pass of the SSR build so app:mounted can restore the session', async () => {

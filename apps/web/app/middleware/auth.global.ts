@@ -1,4 +1,4 @@
-import { SIGN_IN_PATH, isPublicRoute } from '#shared/utils/public-routes'
+import { isPublicRoute, isSignInPath } from '#shared/utils/public-routes'
 import { safeReturnPath } from '#shared/utils/return-path'
 
 // Signed-out visitors see the sign-in page and nothing else. Public routes are
@@ -9,12 +9,12 @@ export default defineNuxtRouteMiddleware(async (to) => {
   // SSR build only: the session is restored in app:mounted, after this pass.
   // The default layout's auth watch redirects once auth:ready is true.
   if (nuxtApp.isHydrating && nuxtApp.payload.serverRendered) return
-  const path = to.path.replace(/\/$/, '') || '/'
-  if (isPublicRoute(to.path) && path !== SIGN_IN_PATH) return
+  const signIn = isSignInPath(to.path)
+  if (isPublicRoute(to.path) && !signIn) return
   const user = await useAuth().resolveSession()
-  if (path === SIGN_IN_PATH) {
+  if (signIn) {
     if (user) return navigateTo(safeReturnPath(to.query.redirect) ?? '/', { replace: true })
     return
   }
-  if (!user) return navigateTo({ path: SIGN_IN_PATH, query: { redirect: to.fullPath } }, { replace: true })
+  if (!user) return navigateTo({ path: '/sign-in', query: { redirect: to.fullPath } }, { replace: true })
 })

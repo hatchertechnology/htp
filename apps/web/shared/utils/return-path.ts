@@ -1,6 +1,6 @@
 // Post sign-in return path. Only a same-origin absolute path is ever returned:
 // never another host, never a scheme, never the sign-in page itself.
-import { SIGN_IN_PATH } from './public-routes'
+import { isSignInPath } from './public-routes'
 
 const BASE = 'https://return.invalid'
 const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/
@@ -23,7 +23,7 @@ export function safeReturnPath(value: unknown): string | null {
   if (url.pathname.startsWith('//')) return null
   const decodedPath = (() => { try { return decodeURIComponent(url.pathname) } catch { return '' } })()
   if (decodedPath.startsWith('//') || CONTROLS.test(decodedPath)) return null
-  const pathname = url.pathname.replace(/\/$/, '') || '/'
-  if (pathname === SIGN_IN_PATH) return null
+  // Any sign-in spelling (`/SIGN-IN`, `/%73ign-in`, `/sign-in//`) is a loop.
+  if (isSignInPath(url.pathname)) return null
   return `${url.pathname}${url.search}${url.hash}`
 }

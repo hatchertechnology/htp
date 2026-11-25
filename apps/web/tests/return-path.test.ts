@@ -1,5 +1,7 @@
-import { expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { safeReturnPath } from '../shared/utils/return-path'
+
+afterEach(() => vi.unstubAllGlobals())
 
 it('accepts same-origin absolute paths with query and hash', () => {
   for (const value of ['/', '/websites', '/websites?x=1#y', '/oauth/consent?authorization_id=abc', '/forms/confirm#r:t', '/a/b/c/']) {
@@ -20,8 +22,8 @@ it('rejects CR/LF and control characters, including encoded ones', () => {
   }
 })
 
-it('rejects the sign-in page (with one trailing slash, query or hash) to avoid a loop', () => {
-  for (const value of ['/sign-in', '/sign-in/', '/sign-in?redirect=/', '/sign-in/?x=1', '/sign-in#top']) {
+it('rejects every sign-in spelling (trailing slashes, case, encoding) to avoid a loop', () => {
+  for (const value of ['/sign-in', '/sign-in/', '/sign-in//', '/sign-in?redirect=/', '/sign-in/?x=1', '/sign-in#top', '/SIGN-IN', '/%73ign-in']) {
     expect(safeReturnPath(value), value).toBeNull()
   }
 })
@@ -34,4 +36,15 @@ it('rejects non-strings, oversized values and unparsable input without throwing'
   const throwing = { toString() { throw new Error('boom') } }
   expect(() => safeReturnPath(throwing)).not.toThrow()
   expect(safeReturnPath(throwing)).toBeNull()
+})
+
+it('returns null when the URL parser throws, without raising', () => {
+  const RealUrl = URL
+  vi.stubGlobal('URL', class { constructor() { throw new TypeError('Invalid URL') } })
+  try {
+    expect(() => safeReturnPath('/websites?x=1')).not.toThrow()
+    expect(safeReturnPath('/websites?x=1')).toBeNull()
+  } finally {
+    vi.stubGlobal('URL', RealUrl)
+  }
 })
