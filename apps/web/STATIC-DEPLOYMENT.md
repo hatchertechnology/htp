@@ -45,3 +45,15 @@ recorded Fly CNAME with its prior proxy setting and TTL. Verify public HTTPS
 and signed-in behavior on Fly. Restore the API origin and rollout settings
 from the pre-cutover snapshot if they changed. The Fly management selector
 can continue to point at the direct Fly web hostname.
+
+Owner Forms notification management is separately default-off:
+`NUXT_PUBLIC_ROLLOUT_FORMS_NOTIFICATIONS=true` must be explicitly baked into the
+static build, alongside the existing Forms pilot flag. The panel also requires a
+successful authenticated pilot eligibility read. The API's separate
+`HTP_FORMS_OWNER_NOTIFICATION_API` gate and exact pilot owner/site fence remain
+required. This source change enables none of those gates or database grants.
+Recipients and delivery jobs use bearer-authenticated owner routes under
+`/websites/{id}/forms/{form_id}`; static notification management never uses
+Supabase tables/RPCs. Queue acceptance is not delivery. Unknown writes lock all
+notification writes until an explicit successful recipients/jobs readback;
+operators must also reconcile provider records before uncertain delivery retries.

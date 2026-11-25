@@ -61,6 +61,14 @@ async function apiFetch(target:URL, method:string, body:any){
     return {host_id:host.id,verified:true,status:'verified'}
   }
   if(new RegExp(`^/websites/${SITE}/forms/${FORM}/responses$`).test(path)&&method==='GET') return pageOf(data.website_form_responses)
+  const notification = new RegExp(`^/websites/${SITE}/forms/${FORM}/(recipients|delivery-jobs)(?:/([0-9a-f-]+)/(disable|retry))?$`).exec(path)
+  if(notification) {
+    const recipient='50000000-0000-0000-0000-000000000001', job='60000000-0000-0000-0000-000000000001'
+    if(method==='GET' && Number(target.searchParams.get('offset'))>0) return pageOf([])
+    if(method==='GET') return {...pageOf(notification[1]==='recipients'?[{id:recipient,email:'<unsafe>@example.test',enabled:true,verified_at:null,created_at:'2026-01-01',token:'SECRET'}]:[{id:job,recipient_id:recipient,response_id:null,kind:'response',state:'uncertain',attempts:1,created_at:'2026-01-01',updated_at:'2026-01-01',provider_error:'SECRET'}]),has_more:true}
+    const failed=takeFailure('notification'); if(failed) throw failureError(failed)
+    return notification[3]==='disable'?{recipient_id:notification[2],disabled:true}:notification[3]==='retry'?{job_id:notification[2],retry_requested:true}:{recipient_id:recipient,requested:true}
+  }
   const response = new RegExp(`^/websites/${SITE}/forms/${FORM}/responses/([0-9a-f-]+)(/status)?$`).exec(path)
   if(response && (method==='PATCH'||method==='DELETE')) {
     const failed=takeFailure('response')
@@ -73,7 +81,7 @@ async function apiFetch(target:URL, method:string, body:any){
   }
   throw Object.assign(new Error(`fixture has no route for ${method} ${path}`),{data:{code:'not_found'}})
 }
-const apiOrNitroFetch=async(url:string,options:{method?:string;body?:any}={})=>{
+const apiOrNitroFetch=async(url:string,options:{method?:string;body?:any;headers?:Record<string,string>;retry?:number;redirect?:string}={})=>{
   const method=(options.method??'GET').toUpperCase()
   const target=new URL(String(url),'https://fixture.invalid')
   if(!staticMode){
@@ -82,12 +90,13 @@ const apiOrNitroFetch=async(url:string,options:{method?:string;body?:any}={})=>{
     throw new Error(`unexpected non-static request ${target.pathname}`)
   }
   if(visibility==='error') throw new Error('fixture auth failure')
+  if (/recipients|delivery-jobs/.test(target.pathname) && (options.headers?.Authorization !== 'Bearer fixture-token' || options.retry !== 0 || options.redirect !== 'error')) throw new Error('Unsafe notification request options')
   apiCalls.push(`${method} ${target.pathname}${target.search}`)
   if(options.body!==undefined) bodies.push({method,path:target.pathname,body:JSON.parse(JSON.stringify(options.body))})
   return apiFetch(target,method,options.body)
 }
 const {default:WebsiteForms}=await import('../../app/components/WebsiteForms.vue')
-Object.assign(globalThis,vue,{formFixture:{calls,queries,apiCalls,bodies,setOwner:(id:string|null)=>{user.value=id?{id}:null},setAnonymous:()=>{user.value={id:'owner',is_anonymous:true}},failNext:(route:string,code?:string,applied=false)=>{nextFailure={route,code,applied}},state:()=>({calls:[...calls],queries:[...queries],apiCalls:[...apiCalls],bodies:[...bodies]})},setChallengeError:(value:string)=>{challengeError=value},useNuxtApp:()=>({$supabase:supabase}),useAuth:()=>({user,accessToken:async()=>user.value?'fixture-token':null}),useRuntimeConfig:()=>({public:{supabaseUrl:'https://example.test',apiBaseUrl:'https://api.example.test',staticDashboard:staticMode,rolloutFormsPilot:true,rolloutFormsResponses:params.get('responses')==='1'}}),$fetch:apiOrNitroFetch})
+Object.assign(globalThis,vue,{formFixture:{calls,queries,apiCalls,bodies,setOwner:(id:string|null)=>{user.value=id?{id}:null},setAnonymous:()=>{user.value={id:'owner',is_anonymous:true}},failNext:(route:string,code?:string,applied=false)=>{nextFailure={route,code,applied}},state:()=>({calls:[...calls],queries:[...queries],apiCalls:[...apiCalls],bodies:[...bodies]})},setChallengeError:(value:string)=>{challengeError=value},useNuxtApp:()=>({$supabase:supabase}),useAuth:()=>({user,accessToken:async()=>user.value?'fixture-token':null}),useRuntimeConfig:()=>({public:{supabaseUrl:'https://example.test',apiBaseUrl:'https://api.example.test',staticDashboard:staticMode,rolloutFormsPilot:true,rolloutFormsNotifications:params.get('notifications')==='1',rolloutFormsResponses:params.get('responses')==='1'}}),$fetch:apiOrNitroFetch})
 const app=createApp(WebsiteForms,{websiteId:SITE,fqdn:'www.example.com',mode})
 app.component('UButton',defineComponent({inheritAttrs:false,setup(_,{slots,attrs}){return()=>h('button',attrs,slots.default?.())}}))
 app.mount('#app')
