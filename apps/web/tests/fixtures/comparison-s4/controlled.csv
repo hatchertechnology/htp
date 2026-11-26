@@ -1,0 +1,8 @@
+url,rule,state
+https://example.com/,missing_title,absent
+https://example.com/long,missing_title,absent
+https://example.com/emoji,missing_title,present
+https://example.com/empty,missing_title,absent
+https://example.com/combining,missing_description,absent
+https://example.com/%E6%97%A5%E6%9C%AC,missing_description,present
+https://example.com/,vendor_rule,present
