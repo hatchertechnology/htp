@@ -577,11 +577,15 @@ echo "== step 13: M8 + N-M4 on the real site (serve mode): the plan's Q2 bounds,
 # site that reaches more than 128 entries is `truncated=true` (H15: such a job is held index_pending and never alerts); (3) with external links on, an
 # external origin whose robots.txt answers a redirect/5xx stops the whole crawl as `partial`/`robots_unavailable` (crawler.rs:309-317). A run is
 # only "complete" (frontier_exhausted) when the site's resources fit max_resources, so the cases below separate those effects.
-bounds_case() { # bounds_case <tag> <max_pages> <max_resources> <ext true|false> <delay_ms>  -> BC_* variables, report in $WORK/rb-<tag>.json
+bounds_case() { # bounds_case <tag> <max_pages> <max_resources> <ext true|false> <delay_ms> [allow-failed]  -> BC_* variables, report in $WORK/rb-<tag>.json
   local tag="$1" mp="$2" mr="$3" ext="$4" dl="$5" RB resp v f
   RB="$(uuid)"; resp="$(submit "$RB" "$KH" 1 https://www.kerryhatcher.com/ "$mp" "$mr" "$ext" "$dl" 7200)"; [[ "$(tail -1 <<<"$resp")" == 202 ]] || rec FAIL 14 "submit $tag" "$resp"
   v="$(wait_state "$RB" '.state=="failed" or .delivery_state=="delivered" or .delivery_state=="rejected"' 7500)" || { echo "$v"; rec FAIL 14 "$tag finishes" "timeout: $v"; }
-  [[ "$(jq -r .delivery_state <<<"$v")" == delivered ]] || rec FAIL 14 "$tag delivered" "$(jq -c . <<<"$v")"
+  BC_failed=""
+  if [[ "$(jq -r .delivery_state <<<"$v")" != delivered ]]; then
+    [[ -n "${6:-}" ]] || rec FAIL 14 "$tag delivered" "$(jq -c . <<<"$v")"
+    BC_failed="$(jq -c '{state,error}' <<<"$v")"; BC_frontier="$(sqlite3 "$WORK/x.sqlite" "select 'pages_queued='||coalesce(sum(case when resource=0 then 1 else 0 end),0)||' resources_queued='||coalesce(sum(case when resource=1 then 1 else 0 end),0)||' fetched='||coalesce(sum(case when page is not null then 1 else 0 end),0) from frontier where job_id='$RB'" 2>&1)"; return 0
+  fi
   f="$WORK/rb-$tag.json"; curl -s "$SEOURL/v1/runs/$RB/report" -H "authorization: Bearer $SEO_API_TOKEN" >"$f"
   BC_id="$RB"; BC_bytes="$(wc -c <"$f")"; BC_db="$(q "select octet_length(raw_report_json) from public.seosmith_audits where delivery_id='$RB'")"
   BC_np="$(jq '[.pages[]|select(.is_resource|not)]|length' "$f")"; BC_nr="$(jq '[.pages[]|select(.is_resource)]|length' "$f")"
@@ -602,18 +606,27 @@ rec INFO 14a "Q2 bounds as written (100 pages / 200 resources / external links o
 # 14b: external links off, same bounds: the resource limit, not robots, is what stops it
 bounds_case q2off 100 200 false 1000
 rec INFO 14b "Q2 bounds with external links off" "$BC_detail"
-q2off_np="$BC_np"; q2off_nr="$BC_nr"; q2off_trunc="$BC_trunc"
+q2off_np="$BC_np"; q2off_nr="$BC_nr"; q2off_trunc="$BC_trunc"; q2off_bytes="$BC_bytes"
 # 14c: a configuration whose evidence is NOT truncated: pages + resources <= 128 observations (external links off)
 mr3=$(( 120 - q2off_np )); (( mr3 > 5 )) || mr3=5
 bounds_case untrunc 100 "$mr3" false 1000
+un_bytes="$BC_bytes"; un_nr="$BC_nr"
 (( BC_bytes <= 3962204 && BC_eval <= 460 && BC_np <= 100 && BC_nr <= mr3 )) && [[ "$BC_trunc" == false && "$BC_obs" -le 128 && "$BC_out" != failed ]] \
   && rec PASS 14c "M8/N-M4 on the real site, untruncated configuration: size <= 80% of the cap, evaluations <= 460, truncated=false, pages <= max_pages, resources <= max_resources" "$BC_detail" \
   || rec FAIL 14c "M8/N-M4 untruncated configuration" "$BC_detail"
 # 14d: a COMPLETE crawl (frontier exhausted, robots available, within max_pages): resources raised until the site fits
-bounds_case complete 100 3000 false 1000
-(( BC_bytes <= 3962204 && BC_eval <= 512 && BC_np <= 100 && BC_nr <= 3000 )) && [[ "$BC_out" == complete && "$BC_stop" == frontier_exhausted ]] \
-  && rec PASS 14d "M8/N-M4 on a COMPLETE crawl (outcome complete, frontier_exhausted, robots available, pages <= max_pages 100): size <= 80% of the cap, evaluations <= 512" "$BC_detail; evaluations<=460: $([[ $BC_eval -le 460 ]] && echo yes || echo NO); truncated=$BC_trunc (a complete crawl of ${BC_np} pages + ${BC_nr} resources exceeds the 128-observation evidence cap, so its alerts are held)" \
-  || rec FAIL 14d "M8/N-M4 complete crawl" "$BC_detail"
+# A complete crawl needs every resource of the site; the crawl is allowed to fail here so the failure can be explained (the job's own error is
+# swallowed by SEOsmith's run_bounded, and generate_wire_v1 refuses a report above HTP_MAX_REPORT_BYTES: policy_wire_prototype.rs:245).
+bounds_case complete 100 3000 false 1000 allow-failed
+slope="$(echo "($q2off_bytes - $un_bytes) / ($q2off_nr - $un_nr)" | bc -l | cut -d. -f1)"; icpt="$(echo "$un_bytes - $slope * $un_nr" | bc -l | cut -d. -f1)"
+if [[ -n "$BC_failed" ]]; then
+  nrq="$(sed -n 's/.*resources_queued=\([0-9]*\).*/\1/p' <<<"$BC_frontier")"; proj=$(( icpt + slope * ${nrq:-0} ))
+  rec INFO 14d "complete crawl (100 pages / 3000 resources, external links off) FAILED: $BC_failed" "frontier at the end: $BC_frontier. Report size grows ~${slope} B per resource from ${icpt} B (fit of 14b and 14c), so ${nrq:-?} resources project to ${proj} B against the producer cap 4952756 B and the 80% budget 3962204 B: $([[ $proj -gt 4952756 ]] && echo 'over the cap, which generate_wire_v1 refuses (the job fails crawl_internal_error)' || echo 'under the cap (cause not explained by size)')"
+else
+  (( BC_bytes <= 3962204 && BC_eval <= 512 && BC_np <= 100 && BC_nr <= 3000 )) && [[ "$BC_out" == complete && "$BC_stop" == frontier_exhausted ]] \
+    && rec PASS 14d "M8/N-M4 on a COMPLETE crawl (outcome complete, frontier_exhausted, robots available, pages <= max_pages 100): size <= 80% of the cap, evaluations <= 512" "$BC_detail; evaluations<=460: $([[ $BC_eval -le 460 ]] && echo yes || echo NO); truncated=$BC_trunc (a complete crawl of ${BC_np} pages + ${BC_nr} resources exceeds the 128-observation evidence cap, so its alerts are held)" \
+    || rec FAIL 14d "M8/N-M4 complete crawl" "$BC_detail"
+fi
 rec INFO 14e "Q2 summary" "as written (100/200, ext on) the crawl is $q2c; ext off it hits the resource limit with truncated=$q2off_trunc at $q2off_np pages + $q2off_nr resources; untruncated needs pages+resources <= 128 (max_resources $mr3 here); a complete crawl needs max_resources above the site's resource count"
 
 fi

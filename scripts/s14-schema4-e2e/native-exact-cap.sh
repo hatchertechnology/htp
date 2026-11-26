@@ -9,6 +9,8 @@
 #   * the cap fixture's request id is rewritten (prep.mjs) and its summary regenerated with the real `admit`;
 #   * the two inserts that would collide become `on conflict ... do nothing`, and the cap deliveries use the
 #     genuine pairing's binding token (one website, one binding);
+#   * the runner's hand-made re-index step also deletes the observations/evaluations the commit trigger already wrote
+#     (otherwise it dies on seosmith_lifecycle_observations_pkey for any fixture that carries evidence);
 #   * everything else (migration order, ACL checks, the N-M3 timing at --cpus 0.2 --memory 1g, the 10 s gate)
 #     is H2's runner unchanged.
 #
@@ -38,6 +40,9 @@ def rep(old, new):
     assert s.count(old) == 1, old
     s = s.replace(old, new)
 rep('''cap_token="native-worker-token-0000000000000000000000000002"''', '''cap_token="$token"''')
+# The runner re-indexes each timed commit by hand ("lifecycle trigger" stage) after deleting only the `indexed` row; with a fixture that carries
+# evidence the commit's own trigger has already written observations/evaluations, so the second index fails on seosmith_lifecycle_observations_pkey.
+rep('''delete from public.seosmith_lifecycle_indexed where delivery_id='$id';''', '''delete from public.seosmith_lifecycle_evaluations where delivery_id='$id'; delete from public.seosmith_lifecycle_observations where delivery_id='$id'; delete from public.seosmith_lifecycle_indexed where delivery_id='$id';''')
 rep(''',('$cap_site','00000000-0000-4000-8000-0000000000cc','example.com');''', ''',('$cap_site','00000000-0000-4000-8000-0000000000cc','example.com') on conflict (id) do nothing;''')
 rep(''',('$cap_site','$cap_tok_sha');''', ''',('$cap_site','$cap_tok_sha') on conflict (website_id) do nothing;''')
 open(p, 'w').write(s)
