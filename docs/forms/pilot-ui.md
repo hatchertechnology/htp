@@ -1,40 +1,58 @@
-# Inbox-only Forms pilot UI
+# Dashboard Forms page (pilot UI)
 
-The pilot UI is a separately gated presentation, not a database authorization or activation. `rolloutFormsPilot` is false by default; the server-side `formsPilotEnabled` is also false and the private `formsPilotWebsiteId`/`formsPilotOwnerId` bindings are empty. The browser receives no configured binding: it asks the server about the current website, and the server verifies the bearer through the existing dashboard-auth helper, requires the configured owner/site pair and confirms ownership through the normal authenticated website API. Eligibility failures are closed and not cached. Never put real IDs, credentials or user-editable claims in source or public runtime configuration. The database owner/site gate remains authoritative for all direct RPCs, and an eligibility result is not a grant.
+The Forms page (`apps/web/app/pages/forms/index.vue`, component `WebsiteForms.vue`) is a separately gated presentation, not a database authorization or activation. Which surface it shows comes from `formsSurface()` (`apps/web/shared/utils/forms-availability.ts`): `rolloutFormsPilot=true` selects the **pilot** mode and wins over the legacy flag; otherwise `rolloutForms=true` selects the **legacy** mode; with both false the page shows "Forms are not available in this workspace yet" and renders nothing else. Both flags default false (`apps/web/nuxt.config.ts`).
 
-When pilot mode is selected, it takes precedence over the legacy `rolloutForms` UI flag and shows only an eligible site's host challenge and verification, form create/edit and existing owner inbox/export. Its setup uses the independently planned `begin_form_host_verification`, `form_host_challenge` (through the authenticated verifier) and `save_website_form` paths. No grant is made here. The pilot does not display or invoke status changes, response deletion, recipient management or delivery retry; it does not query recipient/job tables. Confirmation UI and its server endpoint are unavailable in pilot mode. When pilot mode is off, the existing legacy flag and behavior remain unchanged.
+## Pilot eligibility (fails closed)
 
-The private UI binding is a separate configuration from the API rollout flag, the DB approval gate and any worker rollout; all remain off/empty until separately reviewed and explicitly authorized. Before activation, integration must recheck the exact authenticated owner/site, any duplicate domain, ownership API, DB approval/grants and `form-verify` gateway policy, Fly trusted ingress, DNS operator and current source deployment. UI eligibility must not be treated as evidence that the database gate or service routes are safe. No notifications, mail, scheduler, DNS, secrets or live flags are enabled by this change. Owner deletion/emergency cleanup and same-ID reconciliation while the gate is revoked remain separate unresolved release requirements.
+Pilot mode never renders until an eligibility read resolves for the selected website:
 
-## Static dashboard build: owner inbox reads
+- **Nitro/SSR builds** ask the same-origin server route `GET /api/forms/pilot-eligibility?website_id=…` (`apps/web/server/utils/forms-pilot.ts`). The server checks `rolloutFormsPilot` and the private `formsPilotEnabled`/`formsPilotWebsiteId`/`formsPilotOwnerId` bindings, verifies the bearer through the existing dashboard-auth helper, requires the configured owner/site pair, and confirms ownership through the normal authenticated website API. Eligibility failures are closed and not cached.
+- **Static builds** (`HTP_WEB_BUILD_TARGET=static`, `NUXT_PUBLIC_STATIC_DASHBOARD=true`) have no Nitro server, so the browser calls the HTP API directly with the caller's bearer: `GET /websites/{id}/forms/pilot-eligibility`, which returns `{"eligible": bool}`. Any non-200, a missing boolean, or a thrown error fails closed. The private bindings never reach the browser.
+- An eligibility result is a UI gate, **not a grant**. The database owner/site gate remains authoritative for all direct RPCs, and API routes remain separately flag-gated.
 
-The static build (`HTP_WEB_BUILD_TARGET=static`, `NUXT_PUBLIC_STATIC_DASHBOARD=true`) has no Nitro server, so the browser calls the HTP API origin directly with the caller's bearer. The default Nitro/SSR build is unchanged and keeps its same-origin `/api/forms/pilot-eligibility` check and direct Supabase reads.
+While pilot eligibility is unresolved the Forms section renders nothing; a resolved negative shows "Forms aren't enabled for <fqdn>. The Forms pilot is limited to approved websites." When pilot mode is off, the existing legacy flag and behavior remain unchanged.
 
-- Pilot eligibility in static builds is `GET /websites/{id}/forms/pilot-eligibility`, which returns `{"eligible": bool}`. Any non-200, a missing boolean, or a thrown error fails closed. This is not a grant, and it is not a configured pilot binding (the static build has no private runtime config).
-- When the static pilot is eligible, the forms list and the response list (and CSV export) come from `GET /websites/{id}/forms` and `GET /websites/{id}/forms/{form_id}/responses`, paged with `limit=100` and `offset`. Responses are not read from `website_form_responses` in the browser.
-- Static pilot owner workflow (`apps/web/shared/utils/forms-owner-client.ts`, closed route allowlist, caller bearer only). No Supabase table, RPC or Edge Function runs on this path:
-  - hosts: `GET /websites/{id}/forms/hosts` (paged)
-  - edit form host selection: `GET /websites/{id}/forms/origins?form_id=` (paged)
-  - DNS begin: `POST /websites/{id}/forms/host-verifications` body `{"hostname"}`
-  - DNS confirm: `POST /forms/host-verifications/{host_id}/confirm` body `{"token"}`; the token is the 64-hex value from the begin `txt_value`
-  - form save: `POST /websites/{id}/forms`; absent `form_id` creates, present `form_id` updates
-- Outcome handling: only the documented codes are definite refusals. Transport errors, timeouts, 5xx, unlisted codes and a success body that does not match the request are unknown. After an unknown confirm, the host list is reloaded and Verify stays disabled until the page is reloaded; an unknown create or update disables Save and is not retried.
-- Recipient, delivery-job, status, delete and retry paths are not shown in pilot mode and make no browser or API call.
-- `rolloutFormsPilot` stays false by default. Nothing in this change sets it or any binding.
+## Reads and writes
 
-### Required API CORS (not part of this client change)
+- **Static pilot builds** read forms and responses through the authenticated owner inbox API (`apps/web/shared/utils/forms-inbox-client.ts`): `GET /websites/{id}/forms` and `GET /websites/{id}/forms/{form_id}/responses`, paged with `limit=100` and `offset`. Responses are never read from `website_form_responses` in the browser. Hosts, form-origin selection, DNS begin/confirm and form saves go through the closed owner-route allowlist (`apps/web/shared/utils/forms-owner-client.ts`, caller bearer only; no Supabase table, RPC or Edge Function runs on this path).
+- **Legacy and non-static pilot builds** keep the existing direct Supabase RLS reads and RPC writes (`begin_form_host_verification`, `save_website_form`, `set_website_form_response_status`, `delete_website_form_response`, recipient RPCs).
+- Outcome handling: only the documented codes are definite refusals. Transport errors, timeouts, 5xx, unlisted codes and a success body that does not match the request are unknown. After an unknown DNS confirm, Verify stays disabled until the host list reload shows the state; an unknown create or update disables Save and is not retried until the owner reloads and reconciles.
 
-The dashboard CORS allowlist currently covers only `/websites` and `/websites/{id}`. A static browser origin needs exact-origin GET, POST and OPTIONS (`Authorization` and `Content-Type` request headers) on:
+## Page layout
 
-- `/websites/{id}/forms` (GET and POST)
-- `/websites/{id}/forms/{form_id}/responses`
-- `/websites/{id}/forms/pilot-eligibility`, `/hosts`, `/origins` (GET)
-- `/websites/{id}/forms/host-verifications` (POST)
-- `/forms/host-verifications/{host_id}/confirm` (POST, outside `/websites`)
+With a selected website the page shows a form selector (each form's name plus its Active/Paused state) and two tabs, **Responses** and **Setup**.
 
-This CORS change is a separate API change and is not made here. Until it lands, the static pilot path cannot run from a browser.
+### Responses tab
 
-### Missing for actual activation
+`FormsSubmissionsTable.vue` renders the selected form's responses with:
 
-- Merged API routes for eligibility, hosts, origins, save, and DNS begin/confirm (PR 100 and PR 101 must land first).
-- Activation still requires the DB gate, the owner/site pilot binding, the ownership API and the release checks already listed above.
+- **Columns**: the form's fields in declared order, then any extra value keys sorted by key (`submissionColumns`); labels for extra keys are the keys.
+- **Status**: each row carries `new`, `reviewed` or `spam`.
+- **Client-side table controls** over the loaded rows: status filter checkboxes (at least one stays selected), a received-from/received-to date range in the viewer's local timezone, and a case-insensitive NFKC substring search across values. Sorting toggles between Received, Status and any field column; empty field values sort last. When filters hide rows the table shows "Showing X of Y loaded". Sorting, filters and search apply only to the loaded rows; when more pages exist the table says so, and "Load next 100" appends the next page.
+- **Row actions**: View (all values), per-row Mark reviewed / Mark spam / Delete with an explicit confirmation ("Permanently delete this response and its notification history?"), and Mark new in static pilot builds only.
+- **Bulk status**: selecting rows (including rows across loaded pages) enables Mark reviewed / Mark spam / Mark new. Bulk status is status only — it acts on every selected loaded row, stops on the first refusal or unknown outcome, and reports succeeded, failed, unknown and not-attempted counts. One reload after a successful or refused bulk pass keeps the table on the bounded first page without dropping selected rows mid-loop.
+- **Management availability**: status and delete are offered in legacy non-static builds (direct RPCs) and in static pilot builds only when `rolloutFormsResponses=true` routes them through the owner response API (`PATCH …/responses/{id}/status`, `DELETE …/responses/{id}`; see [owner-response-api](owner-response-api.md)). Pilot mode on a Nitro/SSR build offers no response management. An unknown outcome locks the controls until the inbox reloads.
+- **CSV export**: "Export all responses (CSV)" downloads `<form_key>.csv` containing every response for the form, not only the loaded or filtered rows. Columns are `received_at`, `status`, then the same keys as the table. Times are UTC and filters are not applied. Values are quoted with `""` escaping, and a leading quote is inserted before any cell whose text starts (after whitespace/control characters) with `=`, `+`, `@` or `-` to neutralize spreadsheet formula injection (`apps/web/app/utils/forms-csv.ts`).
+
+### Setup tab
+
+- **Verify a website host**: create a DNS challenge for a hostname, publish the TXT record, and verify it. The challenge expires after 24 hours; a new challenge invalidates the old proof. Hosts and their verification state are listed below.
+- **Create or edit a form**: form name, form key (`[a-z][a-z0-9_]{0,63}`), field rows (key, label, type `text`/`email`/`telephone`/`multiline`, maximum characters 1–5000, a Required checkbox), 1–32 fields, and the permitted verified hosts. "Accept submissions" toggles the active flag; an active form requires at least one verified host. Each form's submission endpoint is shown as `<apiBaseUrl>/public/forms/<form id>`.
+- **Field flags**: each field declares `required` and `max_length`. The pilot form's flags follow owner decision D4 (2026-11-26): **name, email and message required; phone optional**, applied through `save_website_form` with the same keys and limits. Required fields reject empty values at ingress with `validation_failed` and `fields`; see [contract](contract.md).
+
+### Notifications
+
+**Notifications are implemented but not configured in production** (owner decision D3, 2026-11-26): the pilot runs inbox-only, with zero recipients, no delivery schedule and no delivery credentials. The UI has two notification surfaces:
+
+- **Legacy non-static builds** show notification recipients and per-response delivery jobs read directly from Supabase, with add-recipient, disable and retry controls. A retry of an `uncertain` job requires confirming that the provider may already have delivered the message.
+- **Static pilot builds** show the separate `FormsNotifications.vue` panel only when the eligibility read reported `notifications_available`, the build is static, and `rolloutFormsNotifications=true`; it reads recipients and delivery jobs through the owner notification API and offers request-verification, disable and retry. Queue acceptance does not confirm verification or delivery, and "sent" records provider acceptance, not inbox arrival.
+
+Neither surface implies that delivery is configured; see [contract](contract.md) for the production state and the worker requirements.
+
+## Required API CORS
+
+The dashboard CORS allowlist (`apps/api/src/dashboard_cors.rs`) covers the exact forms routes the static pilot needs: `/websites/{id}/forms` (GET, POST), `/websites/{id}/forms/{form_id}/responses` (GET) and `/responses/{id}` (GET, DELETE), `/responses/{id}/status` (PATCH), `/forms/pilot-eligibility`, `/forms/hosts`, `/forms/origins` (GET), `/forms/host-verifications` (POST), `/forms/host-verifications/{host_id}/confirm` (POST), and the notification collection routes (recipients GET/POST with disable, delivery-jobs GET with retry). Methods and paths outside this allowlist are refused. This is a separate API concern from the page itself; the static build cannot run from a browser where the allowlist is not deployed.
+
+## Activation boundaries
+
+The private UI binding is a separate configuration from the API rollout flag, the DB approval gate and any worker rollout; all remain off/empty until separately reviewed and explicitly authorized. UI eligibility must not be treated as evidence that the database gate or service routes are safe. No notifications, mail, scheduler, DNS, secrets or live flags are enabled by UI changes. Owner deletion/emergency cleanup and same-ID reconciliation while the gate is revoked remain separate unresolved release requirements.
