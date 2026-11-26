@@ -38,6 +38,15 @@ archived under `v1.3/historical-v1.2-source/` and the current shared source is
 pinned by `v1.3/skills.lock.json`. No host pin is promoted and no producer is
 enabled.
 
+The [parity read profile 1.4.0](v1.4/README.md) adds three owner-scoped stored
+parity reads and an additive amendment of the 1.3.0 audit-read `availability`
+field in `v1.4/audit-read-availability.json`: six event producer codes and two
+operational codes, with `producer_unavailable` kept as the held value. Only
+`producer_active` lets an empty page be read as no events or episodes; every
+other code means events may be missing or delayed. The frozen 1.3.0 bytes and
+validator are unchanged and still reject the new codes, no host pin is promoted
+and no producer is enabled.
+
 ## Authorization and discovery
 
 HTP uses the host's interactive OAuth flow against the secured MCP endpoint.

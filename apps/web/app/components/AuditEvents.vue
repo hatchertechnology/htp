@@ -49,7 +49,7 @@ onBeforeUnmount(() => { generation++ })
     <p v-else-if="!events.loaded" role="status" class="compact-empty">Reading stored events…</p>
     <template v-if="events.loaded">
       <p :class="availabilityNotice(events.availability, events.rows.length, 'events', events.producer).tone === 'notice' ? 'form-notice' : 'report-caption'" role="status">{{ availabilityNotice(events.availability, events.rows.length, 'events', events.producer).text }}</p>
-      <p v-if="!events.rows.length" class="compact-empty">{{ emptyText('events') }}</p>
+      <p v-if="!events.rows.length" class="compact-empty">{{ emptyText('events', events.availability) }}</p>
       <div v-else class="table-scroll"><table><caption class="sr-only">Stored audit events, newest first</caption><thead><tr><th scope="col">Recorded ({{ zone() }})</th><th scope="col">Event</th><th scope="col">Severity</th><th scope="col">Rule</th><th scope="col">Page or resource</th><th scope="col">Audit</th></tr></thead>
         <tbody><tr v-for="row in events.rows" :key="row.id"><td><time v-if="row.created_at" :datetime="row.created_at" :title="row.created_at">{{ stamp(row.created_at) }}</time><template v-else>Unknown</template></td><td>{{ kindLabel(row.kind) }}</td><td>{{ unknownText(row.severity) }}</td><td>{{ unknownText(row.rule) }}</td><td>{{ row.source_locator ?? row.entity_id ?? 'Unknown' }}</td><td>{{ unknownText(row.delivery_id) }}</td></tr></tbody></table></div>
       <div v-if="events.hasMore" class="seo-pagination"><button class="refresh-control" type="button" :disabled="events.busy" @click="loadEvents(true)">Older events</button></div>
@@ -60,7 +60,7 @@ onBeforeUnmount(() => { generation++ })
     <p v-else-if="!episodes.loaded" role="status" class="compact-empty">Reading stored episodes…</p>
     <template v-if="episodes.loaded">
       <p :class="availabilityNotice(episodes.availability, episodes.rows.length, 'episodes').tone === 'notice' ? 'form-notice' : 'report-caption'" role="status">{{ availabilityNotice(episodes.availability, episodes.rows.length, 'episodes').text }}</p>
-      <p v-if="!episodes.rows.length" class="compact-empty">{{ emptyText('episodes') }}</p>
+      <p v-if="!episodes.rows.length" class="compact-empty">{{ emptyText('episodes', episodes.availability) }}</p>
       <div v-else class="table-scroll"><table><caption class="sr-only">Stored provider failure episodes, newest first</caption><thead><tr><th scope="col">Opened ({{ zone() }})</th><th scope="col">State</th><th scope="col">Recovered ({{ zone() }})</th><th scope="col">Source</th><th scope="col">Error class</th></tr></thead>
         <tbody><tr v-for="row in episodes.rows" :key="row.id"><td><time v-if="row.opened_at" :datetime="row.opened_at" :title="row.opened_at">{{ stamp(row.opened_at) }}</time><template v-else>Unknown</template></td><td>{{ episodeState(row) === 'open' ? 'Open: not yet recovered' : episodeState(row) === 'recovered' ? 'Recovered' : 'Unknown' }}</td><td><time v-if="row.recovered_at" :datetime="row.recovered_at" :title="row.recovered_at">{{ stamp(row.recovered_at) }}</time><template v-else>{{ episodeState(row) === 'open' ? 'Not recovered' : 'Unknown' }}</template></td><td>{{ unknownText(row.source) }}</td><td>{{ unknownText(row.error_class) }}</td></tr></tbody></table></div>
       <div v-if="episodes.hasMore" class="seo-pagination"><button class="refresh-control" type="button" :disabled="episodes.busy" @click="loadEpisodes(true)">Older episodes</button></div>

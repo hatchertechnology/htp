@@ -97,9 +97,35 @@ describe('availability is never a clean result', () => {
     expect(parseEventsPage(eventsPage())!.producer).toBeNull()
     expect(parseEpisodesPage(episodesPage({ availability: 'producer_active', producer: { operations_enabled: true } }))!.availability).toBe('producer_active')
   })
-  it('keeps the empty text separate from the availability warning', () => {
-    expect(emptyText('events')).toBe('No audit events are stored for this website.')
-    expect(emptyText('episodes')).toBe('No provider failure episodes are stored for this website.')
+  it('says nothing is stored only when producer_active', () => {
+    expect(emptyText('events', 'producer_active')).toBe('No audit events are stored for this website.')
+    expect(emptyText('episodes', 'producer_active')).toBe('No provider failure episodes are stored for this website.')
+  })
+  it.each([
+    ['producer_unavailable', /Event processing is off/],
+    ['producer_not_enqueuing', /Not enqueuing yet/],
+    ['producer_starting', /Starting: the runner has not run yet/],
+    ['producer_stale', /Stale: no recent run/],
+    ['producer_degraded', /Degraded: the last run had errors or delays/],
+  ])('%s gives every empty list a state-specific heading that never says none', (code, lead) => {
+    for (const noun of ['events', 'episodes'] as const) {
+      const text = emptyText(noun, code)
+      expect(text).toMatch(lead)
+      expect(text).toMatch(/not a clean result/)
+      expect(text).toMatch(new RegExp(`${noun} may be missing or delayed`))
+      expect(text).not.toMatch(/are stored/)
+    }
+  })
+  it('never reads an unreported or unrecognised code as an empty history', () => {
+    const unreported = emptyText('events', null)
+    expect(unreported).toMatch(/availability was not reported/)
+    expect(unreported).toMatch(/not a clean result/)
+    const unrecognised = emptyText('events', 'active')
+    expect(unrecognised).toMatch(/does not recognise/)
+    expect(unrecognised).toMatch(/not a clean result/)
+    for (const code of [null, 'active', 'producer_unavailable', 'producer_degraded']) {
+      expect(emptyText('events', code)).not.toMatch(/are stored/)
+    }
   })
 })
 

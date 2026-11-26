@@ -80,8 +80,23 @@ export function availabilityNotice(availability: string | null, rowCount: number
   return { tone: 'notice', text: `${lead} ${tail}${queue}` }
 }
 
-export function emptyText(noun: 'events' | 'episodes'): string {
-  return noun === 'events' ? 'No audit events are stored for this website.' : 'No provider failure episodes are stored for this website.'
+// Empty-state heading. "Nothing is stored" wording is reserved for producer_active;
+// every other code names the producer state and says the page is not a clean result.
+const EMPTY_STATE: Record<string, string> = {
+  producer_unavailable: 'Event processing is off',
+  producer_not_enqueuing: 'Not enqueuing yet',
+  producer_starting: 'Starting: the runner has not run yet',
+  producer_stale: 'Stale: no recent run',
+  producer_degraded: 'Degraded: the last run had errors or delays',
+}
+
+export function emptyText(noun: 'events' | 'episodes', availability: string | null): string {
+  const label = noun === 'events' ? 'audit events' : 'provider failure episodes'
+  if (availability === PRODUCER_ACTIVE) return `No ${label} are stored for this website.`
+  const lead = availability === null
+    ? 'Producer availability was not reported'
+    : EMPTY_STATE[availability] ?? `Producer availability is "${availability.replaceAll('_', ' ')}", which this page does not recognise`
+  return `${lead}, so this empty list is not a clean result and ${noun} may be missing or delayed.`
 }
 
 export function episodeState(row: EpisodeRow): 'open' | 'recovered' | 'unknown' {

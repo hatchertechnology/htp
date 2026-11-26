@@ -47,8 +47,9 @@ try {
 
   // Empty history is explicit and never a clean result while the producer is off.
   await page.goto(url('empty'))
-  await section.getByText('No audit events are stored for this website.').waitFor()
+  await section.getByText(/Event processing is off/).first().waitFor()
   assert.match(await section.innerText(), /empty list of events is not a clean result/)
+  assert.doesNotMatch(await section.innerText(), /No audit events are stored/)
 
   // A malformed page is a read failure, never an empty history.
   await page.goto(url('malformed'))
@@ -61,6 +62,7 @@ try {
   assert.doesNotMatch(await section.innerText(), /Alert production is not active yet/)
   await page.goto(url('active-empty'))
   await section.getByText('An empty list means no events are stored.').waitFor()
+  await section.getByText('No audit events are stored for this website.').waitFor()
 
   // Every other producer code is a notice; an empty list is never clean and queue counts are shown.
   for (const [mode, lead] of [['not-enqueuing', /not queueing new events/], ['starting', /has not run yet/], ['stale', /not run for at least 5 minutes/], ['degraded', /errors or delays/]]) {
@@ -72,11 +74,17 @@ try {
     assert.match(text, /4 pending and 2 held for this site/, mode)
     assert.doesNotMatch(text, /An empty list means no events/, mode)
   }
-  await page.goto(url('degraded-empty'))
-  await section.getByText('No audit events are stored for this website.').waitFor()
-  assert.match(await section.innerText(), /empty list of events is not a clean result/)
-  assert.doesNotMatch(await section.innerText(), /An empty list means no events/)
+  // An empty list under any other code names that state and never says "none are stored".
+  for (const [mode, lead] of [['not-enqueuing-empty', /Not enqueuing yet/], ['starting-empty', /Starting: the runner has not run yet/], ['stale-empty', /Stale: no recent run/], ['degraded-empty', /Degraded: the last run had errors or delays/]]) {
+    await page.goto(url(mode))
+    await section.getByText(lead).first().waitFor()
+    const text = await section.innerText()
+    assert.match(text, /empty list of events is not a clean result/, mode)
+    assert.doesNotMatch(text, /No audit events are stored/, mode)
+    assert.doesNotMatch(text, /No provider failure episodes are stored/, mode)
+    assert.doesNotMatch(text, /An empty list means no events/, mode)
+  }
 
   assert.deepEqual(errors, [])
-  console.log('AuditEvents fixture passed: events, episodes, local time, safe rendering, paging, retry, empty, malformed and every producer state.')
+  console.log('AuditEvents fixture passed: events, episodes, local time, safe rendering, paging, retry, malformed, and every producer state including its empty copy.')
 } finally { await browser.close() }
