@@ -1,0 +1,9 @@
+== order=prod: 50 base + 5 pending + 2 new = 57 migrations (head 66226f9)
+== building the receiver admit example from /mnt/storage/worktrees/s4-x (66226f9)
+== timing fixture: supplied fixture, 4952756 bytes
+== starting disposable network-none PG17 (public.ecr.aws/supabase/postgres:17.11.0.004)
+== applying 57 migrations (prod order)
+applied 57 migrations; sorted-version md5 57947dcd91ce0e1a54a1702fe2c347ae
+ERROR:  duplicate key value violates unique constraint "websites_pkey"
+DETAIL:  Key (id)=(00000000-0000-4000-8000-000000000002) already exists.
+EXIT 3
