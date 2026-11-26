@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { compareIndependent, pageEntityId, sha256Hex, CURRENT_SEMANTICS, isSupportedSemantics, type Observation } from '../shared/utils/independent-audit'
+import { compareIndependent, pageEntityId, sha256HexSync, CURRENT_SEMANTICS, isSupportedSemantics, type Observation } from '../shared/utils/independent-audit'
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/comparison-s4/${name}`, import.meta.url))
 const load = (name: string) => JSON.parse(fixture(name).toString('utf8'))
@@ -23,9 +23,9 @@ describe('s15-metadata-2 (schema 4)', () => {
   })
 
   it('computes SEOsmith entity ids, and sha256, exactly', () => {
-    expect(sha256Hex('')).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')
-    expect(sha256Hex('abc'.repeat(100))).toBe(createHash('sha256').update('abc'.repeat(100)).digest('hex'))
-    expect(sha256Hex('日本語 é 😀'.repeat(40))).toBe(createHash('sha256').update('日本語 é 😀'.repeat(40)).digest('hex'))
+    expect(sha256HexSync('')).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')
+    expect(sha256HexSync('abc'.repeat(100))).toBe(createHash('sha256').update('abc'.repeat(100)).digest('hex'))
+    expect(sha256HexSync('日本語 é 😀'.repeat(40))).toBe(createHash('sha256').update('日本語 é 😀'.repeat(40)).digest('hex'))
     for (const v of vectors.entities) expect(pageEntityId(v.url)).toBe(v.entity_id)
   })
 
@@ -61,13 +61,70 @@ describe('s15-metadata-2 (schema 4)', () => {
     expect(flipped.map(r => r.seosmith)).toEqual(rows.map(r => r.seosmith))
   })
 
-  it('never reports missing_description as absent, even for a pass evaluation', () => {
+  it('never reports missing_description as absent, and explains a pass from the rule coverage', () => {
     const report = load('crawl.json')
     const forged = structuredClone(report)
     const id = pageEntityId('https://fixture.invalid/')
+    const descriptionCoverage = forged.evidence_contract.coverage.find((c: { rule: string }) => c.rule === 'missing_description')
+    descriptionCoverage.unknown = 6
+    descriptionCoverage.unknown_reasons = { legacy_not_instrumented: 6 }
     const evaluation = forged.evidence_contract.evaluations.find((e: { entity_id: string; rule: string }) => e.entity_id === id && e.rule === 'missing_description')
     evaluation.outcome = 'pass'
-    expect(find(compare2(both('https://fixture.invalid/'), forged), 'https://fixture.invalid/', 'missing_description')).toMatchObject({ seosmith: 'unknown', reason: 'absence_not_established' })
+    const row = find(compare2(both('https://fixture.invalid/'), forged), 'https://fixture.invalid/', 'missing_description')
+    expect(row).toMatchObject({ seosmith: 'unknown', category: 'unknown', reason: 'legacy_not_instrumented', reason_count: 6 })
+    // With no coverage reason key at all the documented fallback is absence_not_established.
+    const clean = structuredClone(report)
+    clean.evidence_contract.evaluations.find((e: { entity_id: string; rule: string }) => e.entity_id === id && e.rule === 'missing_description').outcome = 'pass'
+    expect(find(compare2(both('https://fixture.invalid/'), clean), 'https://fixture.invalid/', 'missing_description')).toMatchObject({ seosmith: 'unknown', reason: 'absence_not_established' })
+  })
+
+  it('takes the unknown reason and count from coverage for unknown, not_applicable and other outcomes', () => {
+    const url = 'https://fixture.invalid/'
+    const forged = structuredClone(load('crawl.json'))
+    const id = pageEntityId(url)
+    const coverage = forged.evidence_contract.coverage.find((c: { rule: string }) => c.rule === 'missing_title')
+    coverage.unknown = 10
+    // Largest count first: contract_limit 7 beats source_unavailable 3.
+    coverage.unknown_reasons = { source_unavailable: 3, contract_limit: 7 }
+    const evaluation = forged.evidence_contract.evaluations.find((e: { entity_id: string; rule: string }) => e.entity_id === id && e.rule === 'missing_title')
+    const row = (outcome: string, perRowReason: string | null = null) => {
+      evaluation.outcome = outcome
+      evaluation.unknown_reason = perRowReason
+      return find(compare2(both(url), forged), url, 'missing_title')
+    }
+    const expected = { seosmith: 'unknown', category: 'unknown', reason: 'contract_limit', reason_count: 7 }
+    // The per-row unknown_reason must not override the rule's coverage reason.
+    expect(row('unknown', 'source_unavailable')).toMatchObject(expected)
+    expect(row('not_applicable')).toMatchObject(expected)
+    expect(row('vendor_outcome')).toMatchObject(expected)
+    // State transitions do not move: a fail is still present and a clean pass is still absent.
+    expect(row('fail')).toMatchObject({ seosmith: 'present', category: 'seosmith_only' })
+    coverage.unknown = 0
+    coverage.unknown_reasons = {}
+    expect(row('pass')).toMatchObject({ seosmith: 'absent' })
+  })
+
+  it('falls back to coverage_unknown or unknown_outcome when coverage has no reason keys', () => {
+    const url = 'https://fixture.invalid/'
+    const forged = structuredClone(load('crawl.json'))
+    const id = pageEntityId(url)
+    const coverage = forged.evidence_contract.coverage.find((c: { rule: string }) => c.rule === 'missing_title')
+    const evaluation = forged.evidence_contract.evaluations.find((e: { entity_id: string; rule: string }) => e.entity_id === id && e.rule === 'missing_title')
+    evaluation.outcome = 'unknown'
+    evaluation.unknown_reason = null
+    coverage.unknown = 2
+    coverage.unknown_reasons = {}
+    expect(find(compare2(both(url), forged), url, 'missing_title')).toMatchObject({ seosmith: 'unknown', reason: 'coverage_unknown', reason_count: 2 })
+    coverage.unknown = 0
+    const unexplained = find(compare2(both(url), forged), url, 'missing_title')
+    expect(unexplained).toMatchObject({ seosmith: 'unknown', reason: 'unknown_outcome' })
+    expect(unexplained.reason_count).toBeUndefined()
+    // A missing evaluation still takes the coverage reason when one exists, else no_evaluation.
+    const missing = 'https://fixture.invalid/not-in-report'
+    expect(find(compare2(both(missing), forged), missing, 'missing_title')).toMatchObject({ seosmith: 'unknown', reason: 'no_evaluation' })
+    coverage.unknown = 3
+    coverage.unknown_reasons = { source_unavailable: 3 }
+    expect(find(compare2(both(missing), forged), missing, 'missing_title')).toMatchObject({ seosmith: 'unknown', reason: 'source_unavailable', reason_count: 3 })
   })
 
   it('explains unknown with the per-rule coverage reason key and count', () => {
@@ -111,7 +168,10 @@ describe('s15-metadata-2 (schema 4)', () => {
     expect(seosmith({ ...report, schema_version: 1 })).toBe('unknown')
     expect(seosmith({ ...report, schema_version: 5 })).toBe('unknown')
     expect(seosmith({ ...report, coverage_complete: false })).toBe('unknown')
+    // An extra fail-closed gate: a complete, untruncated report with another outcome is not comparable.
     expect(seosmith({ ...report, outcome: 'partial' })).toBe('unknown')
+    expect(find(compare2(both(url), { ...report, outcome: 'partial' }), url, 'missing_title').reason).toBe('report_not_comparable')
+    expect(seosmith({ ...report, outcome: undefined })).toBe('unknown')
     expect(seosmith({ ...report, evidence_contract: { ...report.evidence_contract, version: 2 } })).toBe('unknown')
     expect(seosmith({ ...report, evidence_contract: { ...report.evidence_contract, truncated: true } })).toBe('unknown')
     expect(seosmith({ ...report, evidence_contract: undefined })).toBe('unknown')

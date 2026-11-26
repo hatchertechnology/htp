@@ -137,8 +137,8 @@ function compareS15Metadata1(rows: Observation[], report: Report, assertedUnmodi
 }
 
 const K = new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2])
-/** Synchronous SHA-256 (hex) so the frozen comparison stays a pure, synchronous function. */
-export function sha256Hex(input: string): string {
+/** Synchronous SHA-256 (hex) so the frozen comparison stays a pure, synchronous function. Not named `sha256Hex`: the async helper in saved-semantics.ts owns that auto-imported name. */
+export function sha256HexSync(input: string): string {
   const data = new TextEncoder().encode(input), bits = data.length * 8
   const padded = new Uint8Array(((data.length + 9 + 63) >> 6) << 6)
   padded.set(data); padded[data.length] = 0x80
@@ -165,7 +165,7 @@ export function sha256Hex(input: string): string {
 }
 
 /** SEOsmith `entity_id` for a page: the URL is hashed exactly as the report spells it (no normalization). */
-export function pageEntityId(url: string): string { return `sha256:${sha256Hex(`seosmith-entity-v1\npage\n${url}`)}` }
+export function pageEntityId(url: string): string { return `sha256:${sha256HexSync(`seosmith-entity-v1\npage\n${url}`)}` }
 
 // Frozen implementation: add a new version rather than changing this after release.
 // Schema 4 reports. Matching is by SEOsmith entity_id; `evaluation_coverage_complete` is deliberately NOT a gate
@@ -192,6 +192,16 @@ function compareS15Metadata2(rows: Observation[], report: Report, assertedUnmodi
     const entries = Object.entries(coverage.get(rule)?.unknown_reasons || {}).filter(([, n]) => typeof n === 'number' && n > 0).sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1))
     return entries[0] ? { reason: entries[0][0], count: entries[0][1] } : null
   }
+  // R3-1/R3-5: every non-`present`/non-`absent` observation is explained by the rule's own coverage,
+  // never by a per-row evaluation field or an outcome string. Documented fallbacks when the coverage has
+  // no reason key: `no_evaluation` (only for a missing evaluation), `absence_not_established` (a `pass`
+  // that cannot establish absence, i.e. missing_description), `coverage_unknown` (an unknown count with
+  // no reason keys, carrying that count) and `unknown_outcome` (no unknown count to attribute).
+  const coverageReason = (rule: string, unknown: number, fallback: string): { reason: string; count?: number } => {
+    const top = topReason(rule)
+    if (top) return { reason: top.reason, count: top.count }
+    return unknown > 0 ? { reason: 'coverage_unknown', count: unknown } : { reason: fallback }
+  }
   const observe = (row: Observation): { state: Observation['state']; reason?: string; count?: number } => {
     if (!mappedRules.has(row.rule)) return { state: 'unknown' }
     if (!compatible) return { state: 'unknown', reason: 'report_not_comparable' }
@@ -200,18 +210,15 @@ function compareS15Metadata2(rows: Observation[], report: Report, assertedUnmodi
     const key = JSON.stringify([pageEntityId(row.url), row.rule])
     if (duplicates.has(key)) return { state: 'unknown', reason: 'duplicate_evaluation' }
     const evaluation = evaluations.get(key)
-    if (!evaluation) { const top = topReason(row.rule); return top ? { state: 'unknown', reason: top.reason, count: top.count } : { state: 'unknown', reason: 'no_evaluation' } }
+    if (!evaluation) {
+      const top = topReason(row.rule)
+      return top ? { state: 'unknown', reason: top.reason, count: top.count } : { state: 'unknown', reason: 'no_evaluation' }
+    }
     if (evaluation.outcome === 'fail') return { state: 'present' }
-    if (evaluation.outcome === 'pass') {
-      if (row.rule !== 'missing_title') return { state: 'unknown', reason: 'absence_not_established' }
-      if (cov.unknown === 0) return { state: 'absent' }
-      const top = topReason(row.rule); return { state: 'unknown', reason: top?.reason ?? 'coverage_unknown', count: top?.count ?? cov.unknown }
-    }
-    if (evaluation.outcome === 'unknown') {
-      const reason = evaluation.unknown_reason || topReason(row.rule)?.reason || 'unknown_outcome'
-      return { state: 'unknown', reason, count: cov.unknown_reasons?.[reason] }
-    }
-    return { state: 'unknown', reason: evaluation.outcome || 'no_evaluation' }
+    if (evaluation.outcome === 'pass' && row.rule === 'missing_title' && cov.unknown === 0) return { state: 'absent' }
+    // A `pass` for missing_description, an `unknown`/`not_applicable`/other outcome, and a `pass` for
+    // missing_title while the rule still carries unknown coverage all take the coverage reason.
+    return { state: 'unknown', ...coverageReason(row.rule, cov.unknown, evaluation.outcome === 'pass' ? 'absence_not_established' : 'unknown_outcome') }
   }
   return combined.map(row => {
     const seen = observe(row), seosmith = seen.state
