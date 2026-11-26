@@ -408,17 +408,16 @@ impl WebsiteStore {
         body: &CommitV4<'_>,
         timeout: Duration,
     ) -> Result<Value, CommitV4Error> {
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            // The caller passes what is left of the request budget (below the
-            // producer's 30s). The database's own 20s statement_timeout still
-            // applies, and a client abandoning a commit is safe: it is idempotent.
-            .timeout(timeout)
-            .build()
-            .map_err(|_| CommitV4Error::Unavailable)?;
         let started = Instant::now();
         let diagnostic_id = Uuid::new_v4();
-        let response = client
+        // The caller passes what is left of the request budget (below the
+        // producer's 30s), which can be under the RPC's own 20s
+        // statement_timeout. Accepted (plan amendment, coordinator, 2026-11-25,
+        // H3 recheck, N-MAJOR-2): H2 replay is idempotent and returns the stored
+        // receipt before any state check, so a client timeout followed by a
+        // producer retry resolves to that receipt. X measures commit p99.
+        let response = self
+            .client
             .post(format!(
                 "{}/rpc/commit_seosmith_audit_v4",
                 self.url.trim_end_matches("/websites")
@@ -426,6 +425,7 @@ impl WebsiteStore {
             .header("apikey", service_key)
             .bearer_auth(service_key)
             .header("traceparent", ingest_traceparent(diagnostic_id))
+            .timeout(timeout)
             .json(body)
             .send()
             .await
@@ -469,16 +469,14 @@ impl WebsiteStore {
         token_sha256: &str,
         timeout: Duration,
     ) -> Result<bool, CommitV4Error> {
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(timeout)
-            .build()
-            .map_err(|_| CommitV4Error::Unavailable)?;
-        let response = client
+        // The shared pooled client (no client, and no TLS handshake, per call).
+        let response = self
+            .client
             .get(format!(
                 "{}/seosmith_bindings",
                 self.url.trim_end_matches("/websites")
             ))
+            .timeout(timeout)
             .header("apikey", service_key)
             .bearer_auth(service_key)
             .query(&[
@@ -488,8 +486,18 @@ impl WebsiteStore {
             ])
             .send()
             .await
-            .map_err(|_| CommitV4Error::Unavailable)?;
+            .map_err(|error| {
+                eprintln!(
+                    "seosmith worker-v4 token lookup failed: {}",
+                    error.without_url()
+                );
+                CommitV4Error::Unavailable
+            })?;
         if !response.status().is_success() {
+            eprintln!(
+                "seosmith worker-v4 token lookup upstream status={}",
+                response.status().as_u16()
+            );
             return Err(CommitV4Error::Unavailable);
         }
         let rows: Vec<Value> = response
@@ -515,7 +523,12 @@ impl WebsiteStore {
         Self {
             url: format!("{}/rest/v1/websites", project_url.trim_end_matches('/')),
             publishable_key: publishable_key.to_owned(),
-            client: reqwest::Client::new(),
+            // Shared and pooled. No redirects: the schema-4 routes send the
+            // service key in `apikey`, which reqwest does not strip on a hop.
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
         }
     }
 

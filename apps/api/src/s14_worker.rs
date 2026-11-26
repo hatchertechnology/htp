@@ -57,8 +57,14 @@ const ADMIT_DEADLINE: Duration = Duration::from_secs(15);
 const OUTER_TIMEOUT: Duration = Duration::from_secs(25);
 /// Whole request, below the producer's 30 s client timeout.
 const REQUEST_BUDGET: Duration = Duration::from_secs(28);
+/// A throughput floor: a 29.7 MB escaped envelope needs about 3.7 MB/s to land
+/// inside it, else every retry is 503 `body_timeout`. X measures the producer's
+/// upload speed before the gate opens (haiku recheck, N-MINOR-2).
 const BODY_DEADLINE: Duration = Duration::from_secs(8);
 const TOKEN_CHECK_TIMEOUT: Duration = Duration::from_secs(3);
+/// Concurrent pre-admit token lookups. Bogus bearers hold no other permit, so
+/// this bounds the outbound work they can drive (haiku recheck, N-MAJOR-1).
+const LOOKUP_SLOTS: usize = 4;
 /// Admit never eats into this much time for the commit.
 const COMMIT_RESERVE: Duration = Duration::from_secs(8);
 
@@ -70,6 +76,8 @@ struct State14 {
     service_key: Option<String>,
     /// One envelope buffered at a time (held while the body is read and parsed).
     intake: Arc<Semaphore>,
+    /// Caps concurrent token lookups; `try_acquire`, 503 `busy` when full.
+    lookup: Arc<Semaphore>,
     request_budget: Duration,
     body_deadline: Duration,
     /// One validation at a time. The owned permit moves into the blocking
@@ -111,6 +119,7 @@ pub(crate) fn router(store: WebsiteStore) -> Router {
         store,
         service_key,
         intake: Arc::new(Semaphore::new(1)),
+        lookup: Arc::new(Semaphore::new(LOOKUP_SLOTS)),
         request_budget: REQUEST_BUDGET,
         body_deadline: BODY_DEADLINE,
         permit: Arc::new(Semaphore::new(1)),
@@ -254,11 +263,25 @@ async fn read_envelope(
             )));
         }
     };
-    let Ok(envelope) = serde_json::from_slice::<Envelope>(&bytes) else {
-        return Err(Box::new(error(StatusCode::BAD_REQUEST, "invalid_delivery")));
+    // Parse off the executor. The intake permit moves in, so it is held until
+    // the buffer is gone even if this request is dropped meanwhile.
+    let parsed = tokio::task::spawn_blocking(move || {
+        let parsed = serde_json::from_slice::<Envelope>(&bytes);
+        drop(bytes);
+        drop(intake);
+        parsed
+    })
+    .await;
+    let envelope = match parsed {
+        Ok(Ok(envelope)) => envelope,
+        Ok(Err(_)) => return Err(Box::new(error(StatusCode::BAD_REQUEST, "invalid_delivery"))),
+        Err(_) => {
+            return Err(Box::new(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "unavailable",
+            )));
+        }
     };
-    drop(bytes);
-    drop(intake);
     if envelope.report_json.len() > MAX_REPORT_BYTES {
         return Err(Box::new(error(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -294,17 +317,23 @@ async fn handle(State(state): State<Arc<State14>>, request: Request) -> Response
     let Some(token) = bearer(&parts.headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    // Credential first, holding no permit: a bogus token costs one indexed
-    // lookup, never the intake or validation slot, and never buffers a body.
-    match state
+    // Credential first: a bogus token never takes the intake or validation
+    // slot and never buffers a body. Its one indexed lookup runs on the pooled
+    // client under its own small cap. A disabled binding still passes on
+    // purpose (H2 replays committed deliveries before checking `enabled`).
+    let Ok(lookup) = state.lookup.clone().try_acquire_owned() else {
+        return busy(StatusCode::SERVICE_UNAVAILABLE);
+    };
+    let found = state
         .store
         .seosmith_binding_exists(
             service_key,
             &hex_sha256(token.as_bytes()),
             left(TOKEN_CHECK_TIMEOUT),
         )
-        .await
-    {
+        .await;
+    drop(lookup);
+    match found {
         Ok(true) => {}
         Ok(false) => return commit_response(CommitV4Error::InvalidWorker),
         Err(failure) => return commit_response(failure),
@@ -357,6 +386,8 @@ async fn handle(State(state): State<Arc<State14>>, request: Request) -> Response
     }
     match state
         .store
+        // commit_budget can be below the RPC's 20 s statement_timeout; accepted
+        // (plan amendment, H3 recheck N-MAJOR-2): replay is idempotent.
         .commit_seosmith_v4(service_key, &commit, commit_budget)
         .await
     {

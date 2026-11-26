@@ -84,6 +84,7 @@ fn state(url: &str) -> State14 {
         store: WebsiteStore::new(url, "publishable"),
         service_key: Some(SERVICE_KEY.into()),
         intake: Arc::new(Semaphore::new(1)),
+        lookup: Arc::new(Semaphore::new(4)),
         request_budget: Duration::from_secs(120),
         body_deadline: Duration::from_secs(60),
         permit: Arc::new(Semaphore::new(1)),
@@ -804,6 +805,24 @@ async fn a_busy_intake_is_503_at_once_and_the_body_is_not_polled() {
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(response.headers()[header::RETRY_AFTER], "5");
     assert_eq!(polls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_full_lookup_cap_is_503_busy_with_no_outbound_call() {
+    let upstream = Upstream::replying(200, json!([{"website_id": Uuid::new_v4()}]));
+    let url = upstream.serve().await;
+    let held = state(&url);
+    let slots: Vec<_> = (0..4)
+        .map(|_| held.lookup.clone().try_acquire_owned().unwrap())
+        .collect();
+    let response = router_with(held)
+        .oneshot(post_request(Uuid::new_v4(), Vec::new()))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()[header::RETRY_AFTER], "5");
+    assert_eq!(upstream.count(), 0);
+    drop(slots);
 }
 
 #[tokio::test]
