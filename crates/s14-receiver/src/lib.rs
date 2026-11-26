@@ -9,6 +9,7 @@ mod bindings;
 pub mod budget;
 mod compatibility;
 pub mod conformance;
+mod families;
 mod finding_coverage;
 mod full_population;
 mod projection;
@@ -18,8 +19,11 @@ mod remaining;
 pub mod roles;
 mod saved_summary;
 mod shape;
+mod wire;
 
-pub use admission::{AdmissionError, AdmissionStage, Admitted, VALIDATOR_REVISION, admit};
+pub use admission::{
+    AdmissionError, AdmissionStage, Admitted, VALIDATOR_REVISION, VALIDATOR_REVISION_V2, admit,
+};
 pub use advisories::check_scalar_advisories;
 pub use bindings::check_source_bindings;
 pub use compatibility::check_compatibility_findings;

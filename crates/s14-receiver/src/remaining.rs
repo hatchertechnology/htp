@@ -116,6 +116,7 @@ impl Row {
         }
         Ok(())
     }
+    #[allow(clippy::too_many_arguments)]
     fn compare(
         &self,
         manifest: &Value,
@@ -124,8 +125,16 @@ impl Row {
         rule: &str,
         pointer: Option<&str>,
         complete: bool,
+        wire: crate::wire::Wire,
     ) -> Result<(), E> {
-        let m = json!({"category":cat,"rule_id":rule,"rule_version":"s14-1","expected_pointer":pointer,"candidates":self.ids});
+        let m = match wire {
+            crate::wire::Wire::V1 => {
+                json!({"category":cat,"rule_id":rule,"rule_version":"s14-1","expected_pointer":pointer,"candidates":self.ids})
+            }
+            crate::wire::Wire::V2 => {
+                json!({"category":cat,"rule_id":rule,"rule_version":"s14-1","expected_pointer":pointer,"candidates_count":self.ids.len(),"candidates_digest":crate::wire::candidates_digest(&self.ids)})
+            }
+        };
         let c = json!({"category":cat,"rule_id":rule,"candidates":self.ids.len(),"emitted":self.records.len(),"omitted":self.omitted,"omission_reason":self.omission_reason,"complete":complete && self.omitted==0 && !self.outcomes.contains_key("unknown"),"eligibility_counts":self.elig,"attempt_counts":self.attempts,"outcomes":self.outcomes,"unknown_reasons":self.reasons});
         if *manifest != m || *coverage != c {
             return Err(E::SemanticMismatch);
@@ -172,6 +181,7 @@ fn record(
 pub fn check_reconstructed_rules(input: &[u8], deadline: Instant) -> Result<(), E> {
     check_consistency(input, deadline)?;
     check_scalar_advisories(input, deadline)?;
+    let wire = crate::wire::wire_of(input)?;
     let v: Value = crate::projection::project(input)?;
     let pages = v["pages"].as_array().ok_or(E::SemanticMismatch)?;
     let g = &v["policy_guidance"];
@@ -349,6 +359,7 @@ pub fn check_reconstructed_rules(input: &[u8], deadline: Instant) -> Result<(), 
             rule,
             *pointer,
             crawl && (*rule != "external_target" || external),
+            wire,
         )?;
         expected_records.extend(row.records);
     }
@@ -441,6 +452,7 @@ pub fn check_reconstructed_rules(input: &[u8], deadline: Instant) -> Result<(), 
         "external_link",
         None,
         crawl && external && intact,
+        wire,
     )?;
     expected_records.extend(row.records);
     if expected_records != *records {

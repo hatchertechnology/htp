@@ -21,6 +21,7 @@ pub fn check_consistency(
     deadline: Instant,
 ) -> Result<ConsistencyEvidence, InspectionError> {
     inspect(input, deadline)?;
+    let wire = crate::wire::wire_of(input)?;
     let v: Value = crate::projection::project(input)?;
     let registry: Value =
         serde_json::from_str(include_str!("registry.json")).map_err(|_| InspectionError::Shape)?;
@@ -60,10 +61,17 @@ pub fn check_consistency(
             .iter()
             .filter(|r| r["category"] == rule["category"] && r["rule_id"] == rule["rule_id"])
             .collect();
-        let candidates = m["candidates"]
-            .as_array()
-            .ok_or(InspectionError::SemanticMismatch)?
-            .len() as u64;
+        let candidates = match wire {
+            crate::wire::Wire::V1 => m["candidates"]
+                .as_array()
+                .ok_or(InspectionError::SemanticMismatch)?
+                .len() as u64,
+            // Wire-2 rows carry a count; the ids are verified against the pages
+            // by `advisories.rs` / `remaining.rs`.
+            crate::wire::Wire::V2 => m["candidates_count"]
+                .as_u64()
+                .ok_or(InspectionError::SemanticMismatch)?,
+        };
         let emitted = retained.len() as u64;
         let omitted = candidates
             .checked_sub(emitted)

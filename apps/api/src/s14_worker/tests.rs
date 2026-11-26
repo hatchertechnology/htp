@@ -1,6 +1,7 @@
 use super::*;
 use axum::{body::Body, http::Request as HttpRequest};
 use futures_util::stream;
+use htp_s14_receiver::VALIDATOR_REVISION;
 use std::sync::{
     Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -9,6 +10,10 @@ use tower::ServiceExt;
 
 const FIXTURE: &[u8] = include_bytes!(
     "../../../../crates/s14-receiver/tests/fixtures/s14-finding-coverage-v1/complete-missing-h1.json"
+);
+/// Hand-built wire-2 positive (swap for the byte-copied 8b-4 fixture later).
+const FIXTURE_V2: &[u8] = include_bytes!(
+    "../../../../crates/s14-receiver/tests/fixtures/s14-wire2-v1/positive/complete-small.json"
 );
 const SERVICE_KEY: &str = "service-key-never-on-legacy-routes";
 const TOKEN: &str = "Bearer xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
@@ -199,6 +204,30 @@ async fn no_other_method_can_open_the_worker_path() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
+/// WP8c-1: the commit revision comes from `Admitted`, so a wire-2 report is
+/// committed with the v2 revision and a wire-1 report keeps the v1 one. Uses
+/// the fake RPC server only: no migration 15 is needed (the real DB commit is
+/// 8c-2's and 8e's).
+#[tokio::test]
+async fn commit_carries_the_revision_the_receiver_admitted() {
+    for (report, revision) in [
+        (FIXTURE_V2, htp_s14_receiver::VALIDATOR_REVISION_V2),
+        (FIXTURE, VALIDATOR_REVISION),
+    ] {
+        let (id, sha, body) = envelope(report);
+        let upstream = Upstream::replying(200, receipt(id, &sha));
+        let url = upstream.serve().await;
+        let response = router_with(state(&url))
+            .oneshot(post_request(id, body))
+            .await
+            .unwrap();
+        let (status, _) = status_and_body(response).await;
+        assert_eq!(status, StatusCode::OK, "{revision}");
+        let (_, sent) = upstream.calls.lock().unwrap()[0].clone();
+        assert_eq!(sent["p_validator_revision"], revision);
+    }
 }
 
 #[tokio::test]

@@ -30,7 +30,6 @@ use std::{
 pub const SAVED_SUMMARY_VERSION: u32 = 5;
 /// Maximum canonical summary bytes. The output is rejected, never truncated.
 pub const MAX_SAVED_SUMMARY_BYTES: usize = 16_384;
-const WIRE_CONTRACT_VERSION: &str = "s14-wire-1";
 const EVIDENCE_STATE: &str = "policy_versioned";
 
 /// A derived summary, its canonical representation, and the exact retained
@@ -133,10 +132,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-fn comparison_key(policy_digest: &str, manifest_digest: &str) -> String {
-    let material = format!(
-        "seosmith-comparison-v1\n{WIRE_CONTRACT_VERSION}\n{policy_digest}\n{manifest_digest}\n"
-    );
+fn comparison_key(wire: &str, policy_digest: &str, manifest_digest: &str) -> String {
+    let material = format!("seosmith-comparison-v1\n{wire}\n{policy_digest}\n{manifest_digest}\n");
     format!("sha256:{}", sha256_hex(material.as_bytes()))
 }
 
@@ -352,6 +349,7 @@ pub fn derive_saved_summary(input: &[u8], deadline: Instant) -> Result<SavedSumm
         return Err(E::UnsupportedSchema);
     }
     crate::inspect(input, deadline)?;
+    let wire = crate::wire::wire_of(input)?.label();
     crate::check_source_bindings(input, deadline)?;
     crate::check_consistency(input, deadline)?;
     crate::check_reconstructed_rules(input, deadline)?;
@@ -376,7 +374,7 @@ pub fn derive_saved_summary(input: &[u8], deadline: Instant) -> Result<SavedSumm
         .as_str()
         .ok_or(E::Shape)?
         .to_owned();
-    let comparison_key = comparison_key(&policy_digest, &manifest_digest);
+    let comparison_key = comparison_key(wire, &policy_digest, &manifest_digest);
     let mut rule_coverage = BTreeMap::new();
     for rule in &batch.rules {
         rule_coverage.insert(
@@ -390,7 +388,7 @@ pub fn derive_saved_summary(input: &[u8], deadline: Instant) -> Result<SavedSumm
     let summary = SummaryV5 {
         summary_version: SAVED_SUMMARY_VERSION,
         schema_version: projected["schema_version"].as_u64().ok_or(E::Shape)?,
-        wire_contract_version: WIRE_CONTRACT_VERSION,
+        wire_contract_version: wire,
         evidence_contract_version: None,
         evidence_state: EVIDENCE_STATE,
         engine_version: projected["engine_version"]
