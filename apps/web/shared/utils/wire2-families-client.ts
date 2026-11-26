@@ -24,6 +24,14 @@ function statusOf(error: unknown): number | null {
   return typeof value === 'number' ? value : null
 }
 
+const HELD_MESSAGE = 'This feature is not available yet.'
+function bodyMessage(error: unknown): string | null {
+  const e = error as { data?: unknown; response?: { _data?: unknown } } | null
+  const data = e?.data ?? e?.response?._data
+  const msg = (data as { error?: unknown } | null)?.error
+  return typeof msg === 'string' ? msg : null
+}
+
 export async function loadEvidenceFamilies(deps: FamiliesDeps, site: string, delivery: string, signal?: AbortSignal): Promise<FamiliesLoad> {
   if (deps.runtime.rolloutEvidenceFamilies !== true) return { kind: 'flag_off' }
   let url: string
@@ -35,8 +43,11 @@ export async function loadEvidenceFamilies(deps: FamiliesDeps, site: string, del
     return parseFamiliesEnvelope(raw, delivery)
   } catch (error) {
     const status = statusOf(error)
-    if (status === 503) return { kind: 'flag_off' }
+    // The route answers 503 for two different things: the held flag (body error "This feature is not
+    // available yet.") and any upstream failure (a "temporarily unavailable" body). Only the first is held.
+    if (status === 503 && bodyMessage(error) === HELD_MESSAGE) return { kind: 'flag_off' }
     if (status === 404) return { kind: 'not_found' }
+    if (status === 401) return { kind: 'unavailable', message: 'Sign in again to read evidence families.' }
     return { kind: 'unavailable', message: 'Evidence families could not be read. This is not an empty result. Try again.' }
   }
 }

@@ -1,18 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { FAMILY_KEYS, parseFamiliesEnvelope, validateEvidenceFamilies } from '../shared/utils/wire2-families'
+import { FAMILY_CAPS, FAMILY_KEYS, parseFamiliesEnvelope, validateEvidenceFamilies } from '../shared/utils/wire2-families'
 
 const DELIVERY = '00000000-0000-0000-0000-000000000002'
 const coverage = (over: Record<string, unknown> = {}) => ({ entities: 3, eligible: 3, attempted: 3, observed: 3, unknown: 0, unknown_reasons: {}, ...over })
 const section = (over: Record<string, unknown> = {}) => ({
   section_version: 1, semantics: 's14-s02-1', state: 'complete', reason: null, coverage: coverage(), summary: {},
-  items: [], items_total: 0, omitted_items: 0, omitted_reason: null, truncated: false, max_items: 256, max_bytes: 131072, ...over,
+  items: [], items_total: 0, omitted_items: 0, omitted_reason: null, truncated: false, max_items: 256, max_bytes: 98304, ...over,
 })
 const item = (over: Record<string, unknown> = {}) => ({ entity_id: 'sha256:aa', locator: '/pages/1', kind: 'noindex', outcome: 'issue', reason: null, facts: { a: 1 }, ...over })
+// A section as the producer emits it: the §3.3 caps for its own family (the default section is s02's).
+const capped = (key: string, s: any) => (s.max_items === 256 && s.max_bytes === 98304 ? { ...s, max_items: FAMILY_CAPS[key as keyof typeof FAMILY_CAPS].maxItems, max_bytes: FAMILY_CAPS[key as keyof typeof FAMILY_CAPS].maxBytes } : s)
 const families = (over: Record<string, unknown> = {}) => ({
   version: 1, semantics: 's14-families-1', max_bytes: 786432, budget_state: 'within_budget',
-  families: Object.fromEntries(FAMILY_KEYS.map(k => [k, section()])), ...over,
+  families: Object.fromEntries(FAMILY_KEYS.map(k => [k, capped(k, section())])), ...over,
 })
-const withSection = (key: string, s: unknown) => { const f = families(); (f.families as any)[key] = s; return f }
+const withSection = (key: string, s: unknown) => { const f = families(); (f.families as any)[key] = capped(key, s); return f }
 const refused = (v: unknown) => { const r = validateEvidenceFamilies(v); expect(r.ok).toBe(false); return (r as { ok: false; error: string }).error }
 
 describe('validateEvidenceFamilies', () => {

@@ -36,12 +36,12 @@ onBeforeUnmount(() => { generation++; controller?.abort() })
     <div v-for="section in sections" :key="section.key" class="evidence-family">
       <h4>{{ section.label }} <span class="report-caption">· {{ section.stateLabel }}</span></h4>
       <p v-if="section.notice" role="status" class="form-notice">{{ section.notice }}</p>
-      <dl v-if="section.counts.length" class="evidence-family-counts"><template v-for="count in section.counts" :key="count.label"><dt>{{ count.label }}</dt><dd>{{ count.value }}</dd></template></dl>
+      <dl v-if="section.counts.length" class="evidence-family-counts"><div v-for="count in section.counts" :key="count.label" class="evidence-family-count"><dt>{{ count.label }}</dt><dd>{{ count.value }}</dd></div></dl>
       <ul v-if="section.unknownReasons.length" class="report-caption"><li v-for="reason in section.unknownReasons" :key="reason.code">Unknown for {{ reason.count.toLocaleString() }}: {{ reason.text }}</li></ul>
       <p v-if="section.truncation" role="status" class="report-caption">{{ section.truncation }}</p>
       <div v-if="section.rows.length" class="table-scroll"><table><caption class="sr-only">{{ section.label }} evidence items</caption><thead><tr><th scope="col">Page or resource</th><th scope="col">Kind</th><th scope="col">Outcome</th><th scope="col">Reason</th><th scope="col">Facts</th></tr></thead>
         <tbody><tr v-for="(row, index) in section.rows" :key="index"><td>{{ row.locator }}</td><td>{{ row.kind }}</td><td>{{ row.outcome }}</td><td>{{ row.reason || '—' }}</td><td :title="row.facts">{{ row.facts || '—' }}</td></tr></tbody></table></div>
-      <p v-else-if="section.stateLabel !== 'Unavailable'" class="report-caption">No items were recorded for this family.</p>
+      <p v-else-if="section.stateLabel !== 'Unavailable' && !section.truncation" class="report-caption">No items were recorded for this family.</p>
     </div>
   </section>
 </template>

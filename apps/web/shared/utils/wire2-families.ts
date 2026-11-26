@@ -27,13 +27,23 @@ export type EvidenceFamilies = {
 }
 export type FamiliesValidation<T> = { ok: true; value: T } | { ok: false; error: string }
 
-const TOTAL_MAX_BYTES = 786_432, SECTION_MAX_BYTES = 131_072, SECTION_MAX_ITEMS = 256
+const TOTAL_MAX_BYTES = 786_432
+// Binding per-family caps (design §3.3; receiver families.rs TABLE; producer types.rs). Exact equality, as the receiver requires.
+export const FAMILY_CAPS: Record<FamilyKey, { maxItems: number; maxBytes: number }> = {
+  s02_indexing: { maxItems: 256, maxBytes: 98_304 },
+  s03_integrity: { maxItems: 256, maxBytes: 163_840 },
+  s04_structured_data: { maxItems: 256, maxBytes: 131_072 },
+  s05_link_graph: { maxItems: 256, maxBytes: 131_072 },
+  s06_duplicates: { maxItems: 128, maxBytes: 98_304 },
+  s08_resources: { maxItems: 256, maxBytes: 163_840 },
+}
+const SEMANTICS_MAX_BYTES = 64
 const FACTS_MAX_BYTES = 4_096, FACTS_MAX_DEPTH = 4, STRING_MAX_BYTES = 2_048, SUMMARY_MAX_BYTES = 8_192
 const CODE = /^[a-z0-9_]{1,64}$/
 const LOCATOR = /^\/pages\/(?:0|[1-9]\d*)(?:\/(?:links|relationships)\/(?:0|[1-9]\d*))?$/
 const OMITTED_REASONS = new Set(['family_item_limit', 'family_byte_budget', 'report_byte_budget', 'analysis_deadline'])
 const CAPTURE_OMISSIONS = new Set(['collector_byte_limit', 'run_byte_limit'])
-const RANK: Record<string, number> = { issue: 0, unknown: 1, observed: 2, pass: 3 }
+const RANK = new Map<string, number>([['issue', 0], ['unknown', 1], ['observed', 2], ['pass', 3]])
 const encoder = new TextEncoder()
 
 class Refusal extends Error {}
@@ -48,19 +58,22 @@ function exactKeys(value: unknown, keys: readonly string[], name: string): Recor
   if (value === null) return refuse(`${name} is null`)
   if (!isObject(value)) return refuse(`${name} must be an object`)
   for (const key of Object.keys(value)) if (!keys.includes(key)) refuse(`${name} has an unknown key: ${key}`)
-  for (const key of keys) if (!(key in value)) refuse(`${name} is missing ${key}`)
+  for (const key of keys) if (!Object.hasOwn(value, key)) refuse(`${name} is missing ${key}`)
   return value
 }
 
-function checkJson(v: unknown, depth: number, name: string) {
+function checkJson(v: unknown, depth: number, name: string, maxDepth = FACTS_MAX_DEPTH) {
   if (typeof v === 'string') {
     if (v.includes('\u0000')) refuse(`${name} contains a NUL character`)
     if (bytes(v) > STRING_MAX_BYTES) refuse(`${name} has a string over ${STRING_MAX_BYTES} bytes`)
   } else if (Array.isArray(v) || isObject(v)) {
-    if (depth > FACTS_MAX_DEPTH) refuse(`${name} is nested deeper than ${FACTS_MAX_DEPTH} levels (depth)`)
+    if (depth > maxDepth) refuse(`${name} is nested deeper than ${maxDepth} levels (depth)`)
     for (const [key, child] of Array.isArray(v) ? v.entries() : Object.entries(v)) {
-      if (typeof key === 'string' && key.includes('\u0000')) refuse(`${name} contains a NUL character`)
-      checkJson(child, depth + 1, name)
+      if (typeof key === 'string') {
+        if (key.includes('\u0000')) refuse(`${name} contains a NUL character`)
+        if (bytes(key) > STRING_MAX_BYTES) refuse(`${name} has a key over ${STRING_MAX_BYTES} bytes`)
+      }
+      checkJson(child, depth + 1, name, maxDepth)
     }
   } else if (typeof v === 'number' && !Number.isFinite(v)) refuse(`${name} has a non-finite number`)
   else if (v !== null && typeof v !== 'number' && typeof v !== 'boolean') refuse(`${name} has an unsupported value`)
@@ -79,7 +92,7 @@ function coverageOf(raw: unknown, name: string): FamilyCoverage {
 function itemOf(raw: unknown, name: string): FamilyItem {
   const it = exactKeys(raw, ['entity_id', 'locator', 'kind', 'outcome', 'reason', 'facts'], name)
   code(it.kind, `${name}.kind`)
-  if (typeof it.outcome !== 'string' || !(it.outcome in RANK)) refuse(`${name}.outcome is not issue, pass, observed or unknown`)
+  if (typeof it.outcome !== 'string' || !RANK.has(it.outcome)) refuse(`${name}.outcome is not issue, pass, observed or unknown`)
   const reason = nullableCode(it.reason, `${name}.reason`)
   if (it.outcome === 'unknown' && reason === null) refuse(`${name} is unknown without a reason`)
   if (it.outcome === 'pass' && reason !== null && CAPTURE_OMISSIONS.has(reason)) refuse(`${name} is a capture omission reported as pass`)
@@ -93,21 +106,23 @@ function itemOf(raw: unknown, name: string): FamilyItem {
   return it as unknown as FamilyItem
 }
 
-function sectionOf(raw: unknown, name: string): FamilySection {
+function sectionOf(raw: unknown, key: FamilyKey): FamilySection {
+  const name: string = key
   const s = exactKeys(raw, ['section_version', 'semantics', 'state', 'reason', 'coverage', 'summary', 'items', 'items_total', 'omitted_items', 'omitted_reason', 'truncated', 'max_items', 'max_bytes'], name)
   if (s.section_version !== 1) refuse(`${name}.section_version must be 1`)
-  if (typeof s.semantics !== 'string' || !s.semantics || bytes(s.semantics) > 128) refuse(`${name}.semantics is missing`)
+  if (typeof s.semantics !== 'string' || !s.semantics || bytes(s.semantics) > SEMANTICS_MAX_BYTES) refuse(`${name}.semantics is missing`)
   if (s.state !== 'complete' && s.state !== 'partial' && s.state !== 'unavailable') refuse(`${name}.state is not complete, partial or unavailable`)
   const reason = nullableCode(s.reason, `${name}.reason`)
   const coverage = coverageOf(s.coverage, name)
   if (!isObject(s.summary)) return refuse(`${name}.summary must be an object`)
-  checkJson(s.summary, 1, `${name}.summary`)
   if (bytes(JSON.stringify(s.summary)) > SUMMARY_MAX_BYTES) refuse(`${name}.summary is over ${SUMMARY_MAX_BYTES} bytes`)
+  checkJson(s.summary, 1, `${name}.summary`, Number.POSITIVE_INFINITY) // the receiver bounds summary bytes and strings, not depth
   if (!Array.isArray(s.items)) return refuse(`${name}.items must be a list`)
   const itemsTotal = count(s.items_total, `${name}.items_total`), omitted = count(s.omitted_items, `${name}.omitted_items`)
   const maxItems = count(s.max_items, `${name}.max_items`), maxBytes = count(s.max_bytes, `${name}.max_bytes`)
-  if (maxItems > SECTION_MAX_ITEMS) refuse(`${name}.max_items is over ${SECTION_MAX_ITEMS}`)
-  if (maxBytes > SECTION_MAX_BYTES) refuse(`${name}.max_bytes is over ${SECTION_MAX_BYTES}`)
+  const cap = FAMILY_CAPS[key]
+  if (maxItems !== cap.maxItems) refuse(`${name}.max_items must be ${cap.maxItems}`)
+  if (maxBytes !== cap.maxBytes) refuse(`${name}.max_bytes must be ${cap.maxBytes}`)
   if (s.items.length > maxItems) refuse(`${name}.items has more entries than max_items`)
   if (typeof s.truncated !== 'boolean') refuse(`${name}.truncated must be true or false`)
   if (itemsTotal !== s.items.length + omitted) refuse(`${name}.items_total (${itemsTotal}) is not items + omitted_items (${s.items.length + omitted})`)
@@ -118,15 +133,18 @@ function sectionOf(raw: unknown, name: string): FamilySection {
   if (s.state === 'unavailable' && (s.items.length > 0 || reason === null)) refuse(`${name} is unavailable but has items or no reason`)
   if (bytes(JSON.stringify(s)) > maxBytes) refuse(`${name} is larger than its max_bytes`)
   let previous: FamilyItem | null = null
+  let unknownItems = 0
   s.items.forEach((entry, i) => {
     const item = itemOf(entry, `${name}.items[${i}]`)
+    if (item.outcome === 'unknown') unknownItems++
     if (previous) {
-      const a = RANK[previous.outcome]!, b = RANK[item.outcome]!
+      const a = RANK.get(previous.outcome)!, b = RANK.get(item.outcome)!
       const lp = previous.locator ?? '', li = item.locator ?? ''
       if (a > b || (a === b && (lp > li || (lp === li && previous.kind > item.kind)))) refuse(`${name}.items[${i}] is out of order (outcome, locator, kind)`)
     }
     previous = item
   })
+  if (unknownItems > coverage.unknown) refuse(`${name} has ${unknownItems} unknown items but coverage.unknown is ${coverage.unknown}`)
   return s as unknown as FamilySection
 }
 
@@ -210,7 +228,7 @@ const REASONS: Record<string, string> = {
 }
 export function familyReasonText(code: string | null | undefined): string {
   if (!code) return ''
-  return REASONS[code] ?? code.replace(/_/g, ' ')
+  return Object.hasOwn(REASONS, code) ? REASONS[code]! : code.replace(/_/g, ' ')
 }
 const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
@@ -227,13 +245,13 @@ export type FamiliesNotice = { tone: 'info' | 'notice' | 'error'; text: string }
 export function panelNotice(load: PanelLoad): FamiliesNotice {
   switch (load.kind) {
     case 'loading': return { tone: 'info', text: 'Reading stored evidence families…' }
-    case 'flag_off': return { tone: 'info', text: 'Per-family evidence is not available yet. Nothing was requested and nothing was collected for display.' }
+    case 'flag_off': return { tone: 'info', text: 'Per-family evidence is not available yet. No evidence is shown, and that does not mean the checks passed.' }
     case 'not_collected': return { tone: 'info', text: 'This audit was saved before per-family evidence existed, so these families were not collected. That does not mean the checks passed.' }
     case 'not_found': return { tone: 'notice', text: 'Per-family evidence for this audit was not found for your account.' }
     case 'unavailable': return { tone: 'error', text: load.message }
     case 'invalid': return { tone: 'error', text: `Evidence families were refused because the stored data is malformed: ${load.message}. Nothing is shown from it.` }
     case 'collected': return load.families.budget_state === 'report_byte_budget'
-      ? { tone: 'notice', text: 'This report reached its size budget, so some family items were left out. Counts below describe what was kept; omitted items are listed per family.' }
+      ? { tone: 'notice', text: 'This report reached its size budget, so some family items were left out. Coverage counts are complete; the items left out are counted per family.' }
       : { tone: 'info', text: '' }
   }
 }
@@ -263,7 +281,7 @@ export function sectionView(key: FamilyKey, s: FamilySection): FamilySectionView
     : null
   const rows = s.items.map(i => ({
     locator: i.locator ?? (typeof i.facts.url === 'string' ? i.facts.url : 'Unknown'),
-    kind: i.kind.replace(/_/g, ' '), outcome: OUTCOME_LABEL[i.outcome], reason: sentence(familyReasonText(i.reason)), facts: familyFactsText(i.facts),
+    kind: i.kind.replace(/_/g, ' '), outcome: Object.hasOwn(OUTCOME_LABEL, i.outcome) ? OUTCOME_LABEL[i.outcome] : 'Unknown', reason: sentence(familyReasonText(i.reason)), facts: familyFactsText(i.facts),
   }))
   return { ...base, notice, truncation, counts: counts.map(([label, n]) => ({ label, value: n.toLocaleString() })), unknownReasons, rows }
 }
