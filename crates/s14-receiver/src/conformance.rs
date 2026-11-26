@@ -14,8 +14,9 @@
 #![allow(clippy::module_name_repetitions)]
 
 use crate::{
-    Coverage, check_compatibility_findings, check_consistency, check_reconstructed_rules,
-    check_scalar_advisories, check_source_bindings, finding_coverage_batch, inspect,
+    AdmissionStage, Coverage, InspectionError, admit, check_compatibility_findings,
+    check_consistency, check_reconstructed_rules, check_scalar_advisories, check_source_bindings,
+    finding_coverage_batch, inspect,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -40,8 +41,38 @@ pub const INGRESS_VECTORS_SHA256: &str =
     "f2db22c0b8b832a0325acf75b9912632123d67d83e12e4fde5d90dd6aff0271c";
 /// Exact number of files in the original and successor manifests.
 pub const SUCCESSOR_FILE_COUNT: usize = 61;
-/// Historical positive reports the receiver checks independently.
-pub const ACCEPT_COUNT: usize = 27;
+/// Historical `accept` labels in the successor manifest (preserved verbatim).
+pub const HISTORICAL_ACCEPT_COUNT: usize = 27;
+/// Historical positives the receiver checks independently **and admits**.
+///
+/// Schema-4 admission (decision (c)) requires the retained findings to equal the
+/// pinned producer's full population, so 17 of the 27 historical positives are
+/// no longer positives; H1 amends the frozen #88 count from 27 to this value.
+pub const ACCEPT_COUNT: usize = 10;
+/// The historical `accept` reports dropped from the checked set. Each is
+/// rejected by [`admit`] at `population` / `semantic_mismatch`: its retained
+/// `findings` differ from the population the pinned producer emits for the
+/// retained source (edge-case and omission reports whose findings are empty or
+/// forged, and the depth-64 and forged-source-claim reports).
+pub const DROPPED_ACCEPTS: [&str; 17] = [
+    "v4-candidate-depth64.json",
+    "v4-candidate-edge-control.json",
+    "v4-candidate-edge-omitted.json",
+    "v4-candidate-edge-source_blocked.json",
+    "v4-candidate-edge-source_error.json",
+    "v4-candidate-edge-source_missing_status.json",
+    "v4-candidate-edge-source_non_html.json",
+    "v4-candidate-edge-source_non_success.json",
+    "v4-candidate-edge-source_truncated.json",
+    "v4-candidate-edge-target_blocked.json",
+    "v4-candidate-edge-target_error.json",
+    "v4-candidate-edge-target_missing_status.json",
+    "v4-candidate-forged-source-claim.json",
+    "v4-candidate-mixed-omitted.json",
+    "v4-candidate-omitted.json",
+    "v4-candidate-unicode-equal.json",
+    "v4-candidate-unicode-short.json",
+];
 /// Historical reference-only entries preserved but not exercised.
 pub const REFERENCE_COUNT: usize = 13;
 /// Historical reject entries preserved but not exercised.
@@ -706,9 +737,26 @@ fn verify_reports(
             return fail(format!("{name}: successor bytes changed"));
         }
         let label = string(entry, "semantic_expectation", name)?.to_owned();
-        let is_checked = label == "accept";
+        let dropped = label == "accept" && DROPPED_ACCEPTS.contains(&name);
+        let is_checked = label == "accept" && !dropped;
+        if dropped {
+            let deadline = Instant::now() + timeout;
+            match admit(&bytes, deadline) {
+                Err(e)
+                    if e.stage == AdmissionStage::Population
+                        && e.error == InspectionError::SemanticMismatch => {}
+                other => {
+                    return fail(format!(
+                        "{name}: a dropped historical positive must be rejected at \
+                         population/semantic_mismatch, got {:?}",
+                        other.map(|_| ()).map_err(|e| (e.stage, e.error))
+                    ));
+                }
+            }
+        }
         if is_checked {
             let deadline = Instant::now() + timeout;
+            checked(admit(&bytes, deadline).map_err(|e| e.error), name)?;
             checked(inspect(&bytes, deadline), name)?;
             checked(check_source_bindings(&bytes, deadline), name)?;
             checked(check_consistency(&bytes, deadline), name)?;
@@ -743,6 +791,8 @@ fn verify_reports(
     }
     Ok(evidence)
 }
+
+const _: () = assert!(ACCEPT_COUNT + DROPPED_ACCEPTS.len() == HISTORICAL_ACCEPT_COUNT);
 
 /// Verify one producer `fixtures/contracts` tree offline.
 ///
@@ -925,7 +975,7 @@ pub fn verify_successor_contracts(
         .map(|file| file.historical_label.clone())
         .collect::<BTreeSet<_>>();
     for (label, expected) in [
-        ("accept", ACCEPT_COUNT),
+        ("accept", HISTORICAL_ACCEPT_COUNT),
         ("reference", REFERENCE_COUNT),
         ("reject", REJECT_COUNT),
         ("reject_url_profile_idn", REJECT_URL_PROFILE_IDN_COUNT),

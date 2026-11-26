@@ -2,7 +2,9 @@
 //!
 //! `admit` runs the full H1 admission (`htp_s14_receiver::admit`: inspection,
 //! summary derivation and the findings-population equality) under the 15 s
-//! receiver deadline; the M9 gate runs it on `exact-cap.json`. `derive` runs the complete summary-v5 derivation in one process: inspection,
+//! receiver deadline; the M9 gate runs it on `exact-cap.json`.
+//!
+//! `derive` runs the complete summary-v5 derivation in one process: inspection,
 //! source bindings, consistency, reconstructed rules, compatibility findings,
 //! batch finding coverage, projection, crawl coverage, record counts, findings
 //! summary, canonical serialization and digest. `stages` runs the public checks

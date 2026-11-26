@@ -5,7 +5,10 @@
 //! * `tests/fixtures/s14-schema4-historical/**` holds the surviving historical
 //!   positives (S2's pruned `s14-wire-1-candidate` and `s14-finding-coverage-v1`
 //!   accept cases) with S2's manifests.
-use htp_s14_receiver::{MAX_REPORT_BYTES, VALIDATOR_REVISION, admit, derive_saved_summary};
+use htp_s14_receiver::{
+    AdmissionStage, InspectionError, MAX_REPORT_BYTES, VALIDATOR_REVISION, admit,
+    derive_saved_summary,
+};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
@@ -139,7 +142,9 @@ fn exact_cap_is_the_cap_and_admits_within_the_deadline() {
     // One byte over the cap never reaches the deadline-bound stages.
     let mut over = raw.clone();
     over.push(b' ');
-    assert!(admit(&over, deadline()).is_err());
+    let err = admit(&over, deadline()).expect_err("one byte over the cap");
+    assert_eq!(err.stage, AdmissionStage::Inspection, "{err}");
+    assert_eq!(err.error, InspectionError::ByteLimit, "{err}");
 }
 
 #[test]

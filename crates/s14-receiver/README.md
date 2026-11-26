@@ -1,6 +1,8 @@
 # Worker-only S14 receiver skeleton — phase one
 
-This isolated implementation is deliberately incomplete and cannot admit4. It is
+This isolated implementation is deliberately incomplete: the legacy
+`validate_for_admission` stub stays closed, and schema-4 admission is the separate
+`admit` entry point (see "Schema-4 admission" below). It is
 not a frozen candidate, production receiver, native privilege proof or deployment.
 The experimental POST route in apps/api/src/s14_worker.rs is unconditionally
 unavailable and does not poll/decode the body. No env setting, DB gate, proof
@@ -18,7 +20,7 @@ applying a global count/status key heuristic. Fixture bytes are hashed/pinned.
 page-field/source completeness, registered catalog equality, record predicates/
 facts, source pointers, scope/entity/manifest digests, omitted-state reconstruction,
 coverage or compatibility projections; those are separate local check functions
-described below, not inspection or admission. Some source fields are ignored in
+described below, not inspection; admission is `admit`. Some source fields are ignored in
 this inspection phase. `validate_for_admission` always returns
 SemanticValidationNotImplemented after inspection. ValidatedS14 has no public
 constructor; nothing can issue a proof or acceptance receipt. The `conformance`
@@ -68,10 +70,12 @@ retained producer successor bundle. It reads an operator-supplied producer
 - all `61` files in order, exact byte length and SHA-256, against the pinned
   original manifest, not only against the successor manifest itself;
 - the only agreed relabel: original `accept` for
-  `v4-candidate-url-normalization.json` becomes `reject_url_profile_idn`; every
+  `v4-candidate-url-normalization.json` (bundle file) becomes `reject_url_profile_idn`; every
   other historical label is unchanged. The `13` reference, `20` reject and one
   IDN-reject entries are preserved but not exercised;
-- the `27` historical `accept` reports through `inspect`,
+- the `27` historical `accept` labels are preserved verbatim; H1 amends the
+  checked count to `10` (see "Amended #88 accept count" below). The `10` admitted
+  reports run through `admit`, `inspect`,
   `check_source_bindings`, `check_consistency`, `check_reconstructed_rules`,
   `check_scalar_advisories`, `check_compatibility_findings` and
   `finding_coverage_batch`. These reports have no coverage extension, so every
@@ -166,7 +170,7 @@ and ambiguous referenced targets are rejected. It compares the registry through
 admission validator: scope and manifest digests, full source schema and interval
 validity, source authenticity, website authorization, resource budgets and prompt
 cancellation are not certified. Projected JSON materialization and repeated target lookup
-are not qualified for maximum valid inputs. Existing admission stays closed.
+are not qualified for maximum valid inputs. `validate_for_admission` stays closed; `admit` is the schema-4 admission path.
 
 `check_source_bindings` independently reconstructs the declared website/generation
 scope digest and sorted manifest-definition digest, and validates the inherited
@@ -365,8 +369,28 @@ positives (10 `s14-wire-1-candidate` accepts and the 4 finding-coverage cases) w
 S2's pruned manifests. `tests/schema4_fixtures.rs` pins each manifest digest, checks
 every file's bytes and sha256 against its manifest, and requires `admit` to accept
 all of them (summary bytes/digest and revision equal the S2 manifest; `exact-cap.json`
-is exactly `MAX_REPORT_BYTES`). The `#88` successor bundle pins (27 accepts, 61 files)
-describe the frozen `s14-worker-slice-r2` bundle and are unchanged.
+is exactly `MAX_REPORT_BYTES`).
+
+Four historical top-level fixtures (`v4-candidate-mixed-omitted`, `-unicode-equal`,
+`-url-normalization`, `-edge-source_missing_status`) were deleted under owner
+decision (c): `admit` rejects them (full equality with the pinned producer output),
+and rejecting fixtures are not kept as negatives. The lower-layer tests that used
+them now use the surviving `partial` report (record-cap and missing-status cases)
+and the S2 `mixed-caps-exceeded` report (omitted records).
+
+### Amended #88 accept count
+
+The frozen `s14-worker-slice-r2` bundle still has `27` historical `accept` labels
+and `61` files. Full-population admission rejects `17` of them at
+`population` / `semantic_mismatch`, so the checked set is `10`
+(`conformance::ACCEPT_COUNT`; `HISTORICAL_ACCEPT_COUNT` stays `27`). The `17` are
+listed in `conformance::DROPPED_ACCEPTS`: `depth64`, `edge-control`, `edge-omitted`,
+the nine `edge-source_*`/`edge-target_*` cases, `forged-source-claim`,
+`mixed-omitted`, `omitted`, `unicode-equal` and `unicode-short`. Their findings
+differ from the population the pinned producer emits for the retained source. The
+external check asserts each is rejected at that stage; the `10` survivors are the S2
+historical positives. `examples/successor_positives.rs` remains an inventory of the
+historical `27` through the lower-layer checks and is not an admission test.
 
 M9 resource gate: `cargo build --release --locked -p htp-s14-receiver --example resource_check`, then
 `systemd-run --user --scope -p MemoryMax=256M -p CPUQuota=100% target/release/examples/resource_check admit <exact-cap.json>`

@@ -6,6 +6,7 @@
 //! invoked deliberately with `--ignored`, so a missing external tree cannot
 //! silently pass as if it had been checked.
 
+use htp_s14_receiver::conformance;
 use htp_s14_receiver::{
     Coverage,
     conformance::{
@@ -171,23 +172,63 @@ fn external_successor_bundle_is_checked_only_when_explicitly_invoked() {
         .expect("S14_SUCCESSOR_CONTRACTS must point at producer fixtures/contracts");
     let evidence = verify_successor_contracts(&contracts, Duration::from_secs(30)).unwrap();
     assert_eq!(evidence.files.len(), 61);
-    assert_eq!(evidence.label_count("accept"), 27);
+    assert_eq!(evidence.label_count("accept"), 27); // historical labels
     assert_eq!(evidence.label_count("reference"), 13);
     assert_eq!(evidence.label_count("reject"), 20);
     assert_eq!(evidence.label_count("reject_url_profile_idn"), 1);
-    assert_eq!(evidence.accepted_reports_checked, 27);
+    assert_eq!(evidence.accepted_reports_checked, 10);
     assert_eq!(evidence.url_corpus.cases.len(), 42);
     assert_eq!(evidence.coverage.len(), 4);
     assert_eq!(
         evidence.files.iter().filter(|file| file.checked).count(),
-        27
+        10
     );
+    // Exactly the 17 dropped accepts are the unchecked `accept` files, and each
+    // was verified to reject at population/semantic_mismatch while checking.
+    let mut dropped: Vec<&str> = evidence
+        .files
+        .iter()
+        .filter(|file| file.historical_label == "accept" && !file.checked)
+        .map(|file| file.path.as_str())
+        .collect();
+    dropped.sort_unstable();
+    assert_eq!(dropped, conformance::DROPPED_ACCEPTS);
     for file in &evidence.files {
         assert_eq!(
             file.checked,
-            file.historical_label == "accept",
+            file.historical_label == "accept"
+                && !conformance::DROPPED_ACCEPTS.contains(&file.path.as_str()),
             "{}",
             file.path
         );
     }
+}
+
+/// H1 amends the frozen #88 accept count: 17 of the 27 historical positives
+/// are rejected by full-population admission and are dropped, leaving 10.
+#[test]
+fn successor_accept_count_is_amended_to_the_admitted_ten() {
+    assert_eq!(conformance::HISTORICAL_ACCEPT_COUNT, 27);
+    assert_eq!(conformance::ACCEPT_COUNT, 10);
+    assert_eq!(conformance::DROPPED_ACCEPTS.len(), 17);
+    let mut sorted = conformance::DROPPED_ACCEPTS;
+    sorted.sort_unstable();
+    assert_eq!(sorted, conformance::DROPPED_ACCEPTS, "kept sorted");
+    assert!(sorted.windows(2).all(|w| w[0] != w[1]), "no duplicates");
+    // The 10 survivors are exactly the S2 historical positives under
+    // tests/fixtures/s14-schema4-historical/s14-wire-1-candidate.
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/s14-schema4-historical/s14-wire-1-candidate");
+    let mut kept = 0;
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        if name.starts_with("v4-candidate-") {
+            kept += 1;
+            assert!(
+                !conformance::DROPPED_ACCEPTS.contains(&name.as_str()),
+                "{name}"
+            );
+        }
+    }
+    assert_eq!(kept, conformance::ACCEPT_COUNT);
 }

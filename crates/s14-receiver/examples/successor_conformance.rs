@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn pinned_counts_are_exact() {
-        assert_eq!(htp_s14_receiver::conformance::ACCEPT_COUNT, 27);
+        assert_eq!(htp_s14_receiver::conformance::ACCEPT_COUNT, 10);
         assert_eq!(htp_s14_receiver::conformance::URL_CASE_COUNT, 42);
         assert_eq!(htp_s14_receiver::conformance::SUCCESSOR_FILE_COUNT, 61);
     }
