@@ -1,0 +1,14 @@
+{
+  "_source": "Produced by seosmith src/contract.rs entity_id() and committed in seosmith 2846f64 fixtures/contracts/s14-schema4-v1/. URLs are hashed exactly as spelled; no query-URL vector exists in any committed fixture.",
+  "fixtures": {
+    "crawl.json": "cc909b3c90c4357325ad06c533c058f9cd297a027268e2087b69825e88373366",
+    "unicode.json": "d4503df1b89b2ca086ee8ebc754d72165f4e08aca84424f403436dcaa6d154ba",
+    "partial-sources.json": "f7b3c81d997eec9d4308d8cf001ef377f261e54593fdc8e08cd8a87f347e9a5c",
+    "mixed-caps-exceeded.json": "cdfa83c5a430f02307930822df421830595497d883bf61d5dd8e1ae766f02eb1"
+  },
+  "entities": [
+    { "fixture": "crawl.json", "url": "https://fixture.invalid/", "entity_id": "sha256:a65188fd4468979beec6d2bf886243983bb484ae6e3cd81ad9f3a0cb7fd6537f", "missing_title": "absent", "missing_description": "present" },
+    { "fixture": "crawl.json", "url": "https://fixture.invalid/page-1", "entity_id": "sha256:91647d8a893f089ddb77c1cf3c2d1e4e200de1c5e6b892562b512a78ccdd375e", "missing_title": "present", "missing_description": "present" },
+    { "fixture": "unicode.json", "url": "https://example.com/%E6%97%A5%E6%9C%AC", "entity_id": "sha256:99c67b7e8cfc9b96919787c4ab5e51ae3e4cd320d0ff67624351b9a28084a6b0", "missing_title": "absent", "missing_description": "unknown" }
+  ]
+}

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { createIndependentAuditClient } from '#shared/utils/independent-audit-client'
-import { compareIndependent, parseControlledCsv, CURRENT_SEMANTICS, PROVENANCE_FIELDS, normalizeProvenance, provenanceEntries, summarizeComparison, sourceByteLength } from '#shared/utils/independent-audit'
+import { compareIndependent, parseControlledCsv, CURRENT_SEMANTICS, isSupportedSemantics, PROVENANCE_FIELDS, normalizeProvenance, provenanceEntries, summarizeComparison, sourceByteLength } from '#shared/utils/independent-audit'
 import { formatInstant } from '#shared/utils/local-time'
 useHead({ title: 'Hatch · Independent audit comparisons' })
 const config = useRuntimeConfig().public
@@ -18,7 +18,7 @@ const reportMeta = ref<{ fqdn?: string; sha256?: string } | null>(null)
 let generation = 0, selectionGeneration = 0
 const comparison = computed(() => {
   if (!selected.value || !report.value) return []
-  if (semantics.value !== CURRENT_SEMANTICS) return []
+  if (!isSupportedSemantics(semantics.value)) return []
   return compareIndependent(parseControlledCsv(selected.value.source_text), report.value, asserted.value, semantics.value)
 })
 const summary = computed(() => summarizeComparison(comparison.value))
@@ -219,11 +219,11 @@ onBeforeUnmount(() => { generation++ })
           <p v-else-if="report">Saved assertion: {{ asserted ? 'verified by the original author' : 'not asserted' }}.</p>
           <p>Only the two S15 metadata rules have a mapping. Other rules are unmapped; unavailable and partial evidence stays unknown. Differences may arise from scope, rendering, parsing, fetch results, thresholds or rule meaning.</p>
           <p v-if="reportMeta && report">Compared SEOsmith report: {{ reportMeta.fqdn || 'unknown host' }} · {{ reportMeta.sha256 ? 'SHA-256 ' + reportMeta.sha256 : 'SHA-256 not provided' }}</p>
-          <p v-if="report && semantics !== CURRENT_SEMANTICS" role="alert">This comparison uses unsupported semantics {{ semantics }}. {{ readOnly ? 'Its original CSV can still be downloaded.' : 'Its original evidence can still be exported.' }}</p>
+          <p v-if="report && !isSupportedSemantics(semantics)" role="alert">This comparison uses unsupported semantics {{ semantics }}. {{ readOnly ? 'Its original CSV can still be downloaded.' : 'Its original evidence can still be exported.' }}</p>
           <button v-if="canWrite && report && semantics === CURRENT_SEMANTICS" :disabled="busy" @click="saveComparison">Save comparison</button>
-          <template v-if="report && semantics === CURRENT_SEMANTICS">
+          <template v-if="report && isSupportedSemantics(semantics)">
             <p role="status">Discrepancies: {{ summary.agreement }} agreement · {{ summary.independent_only }} independent-only · {{ summary.seosmith_only }} SEOsmith-only · {{ summary.unknown }} unknown · {{ summary.unmapped }} unmapped · {{ summary.total }} total.</p>
-            <table><thead><tr><th>URL</th><th>Rule</th><th>Independent</th><th>SEOsmith</th><th>Result</th></tr></thead><tbody><tr v-for="(row, index) in comparison" :key="index"><td>{{ row.url }}</td><td>{{ row.rule }}</td><td>{{ row.state }}</td><td>{{ row.seosmith }}</td><td>{{ row.category }}</td></tr></tbody></table>
+            <table><thead><tr><th>URL</th><th>Rule</th><th>Independent</th><th>SEOsmith</th><th>Result</th></tr></thead><tbody><tr v-for="(row, index) in comparison" :key="index"><td>{{ row.url }}</td><td>{{ row.rule }}</td><td>{{ row.state }}</td><td>{{ row.seosmith }}<template v-if="row.reason"> ({{ row.reason }}<template v-if="row.reason_count"> × {{ row.reason_count }}</template>)</template></td><td>{{ row.category }}</td></tr></tbody></table>
           </template>
         </template>
       </template>
