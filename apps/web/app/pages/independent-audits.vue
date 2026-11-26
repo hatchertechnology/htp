@@ -21,6 +21,8 @@ const comparison = computed(() => {
   if (!isSupportedSemantics(semantics.value)) return []
   return compareIndependent(parseControlledCsv(selected.value.source_text), report.value, asserted.value, semantics.value)
 })
+/** A fresh schema-1 report still replays under its own semantics; new saves stay on the current one. */
+function freshSemantics(value: any): string { return value?.schema_version === 1 ? 's15-metadata-1' : CURRENT_SEMANTICS }
 const summary = computed(() => summarizeComparison(comparison.value))
 const sourceProvenance = computed(() => provenanceEntries(selected.value?.metadata?.provenance))
 function download() {
@@ -79,7 +81,7 @@ async function chooseRun() {
   if (!id) return
   try {
     const detail = await ws.request<any>(independent.auditPath(site, id))
-    if (gen === generation && id === run.value) { report.value = detail.report; reportMeta.value = { fqdn: detail.fqdn ?? ws.selected.value?.fqdn, sha256: detail.sha256 } }
+    if (gen === generation && id === run.value) { report.value = detail.report; semantics.value = freshSemantics(detail.report); reportMeta.value = { fqdn: detail.fqdn ?? ws.selected.value?.fqdn, sha256: detail.sha256 } }
   } catch (cause) { if (gen === generation && id === run.value) error.value = failureMessage(cause) }
 }
 async function saveComparison() {
@@ -220,6 +222,7 @@ onBeforeUnmount(() => { generation++ })
           <p>Only the two S15 metadata rules have a mapping. Other rules are unmapped; unavailable and partial evidence stays unknown. Differences may arise from scope, rendering, parsing, fetch results, thresholds or rule meaning.</p>
           <p v-if="reportMeta && report">Compared SEOsmith report: {{ reportMeta.fqdn || 'unknown host' }} · {{ reportMeta.sha256 ? 'SHA-256 ' + reportMeta.sha256 : 'SHA-256 not provided' }}</p>
           <p v-if="report && !isSupportedSemantics(semantics)" role="alert">This comparison uses unsupported semantics {{ semantics }}. {{ readOnly ? 'Its original CSV can still be downloaded.' : 'Its original evidence can still be exported.' }}</p>
+          <p v-else-if="report && semantics !== CURRENT_SEMANTICS" role="status">This SEOsmith report has schema version {{ report.schema_version }}. It replays under {{ semantics }} and is not comparable under {{ CURRENT_SEMANTICS }}; saving a comparison requires a schema 4 report.</p>
           <button v-if="canWrite && report && semantics === CURRENT_SEMANTICS" :disabled="busy" @click="saveComparison">Save comparison</button>
           <template v-if="report && isSupportedSemantics(semantics)">
             <p role="status">Discrepancies: {{ summary.agreement }} agreement · {{ summary.independent_only }} independent-only · {{ summary.seosmith_only }} SEOsmith-only · {{ summary.unknown }} unknown · {{ summary.unmapped }} unmapped · {{ summary.total }} total.</p>

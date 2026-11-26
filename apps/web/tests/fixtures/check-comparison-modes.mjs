@@ -11,7 +11,7 @@ const sourceRequest = new Promise(resolve => { sourceRequested = resolve })
 const sourceRelease = new Promise(resolve => { releaseSource = resolve })
 const browser=await chromium.launch({headless:true}), page=await browser.newPage(), errors=[]
 page.on('pageerror',e=>errors.push(e.message))
-const id='00000000-0000-0000-0000-000000000003', a='00000000-0000-0000-0000-000000000004', b='00000000-0000-0000-0000-000000000005', src='00000000-0000-0000-0000-000000000006', site2='00000000-0000-0000-0000-00000000000b', exp=Math.floor(Date.now()/1000)+3600
+const id='00000000-0000-0000-0000-000000000003', a='00000000-0000-0000-0000-000000000004', b='00000000-0000-0000-0000-000000000005', c='00000000-0000-0000-0000-00000000000f', src='00000000-0000-0000-0000-000000000006', site2='00000000-0000-0000-0000-00000000000b', exp=Math.floor(Date.now()/1000)+3600
 const token=`${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({sub:'00000000-0000-0000-0000-000000000001',exp})).toString('base64url')}.fake`
 await page.addInitScript(({token,exp})=>localStorage.setItem('sb-raxuvdbdfmmtpqjcafcq-auth-token',JSON.stringify({access_token:token,refresh_token:'fake',token_type:'bearer',expires_in:3600,expires_at:exp,user:{id:'00000000-0000-0000-0000-000000000001',aud:'authenticated',role:'authenticated'}})),{token,exp})
 const report={schema_version:1,engine_version:'0.2.0',ruleset_version:'2026-11-01.1',outcome:'completed',stop_reason:'frontier_exhausted',coverage_complete:true,pages:[{url:'https://example.com/',status:200,content_type:'text/html',error:null,is_resource:false,blocked_by_robots:false,flags:[],extraction_truncated:false}],findings:[]}
@@ -42,7 +42,8 @@ await page.route('**/*',async route=>{
  }
  if(path==='/api/websites') return json({items:[{id,fqdn:'example.com'},{id:site2,fqdn:'second.example.com'}],has_more:false})
  if(path.startsWith(`/api/websites/${id}/seo/audits`)) auditRequests.push(path)
- if(path===`/api/websites/${id}/seo/audits`) return json({items:[{delivery_id:a,scan_at:'run one',summary:{outcome:'completed'}},{delivery_id:b,scan_at:'run two',summary:{outcome:'completed'}}],next_cursor:null})
+ if(path===`/api/websites/${id}/seo/audits`) return json({items:[{delivery_id:a,scan_at:'run one',summary:{outcome:'completed'}},{delivery_id:b,scan_at:'run two',summary:{outcome:'completed'}},{delivery_id:c,scan_at:'run three',summary:{outcome:'completed'}}],next_cursor:null})
+ if(path===`/api/websites/${id}/seo/audits/${c}`) return json({report})
  if(path.startsWith(`/api/websites/${id}/seo/audits/`)) return json({report:report4})
  if(path.startsWith('/api/google/')||path.startsWith('/api/bing/')) return json({connected:false,configured:false})
  return route.continue()
@@ -165,6 +166,11 @@ if (mode === 'off') {
     await page.getByRole('button',{name:/saved comparison/}).click()
     await page.getByRole('table').waitFor()
     await page.getByText(/1 agreement/).waitFor()
+    // A freshly selected schema-1 report replays under s15-metadata-1 and cannot be saved.
+    await select.selectOption(c)
+    await page.getByText(/schema version 1/).waitFor()
+    await page.getByRole('table').waitFor()
+    if (await page.getByRole('button',{name:'Save comparison'}).count()) throw Error('fresh schema-1 report offers Save comparison')
   }
 }
 if(errors.length) throw Error(JSON.stringify(errors))
