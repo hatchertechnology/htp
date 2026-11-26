@@ -99,13 +99,17 @@ impl Harness {
     }
 
     fn token(&self) -> String {
+        self.token_for(false)
+    }
+
+    fn token_for(&self, anonymous: bool) -> String {
         let claims = json!({
             "iss": format!("{}/auth/v1", self.url),
             "aud": "authenticated",
             "sub": "a19a3adb-148d-4714-9278-c2d709fe0ad1",
             "exp": get_current_timestamp() + 3600,
             "role": "authenticated",
-            "is_anonymous": false
+            "is_anonymous": anonymous
         });
         let mut header = Header::new(Algorithm::ES256);
         header.kid = Some("test-key".to_owned());
@@ -122,6 +126,17 @@ impl Harness {
         if token {
             request = request.header("authorization", format!("Bearer {}", self.token()));
         }
+        self.send(request).await
+    }
+
+    async fn get_anonymous(&self, path: &str) -> axum::response::Response {
+        let request = Request::get(path)
+            .header("host", "localhost")
+            .header("authorization", format!("Bearer {}", self.token_for(true)));
+        self.send(request).await
+    }
+
+    async fn send(&self, request: axum::http::request::Builder) -> axum::response::Response {
         self.app
             .clone()
             .oneshot(request.body(Body::empty()).unwrap())
@@ -267,4 +282,81 @@ async fn malformed_ids_never_reach_the_database() {
 #[tokio::test]
 async fn the_rollout_flag_defaults_off() {
     assert!(!htp_api::RolloutCapabilities::default().evidence_families);
+}
+
+#[tokio::test]
+async fn flag_off_answers_503_even_for_malformed_ids() {
+    let h = Harness::new(
+        false,
+        Upstream {
+            status: StatusCode::OK,
+            body: OWNER_V2,
+        },
+    )
+    .await;
+    let path = format!("/websites/not-a-uuid/seosmith/audits/{DELIVERY}/evidence-families");
+    assert_eq!(
+        h.get(&path, true).await.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(h.rpc_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_non_object_success_body_is_unavailable() {
+    for body in ["[]", "\"text\"", "7"] {
+        let h = Harness::new(
+            true,
+            Upstream {
+                status: StatusCode::OK,
+                body,
+            },
+        )
+        .await;
+        assert_eq!(
+            h.get(PATH, true).await.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_anonymous_session_is_401_without_a_database_call() {
+    let h = Harness::new(
+        true,
+        Upstream {
+            status: StatusCode::OK,
+            body: OWNER_V2,
+        },
+    )
+    .await;
+    assert_eq!(
+        h.get_anonymous(PATH).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(h.rpc_calls.load(Ordering::SeqCst), 0);
+}
+
+const OWNER_SIX_FAMILIES: &str = r#"{"delivery_id":"00000000-0000-0000-0000-000000000002","wire_contract_version":"s14-wire-2","evidence_families":{"version":1,"semantics":"s14-families-1","families":{"s01_discovery":{"state":"collected"},"s02_content":{"state":"unavailable"},"s03_integrity":{"state":"collected"},"s04_links":{"state":"unknown"},"s05_structure":{"state":"collected"},"s06_policy":{"state":"unavailable"}}},"reason":null}"#;
+
+#[tokio::test]
+async fn a_six_family_owner_object_is_relayed_unchanged() {
+    let h = Harness::new(
+        true,
+        Upstream {
+            status: StatusCode::OK,
+            body: OWNER_SIX_FAMILIES,
+        },
+    )
+    .await;
+    let response = h.get(PATH, true).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    let families = body["evidence_families"]["families"].as_object().unwrap();
+    assert_eq!(families.len(), 6);
+    assert_eq!(
+        body,
+        serde_json::from_str::<Value>(OWNER_SIX_FAMILIES).unwrap()
+    );
 }

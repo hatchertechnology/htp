@@ -38,7 +38,7 @@ pub(crate) fn router(store: WebsiteStore, enabled: bool) -> Router {
 async fn read(
     State(state): State<FamiliesState>,
     headers: HeaderMap,
-    Path((website, delivery)): Path<(Uuid, Uuid)>,
+    Path((website, delivery)): Path<(String, String)>,
 ) -> Response {
     if !state.enabled {
         return (
@@ -47,6 +47,11 @@ async fn read(
         )
             .into_response();
     }
+    // Ids are validated after the flag check, so a held route answers 503 for any id.
+    let (Ok(website), Ok(delivery)) = (Uuid::parse_str(&website), Uuid::parse_str(&delivery))
+    else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
     let result = state
         .store
         .rpc(

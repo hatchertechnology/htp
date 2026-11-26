@@ -175,6 +175,11 @@ fn dashboard_methods(path: &str) -> Option<&'static str> {
             {
                 return Some("GET, POST");
             }
+            ["seosmith", "audits", delivery, "evidence-families"]
+                if delivery.len() == 36 && uuid::Uuid::parse_str(delivery).is_ok() =>
+            {
+                return Some("GET");
+            }
             ["seo", "work", work, "attempts"]
                 if work.len() == 36 && uuid::Uuid::parse_str(work).is_ok() =>
             {
@@ -1251,5 +1256,41 @@ mod tests {
             dashboard_methods(&format!("/websites/{id}/rpc/import_independent_audit")),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn evidence_families_route_is_get_only_for_the_static_dashboard() {
+        let id = "00000000-0000-0000-0000-000000000001";
+        let path = format!("/websites/{id}/seosmith/audits/{id}/evidence-families");
+        assert_eq!(dashboard_methods(&path), Some("GET"));
+        for method in ["GET", "POST", "DELETE", "PUT", "PATCH"] {
+            let response = app(Arc::new(AtomicUsize::new(0)), cors())
+                .oneshot(preflight(&path, ORIGIN, method))
+                .await
+                .unwrap();
+            if method == "GET" {
+                assert_eq!(response.status(), StatusCode::NO_CONTENT);
+                assert_eq!(
+                    header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                    Some(ORIGIN)
+                );
+            } else {
+                assert!(header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+            }
+        }
+        let response = app(Arc::new(AtomicUsize::new(0)), cors())
+            .oneshot(preflight(&path, "https://evil.example", "GET"))
+            .await
+            .unwrap();
+        assert!(header_value(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+        for bad in [
+            format!("/websites/{id}/seosmith/audits/not-a-uuid/evidence-families"),
+            format!("/websites/no/seosmith/audits/{id}/evidence-families"),
+            format!("{path}/"),
+            format!("{path}/extra"),
+            format!("/websites/{id}/seosmith/audits/{id}"),
+        ] {
+            assert_eq!(dashboard_methods(&bad), None, "{bad}");
+        }
     }
 }
