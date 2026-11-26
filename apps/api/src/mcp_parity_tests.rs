@@ -85,14 +85,14 @@ async fn fixture(
             "audit_event_history",
             seen.clone(),
             hits.clone(),
-            json!({"semantics_version":1,"events":[{"id":"e1","kind":"new"}],"has_more":false,"next_cursor":null,"availability":"producer_active"}),
+            json!({"semantics_version":1,"events":[{"id":"e1","kind":"new"}],"has_more":false,"next_cursor":null,"availability":"producer_degraded","producer":{"processing_enabled":true,"enqueue_enabled":true,"last_run_at":"2026-11-26T12:00:00Z","last_success_at":null,"last_outcome":"retry","pending":3,"held":1,"held_by_reason":{"processor_unavailable":1},"counts_capped":false}}),
             200,
         ))
         .merge(rpc_route(
             "audit_operational_history",
             seen.clone(),
             hits.clone(),
-            json!({"version":1,"episodes":[],"has_more":false,"next_cursor":null,"availability":"producer_active"}),
+            json!({"version":1,"episodes":[],"has_more":false,"next_cursor":null,"availability":"producer_active","producer":{"operations_enabled":true}}),
             200,
         ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -477,10 +477,19 @@ async fn event_reads_pass_a_real_producer_state_through_unchanged() {
     ] {
         assert_eq!(result.is_error, Some(false));
         let value = result.structured_content.unwrap();
+        let (code, producer) = if key == "events" {
+            (
+                "producer_degraded",
+                json!({"processing_enabled":true,"enqueue_enabled":true,"last_run_at":"2026-11-26T12:00:00Z","last_success_at":null,"last_outcome":"retry","pending":3,"held":1,"held_by_reason":{"processor_unavailable":1},"counts_capped":false}),
+            )
+        } else {
+            ("producer_active", json!({"operations_enabled":true}))
+        };
         assert_eq!(
-            value["availability"], "producer_active",
+            value["availability"], code,
             "not rewritten to unavailable"
         );
+        assert_eq!(value["producer"], producer, "producer object passes through");
         assert!(value[key].is_array());
     }
 }

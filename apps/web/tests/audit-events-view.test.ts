@@ -44,13 +44,58 @@ describe('availability is never a clean result', () => {
     expect(empty.text).toMatch(/no new or regressed issues/)
     const some = availabilityNotice('producer_unavailable', 3, 'episodes')
     expect(some.tone).toBe('notice')
-    expect(some.text).toMatch(/historical/)
+    expect(some.text).toMatch(/missing or delayed/)
   })
-  it('warns when availability is not reported and passes other values through', () => {
+  it('warns when availability is not reported', () => {
     expect(availabilityNotice(null, 0, 'events').text).toMatch(/cannot be read as a clean result/)
-    expect(availabilityNotice('producer_active', 0, 'events')).toEqual({ tone: 'status', text: 'Producer availability: producer active.' })
+    expect(availabilityNotice(null, 0, 'events').tone).toBe('notice')
+  })
+  it('only producer_active reads an empty list as no events', () => {
+    const active = availabilityNotice('producer_active', 0, 'events')
+    expect(active.tone).toBe('status')
+    expect(active.text).toMatch(/empty list means no events/)
+    expect(availabilityNotice('producer_active', 0, 'episodes').text).toMatch(/no episodes are stored/)
+    expect(availabilityNotice('producer_active', 2, 'events').text).not.toMatch(/empty/)
     expect(parseEventsPage(eventsPage({ availability: 'producer_active' }))!.availability).toBe('producer_active')
-    expect(availabilityNotice('active', 0, 'events')).toEqual({ tone: 'status', text: 'Producer availability: active.' })
+  })
+  it.each([
+    ['producer_unavailable', /not active yet/],
+    ['producer_not_enqueuing', /not queueing new events/],
+    ['producer_starting', /has not run yet/],
+    ['producer_stale', /not run for at least 5 minutes/],
+    ['producer_degraded', /errors or delays/],
+  ])('%s is a notice and an empty list is never clean', (code, lead) => {
+    const empty = availabilityNotice(code, 0, 'events')
+    expect(empty.tone).toBe('notice')
+    expect(empty.text).toMatch(lead)
+    expect(empty.text).toMatch(/not a clean result/)
+    expect(empty.text).not.toMatch(/no events are stored/)
+    const some = availabilityNotice(code, 3, 'events')
+    expect(some.tone).toBe('notice')
+    expect(some.text).toMatch(/missing or delayed/)
+  })
+  it('treats an unrecognised value as not clean', () => {
+    const n = availabilityNotice('active', 0, 'events')
+    expect(n.tone).toBe('notice')
+    expect(n.text).toMatch(/does not recognise/)
+    expect(n.text).toMatch(/not a clean result/)
+  })
+  it('reads the producer object and shows queue counts, lower bounds when capped', () => {
+    const producer = { processing_enabled: true, enqueue_enabled: true, last_run_at: '2026-11-26T12:00:00Z', last_success_at: null, last_outcome: 'retry', pending: 3, held: 1, held_by_reason: { poison: 1 }, counts_capped: true }
+    const page = parseEventsPage(eventsPage({ availability: 'producer_degraded', producer }))!
+    expect(page.producer).toEqual({ pending: 3, held: 1, countsCapped: true, lastRunAt: '2026-11-26T12:00:00Z' })
+    expect(availabilityNotice('producer_degraded', 0, 'events', page.producer).text).toMatch(/At least 3 pending and 1 held/)
+    expect(availabilityNotice('producer_degraded', 0, 'events', { ...page.producer!, countsCapped: false }).text).toMatch(/ 3 pending and 1 held/)
+    expect(availabilityNotice('producer_stale', 0, 'events', { pending: 0, held: 0, countsCapped: false, lastRunAt: null }).text).not.toMatch(/pending/)
+  })
+  it('drops a malformed producer object without failing the page or clearing availability', () => {
+    for (const producer of ['x', 5, [], { pending: -1, held: 'a' }]) {
+      const page = parseEventsPage(eventsPage({ availability: 'producer_stale', producer }))!
+      expect(page.availability).toBe('producer_stale')
+      expect(page.producer === null || (page.producer.pending === null && page.producer.held === null)).toBe(true)
+    }
+    expect(parseEventsPage(eventsPage())!.producer).toBeNull()
+    expect(parseEpisodesPage(episodesPage({ availability: 'producer_active', producer: { operations_enabled: true } }))!.availability).toBe('producer_active')
   })
   it('keeps the empty text separate from the availability warning', () => {
     expect(emptyText('events')).toBe('No audit events are stored for this website.')

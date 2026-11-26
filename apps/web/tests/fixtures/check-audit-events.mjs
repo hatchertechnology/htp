@@ -55,11 +55,28 @@ try {
   await section.getByRole('alert').getByText(/This is not an empty history/).first().waitFor()
   assert.equal(await section.getByText('No audit events are stored for this website.').count(), 0)
 
-  // A real producer state (stub) is shown, not the "not active yet" claim.
+  // Only producer_active reads an empty list as "no events"; the active state is a status, not a warning.
   await page.goto(url('active'))
-  await section.getByText('Producer availability: producer active.').first().waitFor()
+  await section.getByText('Alert production is active.').first().waitFor()
   assert.doesNotMatch(await section.innerText(), /Alert production is not active yet/)
+  await page.goto(url('active-empty'))
+  await section.getByText('An empty list means no events are stored.').waitFor()
+
+  // Every other producer code is a notice; an empty list is never clean and queue counts are shown.
+  for (const [mode, lead] of [['not-enqueuing', /not queueing new events/], ['starting', /has not run yet/], ['stale', /not run for at least 5 minutes/], ['degraded', /errors or delays/]]) {
+    await page.goto(url(mode))
+    await section.getByRole('cell', { name: 'New issue' }).waitFor()
+    const text = await section.innerText()
+    assert.match(text, lead, mode)
+    assert.match(text, /may be missing or delayed/, mode)
+    assert.match(text, /4 pending and 2 held for this site/, mode)
+    assert.doesNotMatch(text, /An empty list means no events/, mode)
+  }
+  await page.goto(url('degraded-empty'))
+  await section.getByText('No audit events are stored for this website.').waitFor()
+  assert.match(await section.innerText(), /empty list of events is not a clean result/)
+  assert.doesNotMatch(await section.innerText(), /An empty list means no events/)
 
   assert.deepEqual(errors, [])
-  console.log('AuditEvents fixture passed: events, episodes, local time, safe rendering, paging, retry, empty, malformed and producer states.')
+  console.log('AuditEvents fixture passed: events, episodes, local time, safe rendering, paging, retry, empty, malformed and every producer state.')
 } finally { await browser.close() }

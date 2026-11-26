@@ -5,19 +5,20 @@ Object.assign(globalThis, vue)
 const params = new URLSearchParams(location.search), mode = params.get('mode') ?? 'default'
 const SITE = '10000000-0000-0000-0000-000000000001'
 const id = (n: number) => `20000000-0000-0000-0000-${String(n).padStart(12, '0')}`
-const availability = mode === 'active' ? 'producer_active' : 'producer_unavailable'
+const availability = mode === 'active' ? 'producer_active' : mode === 'degraded' || mode === 'degraded-empty' ? 'producer_degraded' : mode === 'stale' ? 'producer_stale' : mode === 'not-enqueuing' ? 'producer_not_enqueuing' : mode === 'starting' ? 'producer_starting' : 'producer_unavailable'
+const producer = { processing_enabled: true, enqueue_enabled: true, last_run_at: '2026-11-26T12:00:00Z', last_success_at: null, last_outcome: 'retry', pending: 4, held: 2, held_by_reason: { processor_unavailable: 2 }, counts_capped: false }
 const event = (n: number, kind: string, severity: string, extra: Record<string, unknown> = {}) => ({ id: id(n), delivery_id: id(900 + n), baseline_id: id(800 + n), semantics_version: 1, entity_id: 'sha256:' + String(n).repeat(8), rule: 'missing_title', kind, severity, source_locator: `https://example.test/page-${n}`, created_at: `2026-11-2${n}T01:30:00+00:00`, ...extra })
 const calls: { rpc: string; args: Record<string, unknown> }[] = []
 let olderFailures = mode === 'older-fails' ? 1 : 0
 const pages: Record<string, (args: Record<string, unknown>) => unknown> = {
   audit_event_history: args => {
     if (mode === 'malformed') return { semantics_version: 1, events: 'none', has_more: false, next_cursor: null, availability }
-    if (mode === 'empty') return { semantics_version: 1, events: [], has_more: false, next_cursor: null, availability }
+    if (mode === 'empty' || mode === 'degraded-empty' || mode === 'active-empty') return { semantics_version: 1, events: [], has_more: false, next_cursor: null, availability: mode === 'active-empty' ? 'producer_active' : availability, producer }
     if (args.p_before) {
       if (olderFailures-- > 0) throw new Error('older page failed')
       return { semantics_version: 1, events: [event(1, 'severity_increased', 'critical')], has_more: false, next_cursor: null, availability }
     }
-    return { semantics_version: 1, events: [event(3, 'new', 'alert', { source_locator: '<img src=x onerror="window.__xss=1">' }), event(2, 'reopened', 'warning')], has_more: true, next_cursor: { before: '2026-11-22T01:30:00+00:00', before_id: id(2) }, availability }
+    return { semantics_version: 1, events: [event(3, 'new', 'alert', { source_locator: '<img src=x onerror="window.__xss=1">' }), event(2, 'reopened', 'warning')], has_more: true, next_cursor: { before: '2026-11-22T01:30:00+00:00', before_id: id(2) }, availability, producer }
   },
   audit_operational_history: () => mode === 'empty'
     ? { version: 1, episodes: [], has_more: false, next_cursor: null, availability }

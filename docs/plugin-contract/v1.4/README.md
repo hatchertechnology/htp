@@ -62,6 +62,32 @@ The three 1.4 tools emit exactly these values in `code`, with the REST HTTP
 `unavailable` (503). `unsupported` is a host-side result for a tool the server
 does not list; the server never emits it.
 
+## Audit-read availability amendment (additive over 1.3.0)
+
+The frozen 1.3.0 audit-read profile allows only `availability: producer_unavailable`.
+`audit-read-availability.json` amends that field additively; the 1.3.0 bytes and
+validator are unchanged and still reject the new codes. `producer_unavailable`
+stays the held value.
+
+| Code | Meaning | Reads |
+| --- | --- | --- |
+| `producer_unavailable` | Processing disabled; events are not being produced | events, episodes |
+| `producer_not_enqueuing` | Processing on, enqueueing off; new events are not queued | events |
+| `producer_starting` | Enabled; the runner has not run yet | events |
+| `producer_stale` | The runner has not run for 5 minutes | events |
+| `producer_degraded` | Last run hit transient errors, or a job is held `processor_unavailable` | events |
+| `producer_active` | The runner is running normally | events, episodes |
+
+Only `producer_active` lets an empty page be read as no events or episodes;
+every other code means events may be missing or delayed. Results also carry a
+`producer` object. For events: `{processing_enabled, enqueue_enabled,
+last_run_at, last_success_at, last_outcome (success|retry|null), pending, held,
+held_by_reason, counts_capped}`, where counts are this site's jobs and
+`counts_capped` makes them lower bounds. For episodes: `{operations_enabled}`.
+`scripts/audit-read-availability.mjs` checks the types and that the code agrees
+with the object. The web dashboard and the MCP tools show these codes as
+reported and never read an empty page as clean unless the code is `producer_active`.
+
 ## Offline semantic conformance and evidence limits
 
 Run from the canonical tree with Node 22+:
@@ -69,7 +95,7 @@ Run from the canonical tree with Node 22+:
 ```sh
 node scripts/check-plugin-contract.mjs
 node scripts/check-parity-read-contract.mjs
-node --test scripts/parity-read-contract.test.mjs
+node --test scripts/parity-read-contract.test.mjs scripts/audit-read-availability.test.mjs
 ```
 
 The default generates synthetic observations and validates them semantically.

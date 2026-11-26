@@ -9,6 +9,7 @@ import { profile, validateProviderResults } from './provider-request-contract.mj
 import { exportProfile, validateExportResults } from './audit-export-contract.mjs';
 import { syntheticExportResults } from './audit-export-fixtures.mjs';
 import { auditReadProfile, auditReadFixtures, validateAuditReadResults, syntheticAuditReadResults } from './audit-read-contract.mjs';
+import { auditAvailabilityProfile, syntheticAuditAvailabilityResults, validateAuditAvailability } from './audit-read-availability.mjs';
 import { parityReadProfile, parityReadFixtures, validateParityReadResults, syntheticParityReadResults } from './parity-read-contract.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -146,6 +147,13 @@ for (const op of parityReadProfile.operations) {
     assert.equal(hints.match(new RegExp(hint + '\\s*=\\s*(true|false)'))?.[1], String(value), 'parity read annotation drift: ' + op.binding + ':' + hint);
   }
 }
+// 1.4.0 amends audit-read availability additively; 1.3.0 stays frozen.
+assert.equal(auditAvailabilityProfile.amends, auditReadProfile.contractVersion);
+assert.deepEqual(auditAvailabilityProfile.operations, auditReadProfile.operations.map(o => o.id));
+assert.equal(auditAvailabilityProfile.availability.heldValue, auditReadProfile.availability.disabledValue);
+{ const { events, episodes } = syntheticAuditAvailabilityResults();
+  for (const r of events) validateAuditAvailability('htp.website_audit_events', r);
+  for (const r of episodes) validateAuditAvailability('htp.website_operational_episodes', r); }
 for (const host of ['backend','claude','codex','pi']) validateParityReadResults(parityReadFixtures, syntheticParityReadResults(host));
 for (const host of ['claude','codex','pi']) validateProviderResults(providerFixtures, {
   contractVersion: profile.contractVersion, host, observations: providerFixtures.scenarios.map(s => ({id:s.id, steps:s.steps.map(t => t.expected)}))
@@ -192,3 +200,5 @@ console.log(`Audit export profile ${exportProfile.contractVersion}: synthetic se
 console.log(`Audit read profile ${auditReadProfile.contractVersion}: ${auditReadFixtures.scenarios.length} synthetic stored-read traces; H15 producer, deployment and three-host current-source parity remain gated.`);
 
 console.log(`Parity read profile ${parityReadProfile.contractVersion}: ${parityReadFixtures.scenarios.length} synthetic stored-read traces; rollout flags, deployment and three-host current-source parity remain gated.`);
+
+console.log(`Audit read availability amendment ${auditAvailabilityProfile.contractVersion} (over ${auditAvailabilityProfile.amends}): ${auditAvailabilityProfile.availability.codes['htp.website_audit_events'].length} event codes, ${auditAvailabilityProfile.availability.codes['htp.website_operational_episodes'].length} operational codes; synthetic only.`);

@@ -2,14 +2,14 @@
 import { formatInstant, zoneLabel } from '#shared/utils/local-time'
 import {
   availabilityNotice, emptyText, episodeState, kindLabel, nextEventsQuery, parseEpisodesPage, parseEventsPage, unknownText,
-  type EpisodeRow, type EventCursor, type EventRow, type EventsPage,
+  type EpisodeRow, type EventCursor, type EventRow, type EventsPage, type Producer,
 } from '#shared/utils/audit-events-view'
 // Stored, owner-scoped reads only. They never start a crawl, collection or
 // event processing; availability describes the producer, not the site.
 const props = defineProps<{ websiteId: string }>()
 const { $supabase } = useNuxtApp()
-type Panel<T> = { rows: T[]; hasMore: boolean; nextCursor: EventCursor | null; availability: string | null; loaded: boolean; busy: boolean; error: string; retryMore: boolean }
-const blank = <T,>(): Panel<T> => ({ rows: [], hasMore: false, nextCursor: null, availability: null, loaded: false, busy: false, error: '', retryMore: false })
+type Panel<T> = { rows: T[]; hasMore: boolean; nextCursor: EventCursor | null; availability: string | null; producer: Producer | null; loaded: boolean; busy: boolean; error: string; retryMore: boolean }
+const blank = <T,>(): Panel<T> => ({ rows: [], hasMore: false, nextCursor: null, availability: null, producer: null, loaded: false, busy: false, error: '', retryMore: false })
 const events = reactive<Panel<EventRow>>(blank()), episodes = reactive<Panel<EpisodeRow>>(blank())
 let generation = 0
 function zone() { return zoneLabel() }
@@ -23,7 +23,7 @@ async function read<T>(panel: Panel<T>, rpc: string, parse: (raw: unknown) => Ev
     const parsed = error ? null : parse(data)
     if (!parsed) { panel.error = 'Stored history could not be read. This is not an empty history. Try again.'; return }
     panel.rows = more ? [...panel.rows, ...parsed.rows] : parsed.rows
-    panel.hasMore = parsed.hasMore; panel.nextCursor = parsed.nextCursor; panel.availability = parsed.availability; panel.loaded = true
+    panel.hasMore = parsed.hasMore; panel.nextCursor = parsed.nextCursor; panel.availability = parsed.availability; panel.producer = parsed.producer; panel.loaded = true
   } catch { if (gen === generation) panel.error = 'Stored history could not be read. This is not an empty history. Try again.' }
   finally { if (gen === generation) panel.busy = false }
 }
@@ -48,7 +48,7 @@ onBeforeUnmount(() => { generation++ })
     <p v-if="events.error" role="alert" class="form-error">{{ events.error }} <button class="refresh-control" :disabled="events.busy" @click="loadEvents(events.retryMore)">Try again</button></p>
     <p v-else-if="!events.loaded" role="status" class="compact-empty">Reading stored events…</p>
     <template v-if="events.loaded">
-      <p :class="availabilityNotice(events.availability, events.rows.length, 'events').tone === 'notice' ? 'form-notice' : 'report-caption'" role="status">{{ availabilityNotice(events.availability, events.rows.length, 'events').text }}</p>
+      <p :class="availabilityNotice(events.availability, events.rows.length, 'events', events.producer).tone === 'notice' ? 'form-notice' : 'report-caption'" role="status">{{ availabilityNotice(events.availability, events.rows.length, 'events', events.producer).text }}</p>
       <p v-if="!events.rows.length" class="compact-empty">{{ emptyText('events') }}</p>
       <div v-else class="table-scroll"><table><caption class="sr-only">Stored audit events, newest first</caption><thead><tr><th scope="col">Recorded ({{ zone() }})</th><th scope="col">Event</th><th scope="col">Severity</th><th scope="col">Rule</th><th scope="col">Page or resource</th><th scope="col">Audit</th></tr></thead>
         <tbody><tr v-for="row in events.rows" :key="row.id"><td><time v-if="row.created_at" :datetime="row.created_at" :title="row.created_at">{{ stamp(row.created_at) }}</time><template v-else>Unknown</template></td><td>{{ kindLabel(row.kind) }}</td><td>{{ unknownText(row.severity) }}</td><td>{{ unknownText(row.rule) }}</td><td>{{ row.source_locator ?? row.entity_id ?? 'Unknown' }}</td><td>{{ unknownText(row.delivery_id) }}</td></tr></tbody></table></div>
