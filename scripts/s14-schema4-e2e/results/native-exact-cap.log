@@ -1,0 +1,22 @@
+fatal: not a git repository (or any parent up to mount point /)
+Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).
+== order=prod: 50 base + 5 pending + 2 new = 57 migrations (head )
+== building the receiver admit example from /mnt/storage/worktrees/s4-x (2c2c1fe)
+== timing fixture: supplied fixture, 4952756 bytes
+== starting disposable network-none PG17 (public.ecr.aws/supabase/postgres:17.11.0.004)
+== applying 57 migrations (prod order)
+applied 57 migrations; sorted-version md5 57947dcd91ce0e1a54a1702fe2c347ae
+== ACLs
+== genuine receiver pairing commits as service_role
+== owner detail compare, non-owner denied
+== N-M3 commit timing: --cpus 0.2 --memory 1g, lifecycle trigger enabled, 5 runs
+container limits: cpus=200000000ns memory=1073741824
+stage                   p50 ms      max ms
+raw sha256                    4.9        5.0
+raw::jsonb                   79.6       80.8
+raw/report equality          85.1       97.0
+evidence validation        1300.4     1900.0
+commit (total)             2010.0     2196.0
+lifecycle trigger           186.5      310.5
+commit max 2196 ms (limit 10000 ms) on supplied fixture (4952756 bytes, 180 evaluations, 60 observations)
+S14-SCHEMA4-NATIVE: PASS
