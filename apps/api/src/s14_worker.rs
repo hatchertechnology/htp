@@ -57,7 +57,8 @@ const ADMIT_DEADLINE: Duration = Duration::from_secs(15);
 const OUTER_TIMEOUT: Duration = Duration::from_secs(25);
 /// Whole request, below the producer's 30 s client timeout.
 const REQUEST_BUDGET: Duration = Duration::from_secs(28);
-/// A throughput floor: a 29.7 MB escaped envelope needs about 3.7 MB/s to land
+/// A throughput floor: the measured worst-case envelope is 9,381,689 B (about
+/// 2x the 4,952,756-byte report cap), needing roughly 1.24 MB/s to land
 /// inside it, else every retry is 503 `body_timeout`. X measures the producer's
 /// upload speed before the gate opens (haiku recheck, N-MINOR-2).
 const BODY_DEADLINE: Duration = Duration::from_secs(8);
