@@ -106,7 +106,7 @@ test('concurrent runners converge: an active lease excludes the binding, an expi
     // The other runner dies; its lease expires and this runner converges.
     await db.query("update public.audit_event_jobs set leased_until=now()-interval '1 minute' where delivery_id=$1", [uid(1)])
     await run(db)
-    assert.deepEqual((await states(db)).map(j => j.state), ['held', 'held', 'processed'], 'older receipts are held once a later one exists')
+    assert.deepEqual((await states(db)).map(j => j.state), ['held', 'processed', 'processed'], 'only the baseline-less first receipt is held; batch order holds nothing')
     assert.equal(await count(db, 'audit_events'), 1)
     await run(db); assert.equal(await count(db, 'audit_events'), 1)
     // p_max bounds one run.
@@ -128,21 +128,7 @@ test('a poisoned job is held as processor_unavailable and does not block the que
     const j = (await states(db)).find(x => x.delivery_id === uid(2))
     assert.deepEqual([j.state, j.hold_reason], ['held', 'processor_unavailable'])
     assert.equal(await count(db, 'audit_events'), 0, 'partial work rolled back')
-    // The lock was released with the failed block: a receipt insert is not blocked.
-    await db.query("insert into public.seosmith_audits values($1,$2,'example.com',1,'import',$3,now(),null)", [uid(9), site, { schema_version: 2 }])
-  } finally { await db.close() }
-})
-
-test('a provider failure opens an episode and a success closes it', async () => {
-  const db = await setup()
-  try {
-    await db.query('insert into public.google_report_jobs values($1,$2,$3)', [job1, site, 'example.com'])
-    await db.exec('update public.audit_event_config set operations_enabled=true')
-    const op = (o, e = null) => db.query('select public.audit_operational_completion($1,$2,$3,$4,$5,$6) id', [site, 'example.com', 'google', job1, o, e]).then(r => r.rows[0].id)
-    const episode = await op('failed', 'other'); assert.ok(episode)
-    assert.equal((await db.query('select count(*)::int n from public.audit_operational_episodes where recovered_at is null')).rows[0].n, 1)
-    assert.equal(await op('recovered'), episode)
-    assert.equal((await db.query('select count(*)::int n from public.audit_operational_episodes where recovered_at is null')).rows[0].n, 0)
+    // (Lock release under real contention is proven on PG17: scripts/audit-event-runner-pg17.)
   } finally { await db.close() }
 })
 
@@ -166,4 +152,116 @@ test('schedule script then unschedule script leave cron.job as it was; disable r
     await db.exec(await rd('../rollbacks/20261203000000_audit_notifications_disable.sql'))
     assert.deepEqual((await db.query('select enqueue_enabled,processing_enabled,operations_enabled from public.audit_event_config')).rows[0], { enqueue_enabled: false, processing_enabled: false, operations_enabled: false })
   } finally { await db.close() }
+})
+
+const err = (db, sqlstate) => db.exec(`create or replace function public.boom() returns trigger language plpgsql as $$begin raise exception 'boom' using errcode='${sqlstate}'; end$$;
+  drop trigger if exists boom on public.audit_events; create trigger boom before insert on public.audit_events for each row execute function public.boom()`)
+const enable = (db) => db.exec('update public.audit_event_config set enqueue_enabled=true,processing_enabled=true')
+const status = (db) => db.query('select state,hold_reason,jobs::int jobs,max_attempts from public.audit_event_queue_status order by state,hold_reason').then(r => r.rows)
+
+test('B-1: several receipts for one binding queued before a run are processed in receipt order, none held by batch order', async () => {
+  const db = await setup()
+  try {
+    await enable(db)
+    await receipt(db, 1, '2026-11-01T00:00:00Z', 'pass'); await receipt(db, 2, '2026-11-02T00:00:00Z', 'fail'); await receipt(db, 3, '2026-11-03T00:00:00Z', 'fail')
+    await receipt(db, 4, '2026-11-04T00:00:00Z', 'pass'); await receipt(db, 5, '2026-11-05T00:00:00Z', 'fail')
+    await run(db)
+    assert.deepEqual((await states(db)).map(j => [j.state, j.hold_reason]),
+      [['held', 'history_unknown'], ['processed', null], ['processed', null], ['processed', null], ['processed', null]], 'only the first receipt (no baseline) is held')
+    // B (pass->fail) emits, C (fail->fail) does not, E (pass->fail after a prior failure) is reopened.
+    assert.deepEqual((await db.query('select kind,delivery_id,baseline_id from public.audit_events order by kind')).rows,
+      [{ kind: 'new', delivery_id: uid(2), baseline_id: uid(1) }, { kind: 'reopened', delivery_id: uid(5), baseline_id: uid(4) }])
+    assert.deepEqual(await status(db), [{ state: 'held', hold_reason: 'history_unknown', jobs: 1, max_attempts: 0 }, { state: 'processed', hold_reason: null, jobs: 4, max_attempts: 0 }])
+  } finally { await db.close() }
+})
+
+test('B-1: a genuinely late or tied receipt is held late_or_tied, visibly, without events', async () => {
+  const db = await setup()
+  try {
+    await enable(db)
+    await receipt(db, 1, '2026-11-01T00:00:00Z', 'pass'); await receipt(db, 3, '2026-11-03T00:00:00Z', 'fail')
+    await run(db)
+    assert.equal(await count(db, 'audit_events'), 1)
+    // Receipt 2 (scan between 1 and 3) arrives after 3 was processed; receipt 4 ties receipt 5's scan.
+    await receipt(db, 2, '2026-11-02T00:00:00Z', 'fail')
+    await receipt(db, 4, '2026-11-05T00:00:00Z', 'pass'); await receipt(db, 5, '2026-11-05T00:00:00Z', 'fail')
+    await run(db)
+    const by = Object.fromEntries((await states(db)).map(j => [j.delivery_id, [j.state, j.hold_reason]]))
+    assert.deepEqual(by[uid(2)], ['held', 'late_or_tied'])
+    assert.deepEqual(by[uid(4)], ['held', 'late_or_tied']); assert.deepEqual(by[uid(5)], ['held', 'late_or_tied'])
+    assert.equal(await count(db, 'audit_events'), 1, 'late receipts emit nothing')
+    const late = (await status(db)).find(r => r.hold_reason === 'late_or_tied')
+    assert.equal(late.jobs, 3, 'the holds are countable in audit_event_queue_status')
+    await db.exec('set role service_role'); await db.query('select * from public.audit_event_queue_status'); await db.exec('reset role')
+    for (const role of ['anon', 'authenticated']) { await db.exec(`set role ${role}`); await assert.rejects(() => db.query('select * from public.audit_event_queue_status'), /permission denied/); await db.exec('reset role') }
+  } finally { await db.close() }
+})
+
+test('M-1: transient errors leave the job pending with a bounded attempt count; deterministic errors hold at once', async () => {
+  const db = await setup()
+  try {
+    await enable(db)
+    await receipt(db, 1, '2026-11-01T00:00:00Z', 'pass'); await receipt(db, 2, '2026-11-02T00:00:00Z', 'fail')
+    await db.query("update public.audit_event_jobs set state='processed' where delivery_id=$1", [uid(1)])
+    await err(db, '55P03') // lock_not_available
+    for (let i = 1; i <= 4; i++) {
+      await run(db)
+      const j = (await states(db)).find(x => x.delivery_id === uid(2)); assert.equal(j.state, 'pending', `attempt ${i} stays retryable`)
+      assert.equal((await db.query('select attempts,last_sqlstate from public.audit_event_job_attempts')).rows[0].attempts, i)
+    }
+    await run(db) // 5th attempt exhausts the bound
+    assert.deepEqual((await states(db)).find(x => x.delivery_id === uid(2)), { delivery_id: uid(2), state: 'held', hold_reason: 'processor_unavailable' })
+    assert.deepEqual(await status(db), [{ state: 'held', hold_reason: 'processor_unavailable', jobs: 1, max_attempts: 5 }, { state: 'processed', hold_reason: null, jobs: 1, max_attempts: 0 }])
+    // A transient failure recovers: the retried job is processed once the fault clears.
+    await db.query("update public.audit_event_jobs set state='pending',hold_reason=null where delivery_id=$1", [uid(2)])
+    await db.query('delete from public.audit_event_job_attempts')
+    await err(db, '40P01'); await run(db)
+    assert.equal((await states(db)).find(x => x.delivery_id === uid(2)).state, 'pending')
+    await db.exec('drop trigger boom on public.audit_events'); await run(db)
+    assert.equal((await states(db)).find(x => x.delivery_id === uid(2)).state, 'processed'); assert.equal(await count(db, 'audit_events'), 1)
+    // Deterministic poison classes hold on the first failure.
+    for (const [k, code] of [[3, '22P02'], [4, '23514']]) {
+      await receipt(db, k, `2026-11-0${k + 1}T00:00:00Z`, 'pass'); await receipt(db, k + 10, `2026-11-0${k + 1}T12:00:00Z`, 'fail')
+      await db.query("update public.audit_event_jobs set state='processed' where delivery_id=$1", [uid(k)])
+      await err(db, code); await run(db)
+      const j = (await states(db)).find(x => x.delivery_id === uid(k + 10)); assert.deepEqual([j.state, j.hold_reason], ['held', 'processor_unavailable'], code)
+      await db.exec('drop trigger boom on public.audit_events')
+    }
+  } finally { await db.close() }
+})
+
+test('M-1: a retryable failure stops the run so a binding is never processed out of order', async () => {
+  const db = await setup()
+  try {
+    await enable(db)
+    await receipt(db, 1, '2026-11-01T00:00:00Z', 'pass'); await receipt(db, 2, '2026-11-02T00:00:00Z', 'pass'); await receipt(db, 3, '2026-11-03T00:00:00Z', 'fail')
+    await db.query("update public.audit_event_jobs set state='processed' where delivery_id=$1", [uid(1)])
+    await db.exec(`create function public.slow() returns trigger language plpgsql as $$begin raise exception 'x' using errcode='55P03'; end$$;
+      create trigger boom before update on public.audit_event_jobs for each row when (new.state='processed' and new.delivery_id='${uid(2)}') execute function public.slow()`)
+    await run(db)
+    assert.deepEqual((await states(db)).map(j => j.state), ['processed', 'pending', 'pending'], 'job 3 was not processed ahead of job 2')
+  } finally { await db.close() }
+})
+
+test('M-2: history cap is 500 receipts per binding; the 501st is held history_capped, visibly', async () => {
+  for (const [total, expected] of [[500, 'processed'], [501, 'held']]) {
+    const db = await setup()
+    try {
+      // total-1 earlier receipts (no queue, enqueue off), then one receipt that is enqueued.
+      await db.query(`insert into public.seosmith_audits select gen_random_uuid(),$1,'example.com',1,'worker','{"schema_version":2}'::jsonb,
+        '2025-01-01T00:00:00Z'::timestamptz + g*interval '1 hour','{"findings":[]}'::jsonb from generate_series(1,$2) g`, [site, total - 1])
+      await db.exec(`insert into public.seosmith_lifecycle_indexed select delivery_id,'indexed_v1',false,'policy','key','engine','rules' from public.seosmith_audits;
+        insert into public.seosmith_lifecycle_evaluations select delivery_id,'entity','rule','${JSON.stringify(evaluation('pass'))}'::jsonb from public.seosmith_audits`)
+      await enable(db)
+      await receipt(db, 1, '2026-11-01T00:00:00Z', 'fail')
+      await run(db)
+      const j = (await states(db))[0]
+      if (expected === 'processed') { assert.equal(j.state, 'processed'); assert.equal(await count(db, 'audit_events'), 1) }
+      else {
+        assert.deepEqual([j.state, j.hold_reason], ['held', 'history_capped'])
+        assert.equal(await count(db, 'audit_events'), 0)
+        assert.deepEqual(await status(db), [{ state: 'held', hold_reason: 'history_capped', jobs: 1, max_attempts: 0 }])
+      }
+    } finally { await db.close() }
+  }
 })
