@@ -195,9 +195,9 @@ wait_for 30 curl -sf "$SEOURL/health/ready" || { cat "$WORK/seo.log"; rec FAIL 3
 rec PASS 3 "SEOsmith serve up (local-e2e)" "loopback ingest $INGEST, policy wire v1"
 
 SU="$SEOURL"
-submit() { # submit <id> <website> <gen> <url> <max_pages> <max_resources> [ext(true|false)] [delay_ms]  (to $SU)
+submit() { # submit <id> <website> <gen> <url> <max_pages> <max_resources> [ext(true|false)] [delay_ms (min 1000)] [max_duration_seconds]  (to $SU)
   curl -s -w '\n%{http_code}' "$SU/v1/runs" -H "authorization: Bearer $SEO_API_TOKEN" -H 'content-type: application/json' \
-    -d "{\"request_id\":\"$1\",\"website_id\":\"$2\",\"binding_generation\":$3,\"url\":\"$4\",\"max_pages\":$5,\"max_resources\":$6,\"check_external_links\":${7:-false},\"delay_ms\":${8:-1000}}"; }
+    -d "{\"request_id\":\"$1\",\"website_id\":\"$2\",\"binding_generation\":$3,\"url\":\"$4\",\"max_pages\":$5,\"max_resources\":$6,\"check_external_links\":${7:-false},\"delay_ms\":${8:-1000}${9:+,\"max_duration_seconds\":$9}}"; }
 runview() { curl -s "$SU/v1/runs/$1" -H "authorization: Bearer $SEO_API_TOKEN"; }
 wait_state() { # wait_state <id> <jq predicate on view> <secs>
   local v; for _ in $(seq 1 "$3"); do v="$(runview "$1")"; jq -e "$2" >/dev/null 2>&1 <<<"$v" && { echo "$v"; return 0; }; sleep 1; done; echo "$v"; return 1; }
@@ -324,7 +324,7 @@ WL="$(curl -s -w '\n%{http_code}' "$API/websites/$NEG/seo/audits/$rid/work?findi
 mut="$(HTP_INGEST_TOKEN="${SITE_TOKEN[cap]}" "$DELIVER" "$INGEST" "$WORK/neg-mut.json" 2>&1 | tail -1)"
 node "$here/prep.mjs" "$S4FIX/complete-missing-h1.json" "$WORK/neg-ok2.json" --request "$(uuid)" --ts 2026-11-20T12:00:00Z
 mutctl="$(HTP_INGEST_TOKEN="${SITE_TOKEN[cap]}" "$DELIVER" "$INGEST" "$WORK/neg-ok2.json" 2>&1 | tail -1)"
-rec INFO 9c "deliver_once control (random delivery id)" "mutated: '$mut'; UNmutated: '$mutctl' (equal results show deliver_once cannot discriminate the mutation)"
+rec INFO 9c "deliver_once control (random delivery id)" "mutated: '$mut'; UNmutated: '$mutctl' (deliver_once picks a random delivery id; the mutated report is refused terminally before the id binding is reached, the unmutated one only retryably)"
 mut2="$(node "$here/send.mjs" "$INGEST" "${SITE_TOKEN[cap]}" "$WORK/neg-mut.json")"
 mutrid="$(jq -r .request.request_id "$WORK/neg-mut.json")"; mutrows="$(q "select count(*) from public.seosmith_audits where delivery_id='$mutrid'")"
 [[ "$(jq -r .status <<<"$mut2")" == 422 && "$(jq -r '.body|fromjson|.error' <<<"$mut2")" == semantic_mismatch && "$(jq -r '.body|fromjson|.stage' <<<"$mut2")" == summary && "$mutrows" == 0 ]] \
@@ -579,8 +579,8 @@ echo "== step 13: M8 + N-M4 on the real site (serve mode): the plan's Q2 bounds,
 # only "complete" (frontier_exhausted) when the site's resources fit max_resources, so the cases below separate those effects.
 bounds_case() { # bounds_case <tag> <max_pages> <max_resources> <ext true|false> <delay_ms>  -> BC_* variables, report in $WORK/rb-<tag>.json
   local tag="$1" mp="$2" mr="$3" ext="$4" dl="$5" RB resp v f
-  RB="$(uuid)"; resp="$(submit "$RB" "$KH" 1 https://www.kerryhatcher.com/ "$mp" "$mr" "$ext" "$dl")"; [[ "$(tail -1 <<<"$resp")" == 202 ]] || rec FAIL 14 "submit $tag" "$resp"
-  v="$(wait_state "$RB" '.state=="failed" or .delivery_state=="delivered" or .delivery_state=="rejected"' 3000)" || { echo "$v"; rec FAIL 14 "$tag finishes" "timeout: $v"; }
+  RB="$(uuid)"; resp="$(submit "$RB" "$KH" 1 https://www.kerryhatcher.com/ "$mp" "$mr" "$ext" "$dl" 7200)"; [[ "$(tail -1 <<<"$resp")" == 202 ]] || rec FAIL 14 "submit $tag" "$resp"
+  v="$(wait_state "$RB" '.state=="failed" or .delivery_state=="delivered" or .delivery_state=="rejected"' 7500)" || { echo "$v"; rec FAIL 14 "$tag finishes" "timeout: $v"; }
   [[ "$(jq -r .delivery_state <<<"$v")" == delivered ]] || rec FAIL 14 "$tag delivered" "$(jq -c . <<<"$v")"
   f="$WORK/rb-$tag.json"; curl -s "$SEOURL/v1/runs/$RB/report" -H "authorization: Bearer $SEO_API_TOKEN" >"$f"
   BC_id="$RB"; BC_bytes="$(wc -c <"$f")"; BC_db="$(q "select octet_length(raw_report_json) from public.seosmith_audits where delivery_id='$RB'")"
@@ -592,7 +592,7 @@ bounds_case() { # bounds_case <tag> <max_pages> <max_resources> <ext true|false>
   [[ "$BC_db" == "$BC_bytes" ]] || rec FAIL 14 "$tag stored bytes equal the producer's" "db=$BC_db job=$BC_bytes"
 }
 # 14a: the Q2 bounds exactly as the plan states them (external links on)
-bounds_case q2plan 100 200 true 500
+bounds_case q2plan 100 200 true 1000
 robots_culprits() { # external origins whose /robots.txt the crawler would treat as unavailable (not 200/404/410/401/403; redirects are not followed)
   jq -r '[.pages[]|(.links // [])[]|(.url // .)|tostring|capture("^(?<o>https?://[^/]+)")?|.o]|unique[]' "$1" | grep -v '^https://www.kerryhatcher.com$' | while read -r o; do
     c="$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$o/robots.txt")"; case "$c" in 200|404|410|401|403) ;; *) printf '%s=%s ' "$o" "$c";; esac; done; }
@@ -600,17 +600,17 @@ cul="$(robots_culprits "$WORK/rb-q2plan.json")"
 rec INFO 14a "Q2 bounds as written (100 pages / 200 resources / external links on)" "$BC_detail; external origins whose robots.txt is a redirect/5xx (each stops a crawl that reaches it): ${cul:-none seen now}"
 [[ "$BC_out" == complete ]] && q2c=complete || q2c="NOT complete ($BC_stop)"
 # 14b: external links off, same bounds: the resource limit, not robots, is what stops it
-bounds_case q2off 100 200 false 500
+bounds_case q2off 100 200 false 1000
 rec INFO 14b "Q2 bounds with external links off" "$BC_detail"
 q2off_np="$BC_np"; q2off_nr="$BC_nr"; q2off_trunc="$BC_trunc"
 # 14c: a configuration whose evidence is NOT truncated: pages + resources <= 128 observations (external links off)
 mr3=$(( 120 - q2off_np )); (( mr3 > 5 )) || mr3=5
-bounds_case untrunc 100 "$mr3" false 500
+bounds_case untrunc 100 "$mr3" false 1000
 (( BC_bytes <= 3962204 && BC_eval <= 460 && BC_np <= 100 && BC_nr <= mr3 )) && [[ "$BC_trunc" == false && "$BC_obs" -le 128 && "$BC_out" != failed ]] \
   && rec PASS 14c "M8/N-M4 on the real site, untruncated configuration: size <= 80% of the cap, evaluations <= 460, truncated=false, pages <= max_pages, resources <= max_resources" "$BC_detail" \
   || rec FAIL 14c "M8/N-M4 untruncated configuration" "$BC_detail"
 # 14d: a COMPLETE crawl (frontier exhausted, robots available, within max_pages): resources raised until the site fits
-bounds_case complete 100 3000 false 500
+bounds_case complete 100 3000 false 1000
 (( BC_bytes <= 3962204 && BC_eval <= 512 && BC_np <= 100 && BC_nr <= 3000 )) && [[ "$BC_out" == complete && "$BC_stop" == frontier_exhausted ]] \
   && rec PASS 14d "M8/N-M4 on a COMPLETE crawl (outcome complete, frontier_exhausted, robots available, pages <= max_pages 100): size <= 80% of the cap, evaluations <= 512" "$BC_detail; evaluations<=460: $([[ $BC_eval -le 460 ]] && echo yes || echo NO); truncated=$BC_trunc (a complete crawl of ${BC_np} pages + ${BC_nr} resources exceeds the 128-observation evidence cap, so its alerts are held)" \
   || rec FAIL 14d "M8/N-M4 complete crawl" "$BC_detail"
