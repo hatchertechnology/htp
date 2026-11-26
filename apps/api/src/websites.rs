@@ -399,6 +399,114 @@ impl WebsiteStore {
         result
     }
 
+    /// Schema-4 commit. The service key is sent only here, only to
+    /// `commit_seosmith_audit_v4` (EXECUTE is granted to `service_role` alone).
+    /// The caller must already have run `htp_s14_receiver::admit` on the bytes.
+    pub(crate) async fn commit_seosmith_v4(
+        &self,
+        service_key: &str,
+        body: &CommitV4<'_>,
+        timeout: Duration,
+    ) -> Result<Value, CommitV4Error> {
+        let started = Instant::now();
+        let diagnostic_id = Uuid::new_v4();
+        // The caller passes what is left of the request budget (below the
+        // producer's 30s), which can be under the RPC's own 20s
+        // statement_timeout. Accepted (plan amendment, coordinator, 2026-11-25,
+        // H3 recheck, N-MAJOR-2): H2 replay is idempotent and returns the stored
+        // receipt before any state check, so a client timeout followed by a
+        // producer retry resolves to that receipt. X measures commit p99.
+        let response = self
+            .client
+            .post(format!(
+                "{}/rpc/commit_seosmith_audit_v4",
+                self.url.trim_end_matches("/websites")
+            ))
+            .header("apikey", service_key)
+            .bearer_auth(service_key)
+            .header("traceparent", ingest_traceparent(diagnostic_id))
+            .timeout(timeout)
+            .json(body)
+            .send()
+            .await
+            .map_err(|error| {
+                log_ingest_failure("worker-v4", diagnostic_id, started, &error);
+                CommitV4Error::Unavailable
+            })?;
+        let status = response.status();
+        if status.is_success() {
+            return response
+                .json()
+                .await
+                .map_err(|_| CommitV4Error::Unavailable);
+        }
+        let mut response = response;
+        let mut buffer = Vec::new();
+        while buffer.len() < 16 * 1024 {
+            match response.chunk().await {
+                Ok(Some(chunk)) => buffer.extend_from_slice(&chunk),
+                _ => break,
+            }
+        }
+        let error = commit_v4_error(&buffer);
+        eprintln!(
+            "seosmith worker-v4 diagnostic_id={diagnostic_id} upstream status={} class={error:?} elapsed_ms={}",
+            status.as_u16(),
+            started.elapsed().as_millis()
+        );
+        Err(error)
+    }
+
+    /// Cheap pre-admit credential check: does a binding exist for this token
+    /// digest? Mirrors the lookup `commit_seosmith_audit_v4` does first. A
+    /// disabled binding still counts as present, because H2 returns the receipt
+    /// of an already committed delivery before looking at `enabled`; the RPC
+    /// still decides everything else. The service key reads `seosmith_bindings`
+    /// (revoked from every other role) and goes nowhere else.
+    pub(crate) async fn seosmith_binding_exists(
+        &self,
+        service_key: &str,
+        token_sha256: &str,
+        timeout: Duration,
+    ) -> Result<bool, CommitV4Error> {
+        // The shared pooled client (no client, and no TLS handshake, per call).
+        let response = self
+            .client
+            .get(format!(
+                "{}/seosmith_bindings",
+                self.url.trim_end_matches("/websites")
+            ))
+            .timeout(timeout)
+            .header("apikey", service_key)
+            .bearer_auth(service_key)
+            .query(&[
+                ("token_sha256", format!("eq.{token_sha256}")),
+                ("select", "website_id".to_owned()),
+                ("limit", "1".to_owned()),
+            ])
+            .send()
+            .await
+            .map_err(|error| {
+                eprintln!(
+                    "seosmith worker-v4 token lookup failed: {}",
+                    error.without_url()
+                );
+                CommitV4Error::Unavailable
+            })?;
+        if !response.status().is_success() {
+            eprintln!(
+                "seosmith worker-v4 token lookup upstream status={}",
+                response.status().as_u16()
+            );
+            return Err(CommitV4Error::Unavailable);
+        }
+        let rows: Vec<Value> = response
+            .json()
+            .await
+            .map_err(|_| CommitV4Error::Unavailable)?;
+        Ok(!rows.is_empty())
+    }
+
     pub(crate) async fn find(
         &self,
         id: Uuid,
@@ -415,7 +523,12 @@ impl WebsiteStore {
         Self {
             url: format!("{}/rest/v1/websites", project_url.trim_end_matches('/')),
             publishable_key: publishable_key.to_owned(),
-            client: reqwest::Client::new(),
+            // Shared and pooled. No redirects: the schema-4 routes send the
+            // service key in `apikey`, which reqwest does not strip on a hop.
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
         }
     }
 
@@ -631,6 +744,63 @@ impl IntoResponse for WebsiteError {
             ),
         };
         (status, Json(json!({"error": message}))).into_response()
+    }
+}
+
+/// Body of `commit_seosmith_audit_v4`. Borrowed so the report is serialised
+/// once, with no intermediate `Value` copy.
+// Field names are the RPC's parameter names.
+#[derive(serde::Serialize)]
+#[allow(clippy::struct_field_names)]
+pub(crate) struct CommitV4<'a> {
+    pub(crate) p_token: &'a str,
+    pub(crate) p_delivery_id: Uuid,
+    pub(crate) p_sha256: &'a str,
+    pub(crate) p_report_json: &'a str,
+    pub(crate) p_summary_text: &'a str,
+    pub(crate) p_validator_revision: &'a str,
+}
+
+/// The H2 error contract, keyed on the exception message (never on the
+/// SQLSTATE alone: `permission denied` and `s14_schema4_rows_exist` share
+/// SQLSTATEs with documented codes but are operational faults).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CommitV4Error {
+    ReportLimit,
+    InvalidDelivery,
+    InvalidWorker,
+    DeliveryConflict,
+    ValidatorDisabled,
+    /// `evidence_invalid`, with the sanitised `invalid_evidence_*` detail.
+    EvidenceInvalid(Option<String>),
+    /// `invalid_s14_binding` / `invalid_s14_summary`.
+    Binding,
+    Unavailable,
+}
+
+fn commit_v4_error(body: &[u8]) -> CommitV4Error {
+    let Ok(value) = serde_json::from_slice::<Value>(body) else {
+        return CommitV4Error::Unavailable;
+    };
+    match value.get("message").and_then(Value::as_str) {
+        Some("report_limit") => CommitV4Error::ReportLimit,
+        Some("invalid_delivery" | "invalid_binding_or_report") => CommitV4Error::InvalidDelivery,
+        Some("invalid_worker") => CommitV4Error::InvalidWorker,
+        Some("delivery_conflict") => CommitV4Error::DeliveryConflict,
+        Some("validator_disabled") => CommitV4Error::ValidatorDisabled,
+        Some("invalid_s14_binding" | "invalid_s14_summary") => CommitV4Error::Binding,
+        Some("evidence_invalid") => CommitV4Error::EvidenceInvalid(
+            value
+                .get("details")
+                .and_then(Value::as_str)
+                .filter(|d| {
+                    d.len() <= 64
+                        && d.starts_with("invalid_evidence_")
+                        && d.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+                })
+                .map(str::to_owned),
+        ),
+        _ => CommitV4Error::Unavailable,
     }
 }
 

@@ -89,6 +89,7 @@ pub fn app_with_capabilities(
     let oauth_routes = oauth::router(auth.project_url());
     let provider_oauth = provider_oauth::OAuth::from_env();
     let seosmith_ingest = seosmith::ingest_router(websites.clone());
+    let s14_policy_ingest = s14_worker::router(websites.clone());
     let mcp_limit = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
     let mcp_routes = Router::new()
         .nest_service("/mcp/secured", mcp::secured_service(websites.clone()))
@@ -152,7 +153,7 @@ pub fn app_with_capabilities(
         .merge(oauth_routes)
         .merge(provider_oauth.public())
         .merge(seosmith_ingest)
-        .merge(s14_worker::router())
+        .merge(s14_policy_ingest)
         .merge(form_ingress::router())
         .merge(form_confirmation::router())
         .merge(protected);

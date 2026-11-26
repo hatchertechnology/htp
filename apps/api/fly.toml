@@ -7,6 +7,7 @@ primary_region = "iad"
 [env]
   BIND_ADDR = "0.0.0.0:3000"
   HTP_ROLLOUT_PROVIDER_OAUTH = "false"
+  HTP_S14_ADMISSION = "false"
   SUPABASE_URL = "https://raxuvdbdfmmtpqjcafcq.supabase.co"
   SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Loul540Y3Oj_qIojV0kr0w_Jq5vhn5H"
   MCP_ALLOWED_HOSTS = "htp-api-kerry-hatcher.fly.dev"
