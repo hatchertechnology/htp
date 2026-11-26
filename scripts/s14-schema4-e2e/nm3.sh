@@ -2,9 +2,10 @@
 # N-M3: time commit_seosmith_audit_v4 on S2's exact-cap schema-4 fixture (with evidence) with the DB
 # container held to --cpus 0.2 (a stand-in for the 0.2-CPU record, not production hardware).
 # The row insert (with its after-insert triggers) is timed as its own stage, rolled back, then the real
-# RPC is timed end to end as service_role.   nm3.sh <db-container> <exact-cap.json> <workdir> <runs> <here>
+# RPC is timed end to end as service_role.   nm3.sh <db-container> <exact-cap.json> <workdir> <runs> <here> [id-base, default 57344 = 0xe000]
+# The container is held to --cpus 0.2 --memory 1g (the plan's record of the local-clone size; production hardware is unknown).
 set -uo pipefail
-DB="$1"; CAP="$2"; WORK="$3"; RUNS="$4"; here="$5"
+DB="$1"; CAP="$2"; WORK="$3"; RUNS="$4"; here="$5"; BASE="${6:-57344}"
 HTP_T="${HTP_TARGET_DIR:-/var/tmp/s4x-target-htp}"; ADMIT="$HTP_T/release/examples/admit"
 LIMIT_MS=10000
 adm() { podman exec -i "$DB" psql -U supabase_admin -d postgres -X -q -tA -v ON_ERROR_STOP=1 "$@"; }
@@ -13,7 +14,7 @@ tok=tok-cap-0000000000000000000000000000
 rev=s14-wire-1/full-population-1/evidence-v1
 podman exec -u 0 "$DB" mkdir -p /tmp/s4 >/dev/null; podman exec -u 0 "$DB" chmod a+rwx /tmp/s4
 for i in $(seq 1 "$RUNS"); do
-  id="$(printf '00000000-0000-4000-8000-%012x' $((0xe000 + i)))"
+  id="$(printf '00000000-0000-4000-8000-%012x' $((BASE + i)))"
   node "$here/prep.mjs" "$CAP" "$WORK/nm3-$i.json" --request "$id" || exit 1
   "$ADMIT" "$WORK/nm3-$i.json" >"$WORK/nm3-$i.sum" 2>"$WORK/nm3-$i.err" || { cat "$WORK/nm3-$i.err"; echo "admit failed"; exit 1; }
   podman cp "$WORK/nm3-$i.json" "$DB:/tmp/s4/r$i.json"; podman cp "$WORK/nm3-$i.sum" "$DB:/tmp/s4/s$i.json"
@@ -30,11 +31,12 @@ if podman update --cpus 0.2 "$DB" >/dev/null 2>&1; then
 else
   echo "throttle: podman update FAILED"; exit 2
 fi
-trap 'podman update --cpus 0 "$DB" >/dev/null 2>&1' EXIT
+if podman update --memory 1g --memory-swap 1g "$DB" >/dev/null 2>&1; then echo "throttle: --memory 1g ok; Memory=$(podman inspect "$DB" --format '{{.HostConfig.Memory}}')"; else echo "throttle: --memory 1g NOT applied (cpu limit only)"; fi
+trap 'podman update --cpus 0 "$DB" >/dev/null 2>&1; podman update --memory 0 --memory-swap -1 "$DB" >/dev/null 2>&1' EXIT
 cg="$(podman inspect "$DB" --format '{{.State.CgroupPath}}' 2>/dev/null)"
 cpumax="$(cat "/sys/fs/cgroup$cg/cpu.max" 2>/dev/null || true)"; echo "cgroup cpu.max=${cpumax:-unreadable}"
 for i in $(seq 1 "$RUNS"); do
-  id="$(printf '00000000-0000-4000-8000-%012x' $((0xe000 + i)))"
+  id="$(printf '00000000-0000-4000-8000-%012x' $((BASE + i)))"
   adm >/dev/null <<SQL || { echo "run $i failed"; exit 1; }
 select pg_read_file('/tmp/s4/r$i.json') as raw, pg_read_file('/tmp/s4/s$i.json') as summary \gset
 select encode(sha256(convert_to(:'raw','UTF8')),'hex') as sha \gset
@@ -81,5 +83,5 @@ adm -F'|' -c "select stage, round((percentile_cont(0.5) within group (order by m
 p50="$(adm -c "select round((percentile_cont(0.5) within group (order by ms))::numeric) from bench.results where stage='COMMIT total (RPC)'")"
 max_ms="$(adm -c "select round(max(ms)) from bench.results where stage='COMMIT total (RPC)'")"
 ins_max="$(adm -c "select round(max(ms)) from bench.results where stage like 'INSERT%'")"
-echo "COMMIT max ${max_ms} ms p50 ${p50} ms over $RUNS runs at --cpus 0.2 (limit ${LIMIT_MS} ms); insert alone max ${ins_max} ms; loadavg $(cut -d' ' -f1-3 /proc/loadavg)"
+echo "COMMIT max ${max_ms} ms p50 ${p50} ms over $RUNS runs (p99 = max at this n) at --cpus 0.2 --memory 1g (limit ${LIMIT_MS} ms); insert alone max ${ins_max} ms; loadavg $(cut -d' ' -f1-3 /proc/loadavg)"
 (( max_ms <= LIMIT_MS ))
