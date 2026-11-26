@@ -25,6 +25,7 @@ async function baseline() {
   return db
 }
 const acls = async db => (await db.query("select p.oid::regprocedure::text sig, coalesce(p.proacl::text,'') acl from pg_proc p where pronamespace='public'::regnamespace and proname = any($1) order by 1", [held.map(h => h.split('(')[0])])).rows
+const constraint = db => db.query("select pg_get_constraintdef(oid) d from pg_constraint where conname='independent_audit_comparisons_semantics_check'").then(r => r.rows[0].d)
 
 test('migration 13 widens semantics, saves s15-metadata-2 and moves no grant', async () => {
   const db = await baseline()
@@ -37,6 +38,8 @@ test('migration 13 widens semantics, saves s15-metadata-2 and moves no grant', a
     await assert.rejects(() => db.exec("insert into public.independent_audit_comparisons(website_id,fqdn,import_id,delivery_id,semantics,unmodified_v1_asserted) values('" + site + "','example.com','00000000-0000-0000-0000-000000000006','" + delivery + "','s15-metadata-2',true)"), /semantics_check/)
     await db.exec(migration)
     assert.deepEqual(await acls(db), heldAcls)
+    // The post-add constraint is the widened one, not just the pre-swap definition.
+    assert.equal(await constraint(db), "CHECK ((semantics = ANY (ARRAY['s15-metadata-1'::text, 's15-metadata-2'::text])))")
     // An existing s15-metadata-1 row survives, and both known values are now valid, an unknown one is not.
     assert.equal((await db.query("select count(*)::int n from public.independent_audit_comparisons where semantics='s15-metadata-1'")).rows[0].n, 1)
     await db.exec("insert into public.independent_audit_comparisons(website_id,fqdn,import_id,delivery_id,semantics,unmodified_v1_asserted) values('" + site + "','example.com','00000000-0000-0000-0000-000000000006','" + delivery + "','s15-metadata-2',true)")
@@ -63,7 +66,6 @@ test('migration 13 widens semantics, saves s15-metadata-2 and moves no grant', a
 
 test('migration 13 refuses drift and is atomic', async () => {
   const migration = await read('../migrations/20261213000000_comparison_semantics_s4.sql')
-  const constraint = db => db.query("select pg_get_constraintdef(oid) d from pg_constraint where conname='independent_audit_comparisons_semantics_check'").then(r => r.rows[0].d)
   // Function body drift.
   let db = await baseline()
   try {
@@ -79,13 +81,31 @@ test('migration 13 refuses drift and is atomic', async () => {
     await assert.rejects(() => db.exec(migration), /comparison_semantics_constraint_drift/)
     await db.exec('rollback')
   } finally { await db.close() }
-  // Missing pilot gate (the migration must apply after 20261205).
+  // A baseline that stops before 20261205 fails the source-hash guard, not the pilot gate.
   db = new PGlite()
   try {
     await db.exec(`create role anon; create role authenticated; create role service_role bypassrls; create schema auth; create table auth.users(id uuid primary key); create function auth.jwt() returns jsonb language sql stable as $$select '{}'::jsonb$$; create function auth.uid() returns uuid language sql stable as $$select null::uuid$$; grant usage on schema auth,public to authenticated,anon,service_role;`)
     for (const file of ['20261028142440_create_websites.sql', '20261031053344_seosmith_audits.sql', '20261124000000_independent_audit_comparisons.sql']) await db.exec(await read(`../migrations/${file}`))
     await assert.rejects(() => db.exec(migration), /comparison_semantics_function_drift/)
   } finally { await db.close() }
+  // The real missing pilot gate: 20261205 applied, then the helper removed.
+  db = await baseline()
+  try {
+    await db.exec('drop function public.comparison_pilot_site_allowed(uuid)')
+    await assert.rejects(() => db.exec(migration), /comparison_semantics_pilot_gate_missing/)
+    await db.exec('rollback')
+  } finally { await db.close() }
+  // Owner membership drift: a public role is made a member of the function owner.
+  db = await baseline()
+  try {
+    const ownerRole = (await db.query("select pg_get_userbyid(proowner) r from pg_proc where oid='public.save_independent_comparison(uuid,uuid,uuid,boolean)'::regprocedure")).rows[0].r
+    await db.query(`grant "${ownerRole}" to anon`)
+    await assert.rejects(() => db.exec(migration), /comparison_semantics_owner_membership_drift/)
+    await db.exec('rollback')
+  } finally { await db.close() }
+  // Not separately exercised, because the shipped guards make them unreachable from a conforming
+  // baseline: `comparison_semantics_unexpected_rows` (the constraint-definition guard runs first and
+  // a CHECK cannot be disabled) and `comparison_semantics_acl_drift` (create or replace keeps the ACL).
 })
 
 test('migration 13 is idempotent only by refusing a second run', async () => {
