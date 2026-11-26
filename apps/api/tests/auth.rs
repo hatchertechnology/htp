@@ -148,13 +148,16 @@ async fn official_mcp_client_authenticates_every_request() {
         );
         let client = ClientConfig::default().serve(transport).await.unwrap();
         let tools = client.list_tools(None).await.unwrap();
-        assert_eq!(tools.tools.len(), 25);
+        assert_eq!(tools.tools.len(), 28);
         for name in [
             "website_audit_export_start_v1",
             "website_audit_export_chunk_v1",
             "website_audit_export_close_v1",
             "website_audit_events",
             "website_operational_episodes",
+            "website_audit_lifecycle",
+            "website_url_lifecycle",
+            "website_remediation_list",
         ] {
             assert!(tools.tools.iter().any(|tool| tool.name == name));
         }
