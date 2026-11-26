@@ -15,7 +15,7 @@ fn fixture(name: &str) -> serde_json::Value {
 }
 #[test]
 fn pinned_and_source_mutations() {
-    for name in ["intent", "complete", "partial", "mixed-omitted"] {
+    for name in ["intent", "complete", "partial"] {
         let v = fixture(name);
         assert_eq!(check(&v), Ok(()), "{name}");
         let mut changed = v.clone();
@@ -51,11 +51,14 @@ fn synthetic_threshold_equality() {
 }
 #[test]
 fn synthetic_record_cap_counts_omitted_source_states() {
+    // Base: the 4-page `partial` report plus enough synthetic pages to reach 90
+    // candidates per advisory rule, so the 512-record cap omits some.
+    const NEW_PAGES: usize = 86;
     use sha2::{Digest, Sha256};
     fn hash(s: &str) -> String {
         format!("sha256:{:x}", Sha256::digest(s.as_bytes()))
     }
-    let mut v = fixture("mixed-omitted");
+    let mut v = fixture("partial");
     let rules = [
         "short_title",
         "long_title",
@@ -70,7 +73,7 @@ fn synthetic_record_cap_counts_omitted_source_states() {
         .clone();
     let page = v["pages"][0].clone();
     let mut new_ids = Vec::new();
-    for i in 0..31 {
+    for i in 0..NEW_PAGES {
         let url = format!("https://example.com/synthetic-{i}");
         let mut p = page.clone();
         p["url"] = url.clone().into();
@@ -116,7 +119,7 @@ fn synthetic_record_cap_counts_omitted_source_states() {
             ("unknown_reasons", "source_unavailable"),
         ] {
             let n = c[field][key].as_u64().unwrap();
-            c[field][key] = (n + 31).into();
+            c[field][key] = (n + NEW_PAGES as u64).into();
         }
     }
     v["policy_guidance"]["candidate"]["records"] = emitted.into();
