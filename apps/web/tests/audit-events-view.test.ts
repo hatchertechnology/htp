@@ -48,6 +48,8 @@ describe('availability is never a clean result', () => {
   })
   it('warns when availability is not reported and passes other values through', () => {
     expect(availabilityNotice(null, 0, 'events').text).toMatch(/cannot be read as a clean result/)
+    expect(availabilityNotice('producer_active', 0, 'events')).toEqual({ tone: 'status', text: 'Producer availability: producer active.' })
+    expect(parseEventsPage(eventsPage({ availability: 'producer_active' }))!.availability).toBe('producer_active')
     expect(availabilityNotice('active', 0, 'events')).toEqual({ tone: 'status', text: 'Producer availability: active.' })
   })
   it('keeps the empty text separate from the availability warning', () => {
@@ -67,6 +69,8 @@ describe('episode and event labels', () => {
     expect(kindLabel('severity_increased')).toBe('Severity increased')
     expect(kindLabel('future_kind')).toBe('future kind')
     expect(kindLabel(null)).toBe('Unknown')
+    expect(kindLabel('constructor')).toBe('constructor')
+    expect(typeof kindLabel('__proto__')).toBe('string')
   })
 })
 

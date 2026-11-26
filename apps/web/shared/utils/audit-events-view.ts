@@ -66,8 +66,8 @@ export function episodeState(row: EpisodeRow): 'open' | 'recovered' | 'unknown' 
   return row.opened_at ? 'open' : 'unknown'
 }
 
-const KINDS: Record<string, string> = { new: 'New issue', reopened: 'Reopened', severity_increased: 'Severity increased' }
-export const kindLabel = (kind: string | null): string => kind === null ? 'Unknown' : KINDS[kind] ?? kind.replaceAll('_', ' ')
+const KINDS = new Map([['new', 'New issue'], ['reopened', 'Reopened'], ['severity_increased', 'Severity increased']])
+export const kindLabel = (kind: string | null): string => kind === null ? 'Unknown' : KINDS.get(kind) ?? kind.replaceAll('_', ' ')
 export const unknownText = (value: string | null): string => value ?? 'Unknown'
 
 // Newest first, then by id, exactly as the database orders the keyset.

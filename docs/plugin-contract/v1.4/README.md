@@ -55,8 +55,12 @@ from `tools/list` is `unsupported`, never a substituted operation or zero count.
 | unavailable | Rollout held or upstream failure (`status` 503); preserve it, never an empty page. |
 | unsupported | Tool/support absent; never substitute another operation. |
 
-The deployed tools report the REST HTTP `status` and sanitized `error`/`code`
-fields; hosts map them onto the table above.
+The three 1.4 tools emit exactly these values in `code`, with the REST HTTP
+`status` and a sanitized `error` message: no or invalid token → `auth_required`
+(401); not the owner → `forbidden` (403); a limit or cursor the database rejects →
+`invalid_cursor_or_limit` (400); rollout held or any upstream failure →
+`unavailable` (503). `unsupported` is a host-side result for a tool the server
+does not list; the server never emits it.
 
 ## Offline semantic conformance and evidence limits
 

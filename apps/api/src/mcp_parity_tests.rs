@@ -79,6 +79,22 @@ async fn fixture(
         remediation,
         status,
     ));
+    // A stub for the future real producer state: the RPC reports `producer_active`.
+    let upstream = upstream
+        .merge(rpc_route(
+            "audit_event_history",
+            seen.clone(),
+            hits.clone(),
+            json!({"semantics_version":1,"events":[{"id":"e1","kind":"new"}],"has_more":false,"next_cursor":null,"availability":"producer_active"}),
+            200,
+        ))
+        .merge(rpc_route(
+            "audit_operational_history",
+            seen.clone(),
+            hits.clone(),
+            json!({"version":1,"episodes":[],"has_more":false,"next_cursor":null,"availability":"producer_active"}),
+            200,
+        ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
@@ -101,7 +117,7 @@ async fn fixture(
         tool_router: website_tool_router(false),
         // The same composition `secured_service_with` builds for lifecycle and remediation.
         management: crate::seosmith::read_router(store).layer(
-            axum::middleware::from_fn_with_state(capabilities, crate::rollout_gate),
+            axum::middleware::from_fn_with_state(capabilities, parity_gate),
         ),
         exports: Arc::default(),
     };
@@ -282,13 +298,16 @@ async fn a_nonowner_is_denied_without_rows_and_a_missing_token_is_unauthorized()
         assert_eq!(result.is_error, Some(true));
         let value = result.structured_content.unwrap();
         assert_eq!(value["status"], 403);
+        assert_eq!(value["code"], "forbidden");
         assert!(!value.to_string().contains("PRIVATE DATABASE DETAIL"));
         assert!(value.get("items").is_none());
     }
     let before = f.hits.load(Ordering::SeqCst);
     for result in call_all(&f, None).await {
         assert_eq!(result.is_error, Some(true));
-        assert_eq!(result.structured_content.unwrap()["code"], "unauthorized");
+        let value = result.structured_content.unwrap();
+        assert_eq!(value["code"], "auth_required");
+        assert_eq!(value["status"], 401);
     }
     assert_eq!(
         f.hits.load(Ordering::SeqCst),
@@ -370,5 +389,98 @@ fn the_three_reads_are_listed_read_only_with_the_persisted_cursor_fields() {
             schema.contains("before_id") && !schema.contains("beforeId"),
             "{name}: {schema}"
         );
+    }
+}
+
+#[tokio::test]
+async fn failures_use_the_contract_error_codes_with_sanitized_messages() {
+    for (upstream, code, status, text) in [
+        (400, "invalid_cursor_or_limit", 400, "limit or cursor"),
+        (401, "auth_required", 401, "Sign in"),
+        (403, "forbidden", 403, "inaccessible"),
+        (500, "unavailable", 503, "unavailable"),
+    ] {
+        let f = fixture(
+            all_on(),
+            upstream,
+            json!({"message":"PRIVATE DATABASE DETAIL"}),
+            json!({"message":"PRIVATE DATABASE DETAIL"}),
+        )
+        .await;
+        for result in call_all(&f, Some("owner-token")).await {
+            assert_eq!(result.is_error, Some(true), "{upstream}");
+            let value = result.structured_content.unwrap();
+            assert_eq!(value["code"], code, "{upstream}: {value}");
+            assert_eq!(value["status"], status, "{upstream}: {value}");
+            assert!(value["error"].as_str().unwrap().contains(text), "{value}");
+            assert!(!value.to_string().contains("PRIVATE DATABASE DETAIL"));
+            assert!(value.get("items").is_none());
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_hold_does_not_reach_other_management_routes() {
+    use tower::ServiceExt as _;
+    let f = fixture(
+        crate::RolloutCapabilities::default(),
+        200,
+        json!({}),
+        json!([]),
+    )
+    .await;
+    let request = axum::http::Request::builder()
+        .uri(format!("/websites/{SITE}/seo/work/{RUN}/attempts"))
+        .header("authorization", "Bearer owner-token")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = f.mcp.management.clone().oneshot(request).await.unwrap();
+    assert_ne!(
+        response.status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        "only the three parity reads are held for MCP"
+    );
+}
+
+#[tokio::test]
+async fn event_reads_pass_a_real_producer_state_through_unchanged() {
+    let f = fixture(all_on(), 200, json!({}), json!([])).await;
+    for (result, key) in [
+        (
+            f.mcp
+                .website_audit_events(
+                    Parameters(AuditEventInput {
+                        website_id: SITE,
+                        limit: None,
+                        before: None,
+                        before_id: None,
+                    }),
+                    Extension(parts(Some("owner-token"))),
+                )
+                .await,
+            "events",
+        ),
+        (
+            f.mcp
+                .website_operational_episodes(
+                    Parameters(AuditEventInput {
+                        website_id: SITE,
+                        limit: None,
+                        before: None,
+                        before_id: None,
+                    }),
+                    Extension(parts(Some("owner-token"))),
+                )
+                .await,
+            "episodes",
+        ),
+    ] {
+        assert_eq!(result.is_error, Some(false));
+        let value = result.structured_content.unwrap();
+        assert_eq!(
+            value["availability"], "producer_active",
+            "not rewritten to unavailable"
+        );
+        assert!(value[key].is_array());
     }
 }

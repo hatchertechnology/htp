@@ -22,3 +22,7 @@ With `npm run fixture:forms:serve` running, run `node tests/fixtures/check-forms
 
 Start `npm run fixture:bing:serve`, then run `node tests/fixtures/check-repository-owner.mjs`.
 This mounts the production workspace, RepositorySettings, RepositoryHistory, and RepositoryIssues with a synthetic authenticated transport in both static and legacy modes. It checks website selection, save/stop bodies, commit cursors, issue pages and filters, bearer forwarding, and sign-out. No hosted API or provider calls are made.
+
+# Audit events panel fixture
+
+With `npm run fixture:bing:serve` running, run `node tests/fixtures/check-audit-events.mjs`. It mounts the production `AuditEvents.vue` with a mocked `$supabase.rpc` and synthetic pages, in `America/New_York`. It checks new, reopened and severity-increased events, local time with the zone named, text-only rendering of markup in data, open and recovered episodes, "Older events" paging with the persisted cursor, retry of a failed older page without losing rows, the empty and malformed-page states, and a stubbed non-`producer_unavailable` state. No hosted backend is used.

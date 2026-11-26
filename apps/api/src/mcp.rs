@@ -447,14 +447,68 @@ impl WebsiteMcp {
                 shape,
             )
             .await;
-        // 503 is both "rollout held" and an upstream outage: either way it is
-        // `unavailable`, never an empty page.
         if let Some(value) = result.structured_content.as_mut()
-            && value.get("status") == Some(&serde_json::json!(503))
+            && result.is_error == Some(true)
         {
-            value["code"] = serde_json::json!("unavailable");
+            contract_error(value);
         }
         result
+    }
+}
+
+/// Map a failed read onto the profile-1.4 error vocabulary and keep only sanitized
+/// text. 503 is both "rollout held" and an upstream outage: either way it is
+/// `unavailable`, never an empty page.
+fn contract_error(value: &mut serde_json::Value) {
+    let unauthenticated = value["code"] == "unauthorized";
+    let status = if unauthenticated {
+        401
+    } else {
+        value["status"].as_u64().unwrap_or(503)
+    };
+    let (code, message) = match status {
+        401 => ("auth_required", Some("Sign in again.")),
+        403 | 404 => ("forbidden", Some("Website not found or inaccessible.")),
+        400 => (
+            "invalid_cursor_or_limit",
+            Some(
+                "Invalid limit or cursor. Use a limit of 1-100 and both before and before_id from a previous page.",
+            ),
+        ),
+        _ => ("unavailable", None),
+    };
+    value["code"] = serde_json::json!(code);
+    value["status"] = serde_json::json!(if code == "unavailable" { 503 } else { status });
+    if let Some(message) = message {
+        value["error"] = serde_json::json!(message);
+    } else if value["error"].is_null() {
+        value["error"] = serde_json::json!("This feature is not available yet.");
+    }
+}
+
+/// The rollout hold applies to the three 1.4 reads only, so no other management
+/// route changes behaviour for MCP.
+async fn parity_gate(
+    axum::extract::State(capabilities): axum::extract::State<crate::RolloutCapabilities>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path: Vec<_> = request.uri().path().split('/').collect();
+    let parity = matches!(
+        path.as_slice(),
+        [
+            "",
+            "websites",
+            _,
+            "seo",
+            "audits",
+            "lifecycle" | "url-lifecycle"
+        ] | ["", "websites", _, "seo", "audits", _, "work"]
+    );
+    if parity {
+        crate::rollout_gate(axum::extract::State(capabilities), request, next).await
+    } else {
+        next.run(request).await
     }
 }
 
@@ -1692,7 +1746,7 @@ pub(crate) fn secured_service_with(
                     // Same hold as REST: a held feature answers 503 here too.
                     .layer(axum::middleware::from_fn_with_state(
                         capabilities,
-                        crate::rollout_gate,
+                        parity_gate,
                     )),
             })
         },
