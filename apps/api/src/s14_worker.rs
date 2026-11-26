@@ -7,6 +7,19 @@
 //! The database enforces binding (digests, validator revision, evidence) and
 //! `service_role`-only EXECUTE.
 //!
+//! Request budget (below the producer's 30 s client timeout): the whole request
+//! (token check, body read, admit, commit) is capped at `REQUEST_BUDGET` = 28 s.
+//! Each phase gets what is left, never more than its own cap: token check 3 s,
+//! body read 8 s, admit at most the remainder minus the `COMMIT_RESERVE` of 8 s
+//! (so the commit always keeps at least that), commit the remainder. Unused time
+//! carries forward, so the usual request keeps the full 15 s receiver deadline.
+//!
+//! Intake: a route-local permit (one) is taken with `try_acquire` before the
+//! body is read, so at most one envelope is buffered at a time on the 256 MB
+//! VM; a busy route answers 503 `busy` at once. The worker token is checked
+//! against its binding before the intake permit and before admit, so a bogus
+//! token holds neither permit.
+//!
 //! Gate: `HTP_S14_ADMISSION=true`. When it is anything else the route answers
 //! 503 without reading the body. This route is the only caller of the service
 //! key for report ingestion; the legacy `/audits` route never sees it.
@@ -42,6 +55,12 @@ const ENVELOPE_LIMIT: usize = 32 * 1024 * 1024;
 /// Receiver deadline, inside the outer timeout.
 const ADMIT_DEADLINE: Duration = Duration::from_secs(15);
 const OUTER_TIMEOUT: Duration = Duration::from_secs(25);
+/// Whole request, below the producer's 30 s client timeout.
+const REQUEST_BUDGET: Duration = Duration::from_secs(28);
+const BODY_DEADLINE: Duration = Duration::from_secs(8);
+const TOKEN_CHECK_TIMEOUT: Duration = Duration::from_secs(3);
+/// Admit never eats into this much time for the commit.
+const COMMIT_RESERVE: Duration = Duration::from_secs(8);
 
 type Validator = fn(&[u8], Instant) -> Result<Admitted, AdmissionError>;
 
@@ -49,6 +68,10 @@ struct State14 {
     store: WebsiteStore,
     /// `Some(key)` only when the gate is open and the service key is present.
     service_key: Option<String>,
+    /// One envelope buffered at a time (held while the body is read and parsed).
+    intake: Arc<Semaphore>,
+    request_budget: Duration,
+    body_deadline: Duration,
     /// One validation at a time. The owned permit moves into the blocking
     /// closure, so a request timeout cannot free it while the work still runs.
     permit: Arc<Semaphore>,
@@ -65,24 +88,31 @@ struct Envelope {
     report_json: String,
 }
 
+/// The gate predicate: the route is open only for the exact value `true` and a
+/// non-empty service key. Anything else (unset, `TRUE`, `1`, `true `, empty key)
+/// is closed.
+fn service_key_for(gate: Option<&str>, key: Option<&str>) -> Option<String> {
+    if gate != Some("true") {
+        return None;
+    }
+    let key = key.filter(|k| !k.is_empty());
+    if key.is_none() {
+        eprintln!("{GATE_ENV}=true but {SERVICE_KEY_ENV} is missing; policy route stays closed");
+    }
+    key.map(str::to_owned)
+}
+
 pub(crate) fn router(store: WebsiteStore) -> Router {
-    let open = std::env::var(GATE_ENV).is_ok_and(|v| v == "true");
-    let service_key = if open {
-        let key = std::env::var(SERVICE_KEY_ENV)
-            .ok()
-            .filter(|k| !k.is_empty());
-        if key.is_none() {
-            eprintln!(
-                "{GATE_ENV}=true but {SERVICE_KEY_ENV} is missing; policy route stays closed"
-            );
-        }
-        key
-    } else {
-        None
-    };
+    let service_key = service_key_for(
+        std::env::var(GATE_ENV).ok().as_deref(),
+        std::env::var(SERVICE_KEY_ENV).ok().as_deref(),
+    );
     router_with(State14 {
         store,
         service_key,
+        intake: Arc::new(Semaphore::new(1)),
+        request_budget: REQUEST_BUDGET,
+        body_deadline: BODY_DEADLINE,
         permit: Arc::new(Semaphore::new(1)),
         validate: admit,
         admit_deadline: ADMIT_DEADLINE,
@@ -187,7 +217,72 @@ async fn read_limited(
     Ok(bytes)
 }
 
+fn busy(status: StatusCode) -> Response {
+    let mut response = error(status, "busy");
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, header::HeaderValue::from_static("5"));
+    response
+}
+
+/// Intake: the route-local permit, the bounded body read, and every envelope
+/// check that needs no database. Returns the response to send on failure.
+async fn read_envelope(
+    state: &State14,
+    headers: &HeaderMap,
+    body: Body,
+    started: Instant,
+) -> Result<Envelope, Box<Response>> {
+    // At most one envelope in memory: taken before the body is read.
+    let Ok(intake) = state.intake.clone().try_acquire_owned() else {
+        return Err(Box::new(busy(StatusCode::SERVICE_UNAVAILABLE)));
+    };
+    let read = tokio::time::timeout(
+        state
+            .body_deadline
+            .min(state.request_budget.saturating_sub(started.elapsed())),
+        read_limited(headers, body),
+    )
+    .await;
+    let bytes = match read {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err((status, name))) => return Err(Box::new(error(status, name))),
+        Err(_) => {
+            return Err(Box::new(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "body_timeout",
+            )));
+        }
+    };
+    let Ok(envelope) = serde_json::from_slice::<Envelope>(&bytes) else {
+        return Err(Box::new(error(StatusCode::BAD_REQUEST, "invalid_delivery")));
+    };
+    drop(bytes);
+    drop(intake);
+    if envelope.report_json.len() > MAX_REPORT_BYTES {
+        return Err(Box::new(error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "report_limit",
+        )));
+    }
+    let key_matches = headers.get("idempotency-key").and_then(|h| h.to_str().ok())
+        == Some(envelope.delivery_id.to_string().as_str());
+    let sha_shape = envelope.sha256.len() == 64
+        && envelope
+            .sha256
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if !key_matches || !sha_shape || hex_sha256(envelope.report_json.as_bytes()) != envelope.sha256
+    {
+        return Err(Box::new(error(StatusCode::BAD_REQUEST, "invalid_delivery")));
+    }
+
+    Ok(envelope)
+}
+
 async fn handle(State(state): State<Arc<State14>>, request: Request) -> Response {
+    let started = Instant::now();
+    let left = |cap: Duration| cap.min(state.request_budget.saturating_sub(started.elapsed()));
     // Closed gate: answer before the body is touched.
     let Some(service_key) = state.service_key.as_deref() else {
         return error(
@@ -199,48 +294,45 @@ async fn handle(State(state): State<Arc<State14>>, request: Request) -> Response
     let Some(token) = bearer(&parts.headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    let bytes = match read_limited(&parts.headers, body).await {
-        Ok(bytes) => bytes,
-        Err((status, name)) => return error(status, name),
-    };
-    let Ok(envelope) = serde_json::from_slice::<Envelope>(&bytes) else {
-        return error(StatusCode::BAD_REQUEST, "invalid_delivery");
-    };
-    drop(bytes);
-    if envelope.report_json.len() > MAX_REPORT_BYTES {
-        return error(StatusCode::PAYLOAD_TOO_LARGE, "report_limit");
-    }
-    let key_matches = parts
-        .headers
-        .get("idempotency-key")
-        .and_then(|h| h.to_str().ok())
-        == Some(envelope.delivery_id.to_string().as_str());
-    let sha_shape = envelope.sha256.len() == 64
-        && envelope
-            .sha256
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-    if !key_matches || !sha_shape || hex_sha256(envelope.report_json.as_bytes()) != envelope.sha256
+    // Credential first, holding no permit: a bogus token costs one indexed
+    // lookup, never the intake or validation slot, and never buffers a body.
+    match state
+        .store
+        .seosmith_binding_exists(
+            service_key,
+            &hex_sha256(token.as_bytes()),
+            left(TOKEN_CHECK_TIMEOUT),
+        )
+        .await
     {
-        return error(StatusCode::BAD_REQUEST, "invalid_delivery");
+        Ok(true) => {}
+        Ok(false) => return commit_response(CommitV4Error::InvalidWorker),
+        Err(failure) => return commit_response(failure),
     }
-
+    let envelope = match read_envelope(&state, &parts.headers, body, started).await {
+        Ok(envelope) => envelope,
+        Err(response) => return *response,
+    };
     let Ok(permit) = state.permit.clone().try_acquire_owned() else {
-        let mut response = error(StatusCode::TOO_MANY_REQUESTS, "busy");
-        response
-            .headers_mut()
-            .insert(header::RETRY_AFTER, header::HeaderValue::from_static("5"));
-        return response;
+        return busy(StatusCode::TOO_MANY_REQUESTS);
     };
     let validate = state.validate;
-    let deadline = Instant::now() + state.admit_deadline;
+    // Admit gets what is left minus the commit's reserve, and its receiver
+    // deadline sits one second inside that.
+    let outer = state
+        .outer_timeout
+        .min(left(Duration::MAX).saturating_sub(COMMIT_RESERVE));
+    let deadline = Instant::now()
+        + state
+            .admit_deadline
+            .min(outer.saturating_sub(Duration::from_secs(1)));
     let report = envelope.report_json;
     let work = tokio::task::spawn_blocking(move || {
         let _permit = permit; // held until the closure ends, whatever the caller does
         let result = validate(report.as_bytes(), deadline);
         (report, result)
     });
-    let Ok(Ok((report, admitted))) = tokio::time::timeout(state.outer_timeout, work).await else {
+    let Ok(Ok((report, admitted))) = tokio::time::timeout(outer, work).await else {
         return error(StatusCode::SERVICE_UNAVAILABLE, "validation_unavailable");
     };
     let admitted = match admitted {
@@ -259,14 +351,30 @@ async fn handle(State(state): State<Arc<State14>>, request: Request) -> Response
         p_validator_revision: admitted.validator_revision,
     };
     debug_assert_eq!(admitted.validator_revision, VALIDATOR_REVISION);
-    match state.store.commit_seosmith_v4(service_key, &commit).await {
+    let commit_budget = left(Duration::MAX);
+    if commit_budget.is_zero() {
+        return error(StatusCode::SERVICE_UNAVAILABLE, "unavailable");
+    }
+    match state
+        .store
+        .commit_seosmith_v4(service_key, &commit, commit_budget)
+        .await
+    {
         Ok(receipt)
             if receipt.get("accepted") == Some(&Value::Bool(true))
                 && receipt.get("sha256").and_then(Value::as_str) == Some(&envelope.sha256)
                 && receipt.get("delivery_id").and_then(Value::as_str)
                     == Some(envelope.delivery_id.to_string().as_str()) =>
         {
-            reply(StatusCode::OK, receipt)
+            // Exactly the three fields, never the upstream object as is.
+            reply(
+                StatusCode::OK,
+                json!({
+                    "delivery_id": envelope.delivery_id,
+                    "sha256": envelope.sha256,
+                    "accepted": true,
+                }),
+            )
         }
         Ok(_) => error(StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
         Err(failure) => commit_response(failure),

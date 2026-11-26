@@ -13,31 +13,58 @@ const FIXTURE: &[u8] = include_bytes!(
 const SERVICE_KEY: &str = "service-key-never-on-legacy-routes";
 const TOKEN: &str = "Bearer xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct Upstream {
     calls: Arc<Mutex<Vec<(HeaderMap, Value)>>>,
     reply: Arc<Mutex<(u16, Value)>>,
+    /// Token lookups (`seosmith_bindings`): headers and raw query.
+    lookups: Arc<Mutex<Vec<(HeaderMap, String)>>>,
+    binding: Arc<Mutex<(u16, Value)>>,
 }
 
 impl Upstream {
     fn replying(status: u16, body: Value) -> Self {
-        let upstream = Self::default();
-        *upstream.reply.lock().unwrap() = (status, body);
-        upstream
+        Self {
+            calls: Arc::default(),
+            reply: Arc::new(Mutex::new((status, body))),
+            lookups: Arc::default(),
+            binding: Arc::new(Mutex::new((200, json!([{"website_id": Uuid::nil()}])))),
+        }
+    }
+    fn binding_replies(&self, status: u16, body: Value) {
+        *self.binding.lock().unwrap() = (status, body);
     }
     async fn serve(&self) -> String {
         let me = self.clone();
-        let app = Router::new().route(
-            "/rest/v1/rpc/{name}",
-            post(move |headers: HeaderMap, Json(body): Json<Value>| {
-                let me = me.clone();
-                async move {
-                    me.calls.lock().unwrap().push((headers, body));
-                    let (status, body) = me.reply.lock().unwrap().clone();
-                    (StatusCode::from_u16(status).unwrap(), Json(body))
-                }
-            }),
-        );
+        let lookup = self.clone();
+        let app = Router::new()
+            .route(
+                "/rest/v1/rpc/{name}",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let me = me.clone();
+                    async move {
+                        me.calls.lock().unwrap().push((headers, body));
+                        let (status, body) = me.reply.lock().unwrap().clone();
+                        (StatusCode::from_u16(status).unwrap(), Json(body))
+                    }
+                }),
+            )
+            .route(
+                "/rest/v1/seosmith_bindings",
+                axum::routing::get(
+                    move |headers: HeaderMap, axum::extract::RawQuery(query): axum::extract::RawQuery| {
+                        let me = lookup.clone();
+                        async move {
+                            me.lookups
+                                .lock()
+                                .unwrap()
+                                .push((headers, query.unwrap_or_default()));
+                            let (status, body) = me.binding.lock().unwrap().clone();
+                            (StatusCode::from_u16(status).unwrap(), Json(body))
+                        }
+                    },
+                ),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -56,6 +83,9 @@ fn state(url: &str) -> State14 {
     State14 {
         store: WebsiteStore::new(url, "publishable"),
         service_key: Some(SERVICE_KEY.into()),
+        intake: Arc::new(Semaphore::new(1)),
+        request_budget: Duration::from_secs(120),
+        body_deadline: Duration::from_secs(60),
         permit: Arc::new(Semaphore::new(1)),
         validate: admit,
         admit_deadline: Duration::from_secs(30),
@@ -141,8 +171,8 @@ async fn gate_off_is_503_without_polling_the_body() {
 
 #[tokio::test]
 async fn default_app_is_closed_unless_the_gate_is_exactly_true() {
-    // The gate variable is unset in the test environment.
-    assert!(std::env::var(GATE_ENV).is_err());
+    // No gate or key in the test environment's router config: the real wiring
+    // (`router` reads the environment) must not open by default.
     let app = crate::app_with_services(
         crate::auth::SupabaseAuth::new("http://127.0.0.1:1"),
         WebsiteStore::new("http://127.0.0.1:1", "synthetic"),
@@ -342,7 +372,9 @@ fn slow_validator(_: &[u8], _: Instant) -> Result<Admitted, AdmissionError> {
 #[tokio::test]
 async fn concurrent_request_gets_429_while_validation_runs() {
     let (id, _, body) = envelope(FIXTURE);
-    let mut slow = state("http://127.0.0.1:1");
+    let upstream = Upstream::replying(200, json!({}));
+    let url = upstream.serve().await;
+    let mut slow = state(&url);
     slow.validate = slow_validator;
     let app = router_with(slow);
     let first = tokio::spawn(app.clone().oneshot(post_request(id, body.clone())));
@@ -382,14 +414,19 @@ async fn outer_timeout_keeps_the_permit_until_the_closure_ends() {
     assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
     tokio::time::sleep(Duration::from_millis(800)).await;
     let third = app.oneshot(post_request(id, body)).await.unwrap();
-    assert_ne!(third.status(), StatusCode::TOO_MANY_REQUESTS);
+    // A free slot: the slow validator runs again and times out again (not busy).
+    let (status, json_body) = status_and_body(third).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(json_body["error"], "validation_unavailable");
     assert_eq!(upstream.count(), 0);
 }
 
 #[tokio::test]
 async fn expired_receiver_deadline_is_retryable_not_a_verdict() {
     let (id, _, body) = envelope(FIXTURE);
-    let mut expired = state("http://127.0.0.1:1");
+    let upstream = Upstream::replying(200, json!({}));
+    let url = upstream.serve().await;
+    let mut expired = state(&url);
     expired.admit_deadline = Duration::ZERO;
     let response = router_with(expired)
         .oneshot(post_request(id, body))
@@ -609,4 +646,217 @@ async fn m9_envelope_through_the_route() {
         started.elapsed().as_millis(),
         cgroup_peak_bytes().map_or(-1, |b| i128::from(b) / 1024),
     );
+}
+
+#[test]
+fn the_gate_predicate_opens_only_for_exactly_true_with_a_key() {
+    assert_eq!(
+        service_key_for(Some("true"), Some("k")),
+        Some("k".to_owned())
+    );
+    for gate in [
+        None,
+        Some(""),
+        Some("false"),
+        Some("TRUE"),
+        Some("1"),
+        Some("true "),
+    ] {
+        assert_eq!(service_key_for(gate, Some("k")), None, "gate {gate:?}");
+    }
+    assert_eq!(service_key_for(Some("true"), None), None);
+    assert_eq!(service_key_for(Some("true"), Some("")), None);
+}
+
+#[tokio::test]
+async fn a_gate_that_resolves_closed_never_polls_the_body_end_to_end() {
+    let polls = Arc::new(AtomicUsize::new(0));
+    let observed = polls.clone();
+    let body = Body::from_stream(stream::poll_fn(move |_| {
+        observed.fetch_add(1, Ordering::SeqCst);
+        std::task::Poll::Ready(Some(Err::<axum::body::Bytes, _>(std::io::Error::other(
+            "body must not be read",
+        ))))
+    }));
+    let mut closed = state("http://127.0.0.1:1");
+    closed.service_key = service_key_for(Some("TRUE"), Some(SERVICE_KEY));
+    let mut request = post_request(Uuid::new_v4(), Vec::new());
+    *request.body_mut() = body;
+    let response = router_with(closed).oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(polls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_gate_that_resolves_open_serves_the_route() {
+    let (id, sha, body) = envelope(FIXTURE);
+    let upstream = Upstream::replying(200, receipt(id, &sha));
+    let url = upstream.serve().await;
+    let mut open = state(&url);
+    open.service_key = service_key_for(Some("true"), Some(SERVICE_KEY));
+    let response = router_with(open)
+        .oneshot(post_request(id, body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(upstream.count(), 1);
+}
+
+#[tokio::test]
+async fn exactly_at_the_report_cap_is_not_413() {
+    let upstream = Upstream::replying(200, json!({}));
+    let url = upstream.serve().await;
+    let exact = vec![b' '; MAX_REPORT_BYTES];
+    let (id, _, body) = envelope(&exact);
+    let response = router_with(state(&url))
+        .oneshot(post_request(id, body))
+        .await
+        .unwrap();
+    let (status, body) = status_and_body(response).await;
+    // Past the byte cap check, so the receiver judges it (not admissible).
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"], "semantic_mismatch");
+    assert_eq!(upstream.count(), 0);
+}
+
+static VALIDATIONS: AtomicUsize = AtomicUsize::new(0);
+fn counting(_: &[u8], _: Instant) -> Result<Admitted, AdmissionError> {
+    VALIDATIONS.fetch_add(1, Ordering::SeqCst);
+    std::thread::sleep(Duration::from_millis(500));
+    Err(AdmissionError {
+        stage: htp_s14_receiver::AdmissionStage::Inspection,
+        error: InspectionError::Shape,
+    })
+}
+
+#[tokio::test]
+async fn an_unknown_token_is_403_before_admit_and_holds_no_permit() {
+    let upstream = Upstream::replying(200, json!({}));
+    upstream.binding_replies(200, json!([]));
+    let url = upstream.serve().await;
+    let (id, _, body) = envelope(FIXTURE);
+    let mut known = state(&url);
+    known.validate = counting;
+    let app = router_with(known);
+    let response = app
+        .clone()
+        .oneshot(post_request(id, body.clone()))
+        .await
+        .unwrap();
+    let (status, json_body) = status_and_body(response).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(json_body["error"], "invalid_worker");
+    assert_eq!(VALIDATIONS.load(Ordering::SeqCst), 0);
+    assert_eq!(upstream.count(), 0);
+    // The lookup is by token digest, with the service key, and nothing else.
+    {
+        let lookups = upstream.lookups.lock().unwrap();
+        assert_eq!(lookups.len(), 1);
+        assert!(lookups[0].1.contains(&format!(
+            "token_sha256=eq.{}",
+            hex_sha256(TOKEN.trim_start_matches("Bearer ").as_bytes())
+        )));
+        assert_eq!(lookups[0].0["apikey"], SERVICE_KEY);
+        assert!(!lookups[0].1.contains("xxxxxxxx"));
+    }
+    // With the validation slot busy, a bogus token still gets its 403, not 429.
+    upstream.binding_replies(200, json!([{"website_id": Uuid::nil()}]));
+    let busy_run = tokio::spawn(app.clone().oneshot(post_request(id, body.clone())));
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    upstream.binding_replies(200, json!([]));
+    let bogus = app.clone().oneshot(post_request(id, body)).await.unwrap();
+    assert_eq!(bogus.status(), StatusCode::FORBIDDEN);
+    busy_run.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_failing_token_lookup_is_retryable_not_a_verdict() {
+    let upstream = Upstream::replying(200, json!({}));
+    upstream.binding_replies(500, json!({"message": "boom"}));
+    let url = upstream.serve().await;
+    let (id, _, body) = envelope(FIXTURE);
+    let response = router_with(state(&url))
+        .oneshot(post_request(id, body))
+        .await
+        .unwrap();
+    let (status, json_body) = status_and_body(response).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(json_body["error"], "unavailable");
+    assert_eq!(upstream.count(), 0);
+}
+
+#[tokio::test]
+async fn a_busy_intake_is_503_at_once_and_the_body_is_not_polled() {
+    let upstream = Upstream::replying(200, json!({}));
+    let url = upstream.serve().await;
+    let held = state(&url);
+    let _slot = held.intake.clone().try_acquire_owned().unwrap();
+    let polls = Arc::new(AtomicUsize::new(0));
+    let observed = polls.clone();
+    let mut request = post_request(Uuid::new_v4(), Vec::new());
+    *request.body_mut() = Body::from_stream(stream::poll_fn(move |_| {
+        observed.fetch_add(1, Ordering::SeqCst);
+        std::task::Poll::Ready(Some(Err::<axum::body::Bytes, _>(std::io::Error::other(
+            "body must not be read",
+        ))))
+    }));
+    let response = router_with(held).oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()[header::RETRY_AFTER], "5");
+    assert_eq!(polls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn the_intake_slot_is_free_again_after_a_request() {
+    let (id, sha, body) = envelope(FIXTURE);
+    let upstream = Upstream::replying(200, receipt(id, &sha));
+    let url = upstream.serve().await;
+    let app = router_with(state(&url));
+    for _ in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(post_request(id, body.clone()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+}
+
+#[tokio::test]
+async fn a_stalled_body_times_out_and_the_budget_caps_it() {
+    let upstream = Upstream::replying(200, json!({}));
+    let url = upstream.serve().await;
+    for (body_deadline, budget) in [
+        (Duration::from_millis(100), Duration::from_secs(120)),
+        (Duration::from_secs(60), Duration::from_millis(100)),
+    ] {
+        let mut slow = state(&url);
+        slow.body_deadline = body_deadline;
+        slow.request_budget = budget;
+        let mut request = post_request(Uuid::new_v4(), Vec::new());
+        *request.body_mut() =
+            Body::from_stream(stream::pending::<Result<axum::body::Bytes, std::io::Error>>());
+        let started = Instant::now();
+        let response = router_with(slow).oneshot(request).await.unwrap();
+        let (status, body) = status_and_body(response).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["error"], "body_timeout");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+}
+
+#[tokio::test]
+async fn the_receipt_is_rebuilt_from_validated_fields_only() {
+    let (id, sha, body) = envelope(FIXTURE);
+    let mut upstream_receipt = receipt(id, &sha);
+    upstream_receipt["internal"] = json!("must not leak");
+    let upstream = Upstream::replying(200, upstream_receipt);
+    let url = upstream.serve().await;
+    let response = router_with(state(&url))
+        .oneshot(post_request(id, body))
+        .await
+        .unwrap();
+    let (status, json_body) = status_and_body(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json_body, receipt(id, &sha));
 }

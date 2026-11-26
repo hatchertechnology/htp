@@ -406,11 +406,14 @@ impl WebsiteStore {
         &self,
         service_key: &str,
         body: &CommitV4<'_>,
+        timeout: Duration,
     ) -> Result<Value, CommitV4Error> {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            // Above the 20s statement_timeout of commit_seosmith_audit_v4.
-            .timeout(Duration::from_secs(25))
+            // The caller passes what is left of the request budget (below the
+            // producer's 30s). The database's own 20s statement_timeout still
+            // applies, and a client abandoning a commit is safe: it is idempotent.
+            .timeout(timeout)
             .build()
             .map_err(|_| CommitV4Error::Unavailable)?;
         let started = Instant::now();
@@ -452,6 +455,48 @@ impl WebsiteStore {
             started.elapsed().as_millis()
         );
         Err(error)
+    }
+
+    /// Cheap pre-admit credential check: does a binding exist for this token
+    /// digest? Mirrors the lookup `commit_seosmith_audit_v4` does first. A
+    /// disabled binding still counts as present, because H2 returns the receipt
+    /// of an already committed delivery before looking at `enabled`; the RPC
+    /// still decides everything else. The service key reads `seosmith_bindings`
+    /// (revoked from every other role) and goes nowhere else.
+    pub(crate) async fn seosmith_binding_exists(
+        &self,
+        service_key: &str,
+        token_sha256: &str,
+        timeout: Duration,
+    ) -> Result<bool, CommitV4Error> {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(timeout)
+            .build()
+            .map_err(|_| CommitV4Error::Unavailable)?;
+        let response = client
+            .get(format!(
+                "{}/seosmith_bindings",
+                self.url.trim_end_matches("/websites")
+            ))
+            .header("apikey", service_key)
+            .bearer_auth(service_key)
+            .query(&[
+                ("token_sha256", format!("eq.{token_sha256}")),
+                ("select", "website_id".to_owned()),
+                ("limit", "1".to_owned()),
+            ])
+            .send()
+            .await
+            .map_err(|_| CommitV4Error::Unavailable)?;
+        if !response.status().is_success() {
+            return Err(CommitV4Error::Unavailable);
+        }
+        let rows: Vec<Value> = response
+            .json()
+            .await
+            .map_err(|_| CommitV4Error::Unavailable)?;
+        Ok(!rows.is_empty())
     }
 
     pub(crate) async fn find(
