@@ -27,6 +27,7 @@ if (saved.status !== 200) throw Error(`owner save failed: ${saved.status} ${save
 if (saved.json.semantics !== 's15-metadata-2') throw Error(`new comparison pinned ${saved.json.semantics}`)
 const older = await rpc(owner, 'independent_comparison_detail', { p_website_id: site, p_comparison_id: '00000000-0000-0000-0000-00000000000d' })
 if (older.status !== 200 || older.json.comparison.semantics !== 's15-metadata-1') throw Error('stored s15-metadata-1 comparison is not replayable')
+if (older.json.seosmith.report.schema_version !== 1 || older.json.seosmith.report.outcome !== 'completed') throw Error('stored s15-metadata-1 comparison is not pinned to a schema-1 report')
 const replay = await rpc(owner, 'independent_comparison_detail', { p_website_id: site, p_comparison_id: cmp })
 if (replay.status !== 200 || replay.json.source.source_text !== csvText || replay.json.seosmith.report.engine_version !== '0.2.0') throw Error('seeded comparison replay lost pinned evidence')
 console.log(`native report detail: import ${detail.bytes} bytes; comparison detail ${replay.bytes} bytes; source ${csv.byteLength} bytes sha ${csvSha}`)
@@ -64,6 +65,13 @@ try {
       await page.getByRole('button', { name: /s15-metadata-2/ }).first().click()
       await page.getByRole('table').waitFor()
       await page.getByText(/2 agreement/).waitFor()
+      // The stored s15-metadata-1 comparison replays against its own schema-1 report, not by label only.
+      await page.getByRole('button', { name: /s15-metadata-1/ }).first().click()
+      await page.getByRole('table').waitFor()
+      await page.getByText(/1 agreement/).first().waitFor()
+      if (await page.getByRole('button', { name: 'Save comparison' }).count()) throw Error('s15-metadata-1 replay offers Save comparison')
+      await page.getByRole('button', { name: /s15-metadata-2/ }).first().click()
+      await page.getByRole('table').waitFor()
       // An uninstrumented rule is unknown with SEOsmith's own reason key and its per-rule count.
       await page.getByRole('table').getByText(/unknown \(legacy_not_instrumented × 6\)/).first().waitFor()
       for (const category of ['independent_only', 'seosmith_only', 'unknown', 'unmapped']) if (!await page.getByRole('table').getByText(category, { exact: true }).count()) throw Error(`comparison table missing ${category}`)

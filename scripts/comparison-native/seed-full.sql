@@ -25,7 +25,17 @@ from (select jsonb_build_object('summary_version',5,'schema_version',4,'findings
 insert into public.independent_audit_comparisons(id,website_id,fqdn,import_id,delivery_id,semantics,unmodified_v1_asserted) values (
   '00000000-0000-0000-0000-000000000007','00000000-0000-0000-0000-000000000003','independent.example',
   '00000000-0000-0000-0000-000000000006','00000000-0000-0000-0000-000000000004','s15-metadata-2',true);
--- An earlier s15-metadata-1 comparison stays stored and replayable with its pinned semantics.
+-- A schema-1 report for the same site, so the stored s15-metadata-1 comparison replays comparably
+-- instead of only carrying its pinned semantics label. Small on purpose: one eligible page.
+insert into public.seosmith_audits(delivery_id,website_id,fqdn,generation,sha256,report,raw_report_json,ingestion_source)
+select '00000000-0000-0000-0000-00000000000e','00000000-0000-0000-0000-000000000003','independent.example',1,
+  encode(sha256(convert_to(t,'UTF8')),'hex'), t::jsonb, t, 'worker'
+from (select jsonb_build_object('schema_version',1,'engine_version','0.2.0','ruleset_version','2026-11-01.1',
+  'outcome','completed','stop_reason','frontier_exhausted','coverage_complete',true,
+  'pages',jsonb_build_array(jsonb_build_object('url','https://example.com/','status',200,'content_type','text/html',
+    'error',null,'is_resource',false,'blocked_by_robots',false,'flags',jsonb_build_array(),'extraction_truncated',false)),
+  'findings',jsonb_build_array(jsonb_build_object('url','https://example.com/','rule','missing_description','severity','alert')))::text t) x;
+-- An earlier s15-metadata-1 comparison stays stored and replayable with its pinned semantics and a schema-1 report.
 insert into public.independent_audit_comparisons(id,website_id,fqdn,import_id,delivery_id,semantics,unmodified_v1_asserted) values (
   '00000000-0000-0000-0000-00000000000d','00000000-0000-0000-0000-000000000003','independent.example',
-  '00000000-0000-0000-0000-000000000006','00000000-0000-0000-0000-000000000004','s15-metadata-1',true);
+  '00000000-0000-0000-0000-000000000006','00000000-0000-0000-0000-00000000000e','s15-metadata-1',true);
