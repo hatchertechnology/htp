@@ -1,0 +1,125 @@
+{
+  "contractVersion": "1.4.0",
+  "extends": [
+    "1.0.0",
+    "1.1.0",
+    "1.2.0",
+    "1.3.0"
+  ],
+  "capability": "htp.parity-read",
+  "status": "proposed-contract; additive owner-scoped stored reads; each read is held by its own rollout flag; no activation, deployment or host support claimed",
+  "operations": [
+    {
+      "id": "htp.website_audit_lifecycle",
+      "binding": "website_audit_lifecycle",
+      "effect": "read",
+      "authorization": "htp-owner-oauth",
+      "collection": false,
+      "idempotency": true,
+      "destructive": false,
+      "rolloutFlag": "HTP_ROLLOUT_LIFECYCLE",
+      "inputs": {
+        "website_id": "UUID",
+        "entity_id": "string; stable entity id of the page or resource",
+        "rule": "string; rule identifier",
+        "limit": "optional integer 1..100, default 50",
+        "before": "optional RFC3339 timestamp; supply together with before_id from the previous next_cursor",
+        "before_id": "optional UUID; supply together with before from the previous next_cursor"
+      },
+      "result": "owner and current-FQDN scoped coverage-aware lifecycle page for one rule on one entity; evidence values are omitted",
+      "resultFields": [
+        "version",
+        "entity_id",
+        "rule",
+        "items",
+        "has_more",
+        "next_cursor"
+      ],
+      "pageField": "items",
+      "versionField": "version",
+      "pageBound": "limit"
+    },
+    {
+      "id": "htp.website_url_lifecycle",
+      "binding": "website_url_lifecycle",
+      "effect": "read",
+      "authorization": "htp-owner-oauth",
+      "collection": false,
+      "idempotency": true,
+      "destructive": false,
+      "rolloutFlag": "HTP_ROLLOUT_LIFECYCLE",
+      "inputs": {
+        "website_id": "UUID",
+        "entity_id": "string; stable entity id of the page or resource",
+        "limit": "optional integer 1..100, default 50",
+        "before": "optional RFC3339 timestamp; supply together with before_id from the previous next_cursor",
+        "before_id": "optional UUID; supply together with before from the previous next_cursor"
+      },
+      "result": "owner and current-FQDN scoped lifecycle page across all rules for one entity; evidence values are omitted",
+      "resultFields": [
+        "version",
+        "entity_id",
+        "items",
+        "has_more",
+        "next_cursor"
+      ],
+      "pageField": "items",
+      "versionField": "version",
+      "pageBound": "limit"
+    },
+    {
+      "id": "htp.website_remediation_list",
+      "binding": "website_remediation_list",
+      "effect": "read",
+      "authorization": "htp-owner-oauth",
+      "collection": false,
+      "idempotency": true,
+      "destructive": false,
+      "rolloutFlag": "HTP_ROLLOUT_REMEDIATION",
+      "inputs": {
+        "website_id": "UUID",
+        "delivery_id": "UUID of a saved audit",
+        "finding_index": "integer >= 0; index into that audit's findings",
+        "before": "optional RFC3339 timestamp pages the work item's verification attempts; supply together with before_id from the previous next_cursor",
+        "before_id": "optional UUID; supply together with before from the previous next_cursor"
+      },
+      "result": "owner scoped saved remediation work item (the work queue entry) for one finding with up to 50 verification attempts per page; an unsaved finding yields an empty items array",
+      "resultFields": [
+        "version",
+        "delivery_id",
+        "finding_index",
+        "items",
+        "has_more",
+        "next_cursor"
+      ],
+      "pageField": "items",
+      "versionField": "version",
+      "pageBound": "one work item per finding"
+    }
+  ],
+  "availability": {
+    "heldCode": "unavailable",
+    "heldStatus": 503,
+    "meaning": "The operation's rollout flag is off in the deployed API, or the store is unreachable. This is not an empty history, not an empty work queue and not proof that no lifecycle transitions or remediation work exist. Discovery of the tool does not establish that the feature is enabled."
+  },
+  "discovery": "Discover tools and input schemas at connection time. A missing tool is unsupported, never an empty successful read; never substitute another operation. A present tool that answers unavailable is held, not empty.",
+  "limits": {
+    "limitMin": 1,
+    "limitMax": 100,
+    "defaultLimit": 50,
+    "cursor": "before and before_id must be supplied together, from the previous page's next_cursor; supplying only one is invalid"
+  },
+  "errors": [
+    "auth_required",
+    "forbidden",
+    "invalid_cursor_or_limit",
+    "unavailable",
+    "unsupported"
+  ],
+  "gates": [
+    "exact-head contract review and canonical merge",
+    "API deployment with the lifecycle and remediation rollout flags and the database grants enabled independently",
+    "three host source/readiness companions at exact canonical merge; runtime support separately verified",
+    "fresh tools/list and input-schema discovery on the deployed host"
+  ]
+}

@@ -1,0 +1,649 @@
+{
+  "contractVersion": "1.4.0",
+  "evidenceKind": "synthetic",
+  "scenarios": [
+    {
+      "id": "htp.website_audit_lifecycle.owner.page",
+      "operation": "htp.website_audit_lifecycle",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": true,
+        "anonymous": false,
+        "held": false,
+        "limit": 1,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "version": 1,
+          "entity_id": "sha256:a65188fd4468979beec6d2bf886243983bb484ae6e3cd81ad9f3a0cb7fd6537f",
+          "rule": "missing_title",
+          "items": [
+            {
+              "delivery_id": "00000000-0000-4000-8000-000000000177",
+              "scan_at": "2026-11-21T00:00:00Z",
+              "state": "present",
+              "coverage": "indexed_v1"
+            }
+          ],
+          "has_more": true,
+          "next_cursor": {
+            "before": "2026-11-21T00:00:00Z",
+            "before_id": "00000000-0000-4000-8000-000000000177"
+          }
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_audit_lifecycle.owner.trailing_page",
+      "operation": "htp.website_audit_lifecycle",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": true,
+        "anonymous": false,
+        "held": false,
+        "limit": 50,
+        "before": "2026-11-21T00:00:00Z",
+        "before_id": "00000000-0000-4000-8000-000000000161"
+      },
+      "expected": {
+        "result": {
+          "version": 1,
+          "entity_id": "sha256:a65188fd4468979beec6d2bf886243983bb484ae6e3cd81ad9f3a0cb7fd6537f",
+          "rule": "missing_title",
+          "items": [
+            {
+              "delivery_id": "00000000-0000-4000-8000-000000000177",
+              "scan_at": "2026-11-21T00:00:00Z",
+              "state": "present",
+              "coverage": "indexed_v1"
+            }
+          ],
+          "has_more": false,
+          "next_cursor": null
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_audit_lifecycle.held",
+      "operation": "htp.website_audit_lifecycle",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": true,
+        "anonymous": false,
+        "held": true,
+        "limit": 50,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "unavailable"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_audit_lifecycle.anonymous",
+      "operation": "htp.website_audit_lifecycle",
+      "context": {
+        "authorized": false,
+        "owner": true,
+        "capability": true,
+        "anonymous": true,
+        "held": false,
+        "limit": 50,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "auth_required"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_audit_lifecycle.non_owner",
+      "operation": "htp.website_audit_lifecycle",
+      "context": {
+        "authorized": true,
+        "owner": false,
+        "capability": true,
+        "anonymous": false,
+        "held": false,
+        "limit": 50,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "forbidden"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_audit_lifecycle.missing_capability",
+      "operation": "htp.website_audit_lifecycle",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": false,
+        "anonymous": false,
+        "held": false,
+        "limit": 50,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "unsupported"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_audit_lifecycle.unpaired_cursor",
+      "operation": "htp.website_audit_lifecycle",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": true,
+        "anonymous": false,
+        "held": false,
+        "limit": 50,
+        "before": "2026-11-21T00:00:00Z",
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "invalid_cursor_or_limit"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_audit_lifecycle.limit_out_of_range",
+      "operation": "htp.website_audit_lifecycle",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": true,
+        "anonymous": false,
+        "held": false,
+        "limit": 101,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "invalid_cursor_or_limit"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_url_lifecycle.owner.page",
+      "operation": "htp.website_url_lifecycle",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": true,
+        "anonymous": false,
+        "held": false,
+        "limit": 1,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "version": 1,
+          "entity_id": "sha256:a65188fd4468979beec6d2bf886243983bb484ae6e3cd81ad9f3a0cb7fd6537f",
+          "items": [
+            {
+              "delivery_id": "00000000-0000-4000-8000-000000000177",
+              "scan_at": "2026-11-21T00:00:00Z",
+              "rule": "missing_title",
+              "state": "present"
+            }
+          ],
+          "has_more": true,
+          "next_cursor": {
+            "before": "2026-11-21T00:00:00Z",
+            "before_id": "00000000-0000-4000-8000-000000000177"
+          }
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_url_lifecycle.owner.trailing_page",
+      "operation": "htp.website_url_lifecycle",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": true,
+        "anonymous": false,
+        "held": false,
+        "limit": 50,
+        "before": "2026-11-21T00:00:00Z",
+        "before_id": "00000000-0000-4000-8000-000000000161"
+      },
+      "expected": {
+        "result": {
+          "version": 1,
+          "entity_id": "sha256:a65188fd4468979beec6d2bf886243983bb484ae6e3cd81ad9f3a0cb7fd6537f",
+          "items": [
+            {
+              "delivery_id": "00000000-0000-4000-8000-000000000177",
+              "scan_at": "2026-11-21T00:00:00Z",
+              "rule": "missing_title",
+              "state": "present"
+            }
+          ],
+          "has_more": false,
+          "next_cursor": null
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_url_lifecycle.held",
+      "operation": "htp.website_url_lifecycle",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": true,
+        "anonymous": false,
+        "held": true,
+        "limit": 50,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "unavailable"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_url_lifecycle.anonymous",
+      "operation": "htp.website_url_lifecycle",
+      "context": {
+        "authorized": false,
+        "owner": true,
+        "capability": true,
+        "anonymous": true,
+        "held": false,
+        "limit": 50,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "auth_required"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_url_lifecycle.non_owner",
+      "operation": "htp.website_url_lifecycle",
+      "context": {
+        "authorized": true,
+        "owner": false,
+        "capability": true,
+        "anonymous": false,
+        "held": false,
+        "limit": 50,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "forbidden"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_url_lifecycle.missing_capability",
+      "operation": "htp.website_url_lifecycle",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": false,
+        "anonymous": false,
+        "held": false,
+        "limit": 50,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "unsupported"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_url_lifecycle.unpaired_cursor",
+      "operation": "htp.website_url_lifecycle",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": true,
+        "anonymous": false,
+        "held": false,
+        "limit": 50,
+        "before": "2026-11-21T00:00:00Z",
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "invalid_cursor_or_limit"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_url_lifecycle.limit_out_of_range",
+      "operation": "htp.website_url_lifecycle",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": true,
+        "anonymous": false,
+        "held": false,
+        "limit": 101,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "invalid_cursor_or_limit"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_remediation_list.owner.page",
+      "operation": "htp.website_remediation_list",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": true,
+        "anonymous": false,
+        "held": false,
+        "limit": null,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "version": 1,
+          "delivery_id": "00000000-0000-4000-8000-000000000193",
+          "finding_index": 0,
+          "items": [
+            {
+              "id": "00000000-0000-4000-8000-000000000209",
+              "status": "open",
+              "attempts": [
+                {
+                  "id": "00000000-0000-4000-8000-000000000225",
+                  "result": "unverified",
+                  "created_at": "2026-11-21T00:00:00Z"
+                }
+              ],
+              "attempts_more": true
+            }
+          ],
+          "has_more": true,
+          "next_cursor": {
+            "before": "2026-11-21T00:00:00Z",
+            "before_id": "00000000-0000-4000-8000-000000000225"
+          }
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_remediation_list.owner.trailing_page",
+      "operation": "htp.website_remediation_list",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": true,
+        "anonymous": false,
+        "held": false,
+        "limit": null,
+        "before": "2026-11-21T00:00:00Z",
+        "before_id": "00000000-0000-4000-8000-000000000161"
+      },
+      "expected": {
+        "result": {
+          "version": 1,
+          "delivery_id": "00000000-0000-4000-8000-000000000193",
+          "finding_index": 0,
+          "items": [
+            {
+              "id": "00000000-0000-4000-8000-000000000209",
+              "status": "open",
+              "attempts": [
+                {
+                  "id": "00000000-0000-4000-8000-000000000225",
+                  "result": "unverified",
+                  "created_at": "2026-11-21T00:00:00Z"
+                }
+              ],
+              "attempts_more": false
+            }
+          ],
+          "has_more": false,
+          "next_cursor": null
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_remediation_list.held",
+      "operation": "htp.website_remediation_list",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": true,
+        "anonymous": false,
+        "held": true,
+        "limit": null,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "unavailable"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_remediation_list.anonymous",
+      "operation": "htp.website_remediation_list",
+      "context": {
+        "authorized": false,
+        "owner": true,
+        "capability": true,
+        "anonymous": true,
+        "held": false,
+        "limit": null,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "auth_required"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_remediation_list.non_owner",
+      "operation": "htp.website_remediation_list",
+      "context": {
+        "authorized": true,
+        "owner": false,
+        "capability": true,
+        "anonymous": false,
+        "held": false,
+        "limit": null,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "forbidden"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_remediation_list.missing_capability",
+      "operation": "htp.website_remediation_list",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": false,
+        "anonymous": false,
+        "held": false,
+        "limit": null,
+        "before": null,
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "unsupported"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    },
+    {
+      "id": "htp.website_remediation_list.unpaired_cursor",
+      "operation": "htp.website_remediation_list",
+      "context": {
+        "authorized": true,
+        "owner": true,
+        "capability": true,
+        "anonymous": false,
+        "held": false,
+        "limit": null,
+        "before": "2026-11-21T00:00:00Z",
+        "before_id": null
+      },
+      "expected": {
+        "result": {
+          "code": "invalid_cursor_or_limit"
+        },
+        "effects": {
+          "collectionRegistered": false,
+          "crawlRunsCreated": 0,
+          "writes": 0
+        }
+      }
+    }
+  ]
+}

@@ -242,12 +242,17 @@ provider grants and performs the same checks as dashboard operations.
 | `website_audit_detail` | `website_id`, `delivery_id` UUID | Saved detail inline when safe; otherwise `EXPORT_REQUIRED` with export-v1 instructions |
 | `website_audit_events` | `website_id`, optional `limit`, `before`, `before_id` | Read-only stored audit event page; `availability` is explicit (`producer_unavailable` while the H15 producer gates are disabled) and is never an empty success |
 | `website_operational_episodes` | `website_id`, optional `limit`, `before`, `before_id` | Read-only stored provider operational episode page; `availability` is explicit and the read never starts collection |
+| `website_audit_lifecycle` | `website_id`, `entity_id`, `rule`, optional `limit`, `before`, `before_id` | Read-only coverage-aware lifecycle page for one rule on one page or resource; held by `HTP_ROLLOUT_LIFECYCLE` |
+| `website_url_lifecycle` | `website_id`, `entity_id`, optional `limit`, `before`, `before_id` | Read-only lifecycle page across all rules for one page or resource; held by `HTP_ROLLOUT_LIFECYCLE` |
+| `website_remediation_list` | `website_id`, `delivery_id`, `finding_index`, optional `before`, `before_id` | Read-only saved remediation work item (the work queue entry) for one finding with its verification attempts; held by `HTP_ROLLOUT_REMEDIATION` |
 | `website_audit_export_start_v1` | `website_id`, `delivery_id` UUID | Start or reuse an owner-scoped snapshot of the complete saved detail JSON |
 | `website_audit_export_chunk_v1` | `website_id`, `delivery_id`, `exportId`, byte `offset` | At most 256 KiB of base64-encoded snapshot bytes |
 | `website_audit_export_close_v1` | `website_id`, `delivery_id`, `exportId` | Release a snapshot; authorized close is idempotent |
 | `import_website_audit` | `website_id`, `report_json` string | Validated, deduplicated Seosmith import (4,952,756-byte inclusive raw report input limit) |
 
 `website_audit_events` and `website_operational_episodes` are read-only saved-data reads. They keep the existing paired cursor (`before` plus `before_id`) and bounded `limit`. While the H15 audit notification gates remain disabled they return `availability:producer_unavailable`; that is not a successful empty history, it is not a zero count, and it must not be treated as proof that no events or episodes exist. Neither read starts collection, claim, processing or delivery.
+
+`website_audit_lifecycle`, `website_url_lifecycle` and `website_remediation_list` (profile 1.4.0, `docs/plugin-contract/v1.4/`) forward your own token to the same database functions as the dashboard, so only the website owner can read them, and they never start a crawl, collection or event processing and never write. The tools are always listed; while the matching rollout flag is off in the deployed API they return an error result with `code:"unavailable"` and `status:503`. That means the feature is not enabled (or the store is down); it is not an empty history or an empty work queue and must not be reported as a clean result. Lifecycle pages follow `next_cursor` with both `before` and `before_id`. `website_remediation_list` pages the work item's verification attempts the same way; `items:[]` means no work has been saved for that finding. Saving work and recording verification attempts remain dashboard-only.
 
 For an `EXPORT_REQUIRED` response, discover and call export-v1 explicitly. Read
 chunks in byte order, concatenate decoded bytes, and verify the descriptor's
