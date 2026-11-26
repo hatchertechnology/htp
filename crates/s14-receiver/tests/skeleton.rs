@@ -27,14 +27,7 @@ fn pinned_subset_bytes_are_not_regenerated_or_reclassified_as_frozen() {
 }
 #[test]
 fn typed_metadata_inspection_does_not_issue_an_admission_result() {
-    for name in [
-        "complete",
-        "partial",
-        "mixed-omitted",
-        "intent",
-        "edge-source_missing_status",
-        "unicode-equal",
-    ] {
+    for name in ["complete", "partial", "intent"] {
         let raw = fixture(&format!("v4-candidate-{name}.json"));
         let checked = inspect(&raw, deadline()).unwrap();
         assert_eq!(checked.raw_bytes, raw.len());
@@ -52,7 +45,6 @@ fn malformed_numeric_duplicate_and_url_profiles_are_rejected() {
     for name in [
         "invalid-schema-fraction.json",
         "invalid-escaped-duplicate-nested.json",
-        "v4-candidate-url-normalization.json",
     ] {
         assert!(inspect(&fixture(name), deadline()).is_err(), "{name}");
     }

@@ -1,5 +1,9 @@
-//! Phase-one receiver skeleton. Inspection is not semantic validation or admission.
-//! No proof writer, DB adapter, capability, or acceptance authority is implemented.
+//! Receiver for schema-4 reports. `inspect` is bounded structural inspection only.
+//! [`admit`] is the schema-4 admission entry point (inspection, saved-summary
+//! derivation and full findings-population equality); the legacy
+//! `validate_for_admission` stub stays closed. No proof writer, DB adapter,
+//! capability, or acceptance authority is implemented here.
+mod admission;
 mod advisories;
 mod bindings;
 pub mod budget;
@@ -15,6 +19,7 @@ pub mod roles;
 mod saved_summary;
 mod shape;
 
+pub use admission::{AdmissionError, AdmissionStage, Admitted, VALIDATOR_REVISION, admit};
 pub use advisories::check_scalar_advisories;
 pub use bindings::check_source_bindings;
 pub use compatibility::check_compatibility_findings;

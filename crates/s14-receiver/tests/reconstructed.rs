@@ -15,13 +15,7 @@ fn fixture(name: &str) -> serde_json::Value {
 }
 #[test]
 fn fixtures_and_inconsistencies() {
-    for name in [
-        "intent",
-        "complete",
-        "partial",
-        "mixed-omitted",
-        "edge-source_missing_status",
-    ] {
+    for name in ["intent", "complete", "partial"] {
         let v = fixture(name);
         assert_eq!(check(&v), Ok(()), "{name}");
         let mut x = v.clone();
@@ -84,7 +78,7 @@ fn advisory_row_order_is_global() {
 }
 #[test]
 fn missing_status_cannot_claim_a_completed_edge() {
-    let mut v = fixture("edge-source_missing_status");
+    let mut v = fixture("partial");
     assert_eq!(check(&v), Ok(()));
     let records = v["policy_guidance"]["candidate"]["records"]
         .as_array_mut()

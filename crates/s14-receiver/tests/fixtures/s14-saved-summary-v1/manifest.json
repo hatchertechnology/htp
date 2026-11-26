@@ -56,15 +56,6 @@
       "summary_path": "s14-saved-summary-v1/v4-candidate-partial.summary-v5.json",
       "summary_bytes": 7705,
       "summary_sha256": "1c794f11d23d9d43f51ca5089c2f9304e6ff0303589d5ed82889eb7754af03f1"
-    },
-    {
-      "case": "v4-candidate-mixed-omitted",
-      "source_path": "v4-candidate-mixed-omitted.json",
-      "source_bytes": 425640,
-      "source_sha256": "9cd361d79c93e40ddb57b0043c201fea0090836c500dd726849d055ec6b5efe9",
-      "summary_path": "s14-saved-summary-v1/v4-candidate-mixed-omitted.summary-v5.json",
-      "summary_bytes": 7637,
-      "summary_sha256": "167150c3a2b95b3608a0a2361db8ca24874a10e6d2b74df37537fcff66390895"
     }
   ]
 }

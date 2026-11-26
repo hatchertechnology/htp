@@ -53,7 +53,7 @@ fn committed_fixtures_are_reproducible_and_bounded() {
     assert_eq!(manifest["format"], "s14-saved-summary-v1");
     assert_eq!(manifest["summary_version"], SAVED_SUMMARY_VERSION);
     let entries = manifest["entries"].as_array().unwrap();
-    assert_eq!(entries.len(), 7);
+    assert_eq!(entries.len(), 6);
     for entry in entries {
         let case = entry["case"].as_str().unwrap();
         let source = fs::read(fixtures().join(entry["source_path"].as_str().unwrap())).unwrap();

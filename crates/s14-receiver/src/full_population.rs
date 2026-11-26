@@ -29,6 +29,7 @@ use url::Url;
 
 /// One finding the pinned producer would have emitted for the retained source.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExpectedFinding {
     pub key: String,
     pub rule: String,

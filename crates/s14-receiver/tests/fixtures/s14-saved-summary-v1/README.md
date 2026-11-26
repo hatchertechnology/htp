@@ -20,7 +20,6 @@ are capped at 16 KiB (`16_384` bytes). A larger summary is rejected with
 | `partial-missing-h1.summary-v5.json` | `s14-finding-coverage-v1/partial-missing-h1.json` | Partial audit; all 88 rules unknown, finding remains visible. |
 | `v4-candidate-complete.summary-v5.json` | `v4-candidate-complete.json` | No extension; all 88 rules unknown. |
 | `v4-candidate-partial.summary-v5.json` | `v4-candidate-partial.json` | No extension; all 88 rules unknown. |
-| `v4-candidate-mixed-omitted.summary-v5.json` | `v4-candidate-mixed-omitted.json` | No extension; all 88 rules unknown. |
 
 `manifest.json` pins each source and summary by byte length and SHA-256. The
 summary digest is over the exact canonical bytes and is exposed as `sha256:<hex>`

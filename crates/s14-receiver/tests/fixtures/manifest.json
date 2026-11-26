@@ -14,29 +14,9 @@
       "sha256": "d3dbdafb29f66086793e2a52a9576e536755032f849fbccfa73e14abc4008d18"
     },
     {
-      "path": "v4-candidate-mixed-omitted.json",
-      "bytes": 425640,
-      "sha256": "9cd361d79c93e40ddb57b0043c201fea0090836c500dd726849d055ec6b5efe9"
-    },
-    {
       "path": "v4-candidate-intent.json",
       "bytes": 44834,
       "sha256": "530c1c822d56ad151a8d9c17bc39b6c9a8c5ad6d103699af01917319e8e54139"
-    },
-    {
-      "path": "v4-candidate-edge-source_missing_status.json",
-      "bytes": 43228,
-      "sha256": "c5c6fc88b7cff029ddc577b53efa2aad55068558fa904c46ffacd1de6d756eb6"
-    },
-    {
-      "path": "v4-candidate-unicode-equal.json",
-      "bytes": 43277,
-      "sha256": "e64ac00bffcabcb9776500eca0e28e01333b8a45b0fb42da35efd333f4d3c2e6"
-    },
-    {
-      "path": "v4-candidate-url-normalization.json",
-      "bytes": 47115,
-      "sha256": "730c2d22f715a1ac758776bb7098c98aba0b636252d012a76307ab026200eef2"
     },
     {
       "path": "invalid-schema-fraction.json",
