@@ -528,3 +528,28 @@ test('import-first retry remains an import in indexed history after worker ackno
     assert.equal(urls.items[0].ingestion_source,'import')
   } finally {await db.close()}
 })
+
+test('schema-4 admission migration keeps schema 1/2 trigger, capability and immutability behaviour', async () => {
+  const db=await setup()
+  try {
+    await upgrade(db)
+    for (const f of ['20261121120000_seosmith_input_cap.sql','20261121130000_seosmith_rfc3339_intervals.sql','20261211000000_s14_schema4_admission.sql']) await db.exec(await readFile(new URL('../migrations/'+f,import.meta.url),'utf8'))
+    const caps=(await db.query('select public.seosmith_receiver_capabilities() as c')).rows[0].c
+    assert.deepEqual(caps.schema_versions,[1,2,4])
+    assert.deepEqual(caps.policy_wire_contracts,['s14-wire-1'])
+    assert.equal(caps.max_report_bytes,4952756)
+    // The insert trigger is still the immutability guard and still derives schema 1/2 summaries.
+    const raw=JSON.stringify(legacy),id=legacy.request.request_id
+    await db.exec('set role anon')
+    await db.query('select public.ingest_seosmith_audit($1,$2,$3,$4)',['x'.repeat(64),id,hash(raw),raw])
+    await db.exec('reset role')
+    const row=(await db.query('select summary,summary_text,summary_sha256,validator_revision from public.seosmith_audits where delivery_id=$1',[id])).rows[0]
+    assert.equal(row.summary.summary_version,4)
+    assert.equal(row.summary_text,null); assert.equal(row.summary_sha256,null); assert.equal(row.validator_revision,null)
+    await assert.rejects(()=>db.query("update public.seosmith_audits set fqdn='y' where delivery_id=$1",[id]),/audit_is_immutable/)
+    assert.equal((await db.query("select count(*)::int n from pg_trigger where tgrelid='public.seosmith_audits'::regclass and tgname='seosmith_immutable_audit' and tgenabled='O'")).rows[0].n,1)
+    await identity(db)
+    const detail=(await db.query('select public.seosmith_audit_detail($1,$2) as d',[site,id])).rows[0].d
+    assert.equal(detail.report_json,raw); assert.equal('summary_text' in detail,false)
+  } finally {await db.close()}
+})
