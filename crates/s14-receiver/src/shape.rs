@@ -328,14 +328,24 @@ struct PageView {
     is_resource: bool,
     links: Bounded<UrlView, MAX_REPORT_BYTES>,
     alternates: Bounded<UrlView, MAX_REPORT_BYTES>,
+    /// Kept raw: v1 ignores the member at inspection (a non-array value must not move
+    /// the v1 stage), v2 counts its entries for locator resolution.
     #[serde(default)]
-    relationships: Option<Bounded<de::IgnoredAny, MAX_REPORT_BYTES>>,
+    relationships: Option<Box<RawValue>>,
 }
 #[derive(Deserialize)]
 struct UrlView {
     url: String,
 }
 
+/// Byte length the manifest cap applies to. v1 keeps the existing raw length; v2 counts
+/// compact serialized JSON bytes (design 3.2-6), so whitespace padding cannot trip it.
+fn manifest_len(wire: Wire, raw: &RawValue) -> Result<usize, InspectionError> {
+    match wire {
+        Wire::V1 => Ok(raw.get().len()),
+        Wire::V2 => crate::families::compact_raw_len(raw),
+    }
+}
 fn parse<'a, T: Deserialize<'a>>(raw: &'a str) -> Result<T, InspectionError> {
     serde_json::from_str(raw).map_err(|_| InspectionError::Shape)
 }
@@ -468,7 +478,7 @@ pub fn inspect(input: &[u8], deadline: Instant) -> Result<InspectedCandidate, In
         || p.title_min > p.title_max
         || p.description_min > p.description_max
         || g.candidate.policy_canonical_json.len() > MAX_POLICY_BYTES
-        || g.manifest.get().len() > wire.manifest_cap()
+        || manifest_len(wire, g.manifest)? > wire.manifest_cap()
         || g.candidate.coverage.get().len() > 262_144
     {
         return Err(InspectionError::Bounds);
@@ -513,20 +523,24 @@ pub fn inspect(input: &[u8], deadline: Instant) -> Result<InspectedCandidate, In
     for source in &r.pages.0 {
         deadline_check(deadline)?;
         let page: PageView = parse(source.get())?;
+        // v2 only: a non-array member is `Shape`; absent and `null` count 0.
+        let relationships = match (wire, &page.relationships) {
+            (Wire::V2, Some(raw)) => parse::<Bounded<de::IgnoredAny, MAX_REPORT_BYTES>>(raw.get())?
+                .0
+                .len(),
+            _ => 0,
+        };
         admitted_url(&page.url)?;
         resources += usize::from(page.is_resource);
         for target in page.links.0.iter().chain(page.alternates.0.iter()) {
             admitted_url(&target.url)?;
         }
         if wire == Wire::V2 {
-            let count = |v: &Option<Bounded<de::IgnoredAny, MAX_REPORT_BYTES>>| {
-                v.as_ref().map_or(0, |b| b.0.len())
-            };
             refs.push(crate::families::PageRef {
                 url: page.url,
                 is_resource: page.is_resource,
                 links: page.links.0.len(),
-                relationships: count(&page.relationships),
+                relationships,
             });
         }
     }

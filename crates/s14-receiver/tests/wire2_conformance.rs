@@ -154,6 +154,7 @@ fn admit_stage_and_error_match_the_manifest_for_every_fixture() {
                 mismatches.push(format!("{path}: admitted, expected rejection"));
                 continue;
             };
+            mismatches.extend(check_parity(path, &bytes, expect));
             let have = format!("{} {}", e.stage.as_str(), name(e.error));
             let want = format!(
                 "{} {}",
@@ -174,25 +175,74 @@ fn admit_stage_and_error_match_the_manifest_for_every_fixture() {
     assert!(accepted >= 10 && rejected >= 30, "{accepted}/{rejected}");
 }
 
-/// Review R2-1: `check_consistency` under v2 equals its v1 twin.
+/// Review R2-1: `check_*` parity on a rejected fixture (section 5/7: "admit and every
+/// check_* must agree on stage and error").
+/// * `inspection`: every `check_*` re-runs inspection, so each returns the expected error.
+/// * `summary`: `check_scalar_advisories`, `check_reconstructed_rules` and
+///   `finding_coverage_batch` return the expected error; `check_source_bindings` and
+///   `check_consistency` may accept (bindings do not read the manifest counts and
+///   digests; consistency does not read digests) but never return another error.
+/// * `population`: no `check_*` covers the population stage (`findings_match` runs
+///   only inside `admit`), so all five accept. This pins that honest gap.
+fn check_parity(path: &str, b: &[u8], expect: &Value) -> Vec<String> {
+    let stage = expect["stage"].as_str().unwrap();
+    let want = expect["error"].as_str().unwrap();
+    let results: [(&str, Result<(), InspectionError>); 5] = [
+        ("check_source_bindings", check_source_bindings(b, dl())),
+        ("check_consistency", check_consistency(b, dl()).map(drop)),
+        ("check_scalar_advisories", check_scalar_advisories(b, dl())),
+        (
+            "check_reconstructed_rules",
+            check_reconstructed_rules(b, dl()),
+        ),
+        (
+            "finding_coverage_batch",
+            finding_coverage_batch(b, dl()).map(drop),
+        ),
+    ];
+    let mut bad = Vec::new();
+    for (n, r) in results {
+        let got = r.map_or_else(name, |()| "accepted".to_owned());
+        let may_accept = match stage {
+            "inspection" => false,
+            "summary" => matches!(n, "check_source_bindings" | "check_consistency"),
+            "population" => true,
+            other => panic!("{path}: unexpected stage {other}"),
+        };
+        let ok = if stage == "population" {
+            got == "accepted"
+        } else {
+            got == want || (may_accept && got == "accepted")
+        };
+        if !ok {
+            bad.push(format!(
+                "{path}: {n} returned `{got}`, stage {stage} want `{want}`"
+            ));
+        }
+    }
+    bad
+}
+
+/// Review R2-1: `check_consistency` under v2 equals its v1 twin, for every v2 positive
+/// that has a v1 base (the base is named in the manifest).
 #[test]
 fn check_consistency_v2_matches_the_v1_twin() {
-    for (v1, v2) in [
-        ("complete-clean.json", "positive/complete-small.json"),
-        ("mixed-caps-exceeded.json", "positive/s14-record-limit.json"),
-        (
-            "external-links-checked.json",
-            "positive/external-links-checked-v2.json",
-        ),
-        ("partial-sources.json", "positive/partial-sources.json"),
-    ] {
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(dir().join("manifest.json")).unwrap()).unwrap();
+    let mut twins = 0;
+    let mut omitting = 0;
+    for f in manifest["files"].as_array().unwrap() {
+        if f["expect"]["admit"] != true {
+            continue;
+        }
+        let (path, base) = (f["path"].as_str().unwrap(), f["base"].as_str().unwrap());
         let a = fs::read(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures/s14-schema4-v1")
-                .join(v1),
+                .join(base),
         )
         .unwrap();
-        let b = fs::read(dir().join(v2)).unwrap();
+        let b = fs::read(dir().join(path)).unwrap();
         let (x, y) = (
             check_consistency(&a, dl()).unwrap(),
             check_consistency(&b, dl()).unwrap(),
@@ -200,12 +250,65 @@ fn check_consistency_v2_matches_the_v1_twin() {
         assert_eq!(
             (x.rules_checked, x.omitted_records),
             (y.rules_checked, y.omitted_records),
-            "{v2}"
+            "{path} vs {base}"
         );
+        omitting += usize::from(y.omitted_records > 0);
+        twins += 1;
     }
+    let positives = manifest["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["expect"]["admit"] == true)
+        .count();
+    assert_eq!(twins, positives, "every v2 positive has a twin");
+    assert!(twins >= 14, "{twins}");
     // the cap fixture really omits records, so the comparison is not vacuous
-    let b = fs::read(dir().join("positive/s14-record-limit.json")).unwrap();
-    assert!(check_consistency(&b, dl()).unwrap().omitted_records > 0);
+    assert!(omitting > 0);
+}
+
+/// F1 (review-8c1-h): a v1 report whose page carries a non-array `relationships`
+/// member keeps its origin/main verdict: `summary`/`Shape` (the member is ignored at
+/// inspection under v1). It must not move to `inspection`.
+#[test]
+fn v1_non_array_relationships_keeps_its_summary_stage() {
+    let v1dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/s14-schema4-v1");
+    let raw = fs::read(v1dir.join("complete-clean.json")).unwrap();
+    for (label, value, stage, error) in [
+        ("array", serde_json::json!([]), None, None),
+        ("null", Value::Null, Some("summary"), Some("Shape")),
+        (
+            "number",
+            serde_json::json!(5),
+            Some("summary"),
+            Some("Shape"),
+        ),
+        (
+            "string",
+            serde_json::json!("x"),
+            Some("summary"),
+            Some("Shape"),
+        ),
+        (
+            "object",
+            serde_json::json!({}),
+            Some("summary"),
+            Some("Shape"),
+        ),
+    ] {
+        let mut v: Value = serde_json::from_slice(&raw).unwrap();
+        v["pages"][0]["relationships"] = value;
+        let got = admit(&serde_json::to_vec(&v).unwrap(), dl());
+        match (got, stage) {
+            (Ok(a), None) => assert_eq!(a.validator_revision, V1_REV, "{label}"),
+            (Err(e), Some(s)) => assert_eq!(
+                (e.stage.as_str(), name(e.error)),
+                (s, error.unwrap().to_owned()),
+                "{label}"
+            ),
+            (g, _) => panic!("{label}: {:?}", g.map(|a| a.validator_revision)),
+        }
+    }
 }
 
 /// v1 verdicts, stages and revision are unchanged on the v1 corpus.

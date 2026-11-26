@@ -340,6 +340,61 @@ pub fn cases() -> Vec<Case> {
         None,
         "200 observations (> v1 limit 128), v2 limit 1024",
     );
+    // F2: whitespace padding makes the raw member exceed the cap while the compact bytes
+    // (the contract's measure, section 3.2-6) stay far below it: admitted.
+    {
+        let v = to_v2(&clean, "complete");
+        add(
+            "positive/families-raw-over-cap-compact-ok.json",
+            "complete-clean.json",
+            pad(&v, "evidence_families", 800_000),
+            None,
+            "evidence_families raw > 786,432 B, compact small: bounds count compact bytes",
+        );
+        add(
+            "positive/manifest-raw-over-16384-compact-ok.json",
+            "complete-clean.json",
+            pad(&v, "manifest", 17_000),
+            None,
+            "v2 manifest raw > 16,384 B, compact small: bounds count compact bytes",
+        );
+    }
+    // F5: depth convention. `facts` itself is level 1, so four nested objects are
+    // admitted and the negative `families-facts-too-deep` (five) is rejected.
+    {
+        let mut v = to_v2(&clean, "complete");
+        v["evidence_families"]["families"]["s02_indexing"]["items"][0]["facts"] =
+            json!({"a":{"b":{"c":{"d":1}}}});
+        add(
+            "positive/families-facts-depth-4.json",
+            "complete-clean.json",
+            bytes(&v),
+            None,
+            "facts nested to depth 4 (facts itself counts as level 1): the boundary",
+        );
+    }
+    // F4: `/pages/N/links/M` and `/pages/N/relationships/M` locators (crawl page 0
+    // has 23 links and 23 relationships).
+    let crawl = load("crawl.json");
+    let locate = |sec: &str, loc: &str| {
+        let mut v = to_v2(&crawl, "complete");
+        v["evidence_families"]["families"][sec]["items"][0]["locator"] = json!(loc);
+        v
+    };
+    add(
+        "positive/links-locator-v2.json",
+        "crawl.json",
+        bytes(&locate("s05_link_graph", "/pages/0/links/22")),
+        None,
+        "item locator /pages/0/links/22 (last link of page 0)",
+    );
+    add(
+        "positive/relationships-locator-v2.json",
+        "crawl.json",
+        bytes(&locate("s08_resources", "/pages/0/relationships/22")),
+        None,
+        "item locator /pages/0/relationships/22 (last relationship of page 0)",
+    );
     // ---- inspection negatives
     let base = to_v2(&clean, "complete");
     let mutate = |name: &str,
@@ -532,6 +587,40 @@ pub fn cases() -> Vec<Case> {
             i["entity_id"] = Value::Null;
         },
     );
+    for (name, sec, loc, note) in [
+        (
+            "families-link-locator-out-of-range",
+            "s05_link_graph",
+            "/pages/0/links/23",
+            "links/M with M = len",
+        ),
+        (
+            "families-relationship-locator-out-of-range",
+            "s08_resources",
+            "/pages/0/relationships/23",
+            "relationships/M with M = len",
+        ),
+        (
+            "families-link-locator-on-linkless-page",
+            "s05_link_graph",
+            "/pages/1/links/0",
+            "links/0 on a page with no links",
+        ),
+        (
+            "families-relationship-locator-on-empty-page",
+            "s08_resources",
+            "/pages/1/relationships/0",
+            "relationships/0 on a page with none",
+        ),
+    ] {
+        add(
+            &format!("negative/{name}.json"),
+            "crawl.json",
+            bytes(&locate(sec, loc)),
+            Some(ins("Shape")),
+            note,
+        );
+    }
     mutate(
         "families-facts-too-big",
         "invariant 6: facts > 4096 B",
@@ -577,17 +666,6 @@ pub fn cases() -> Vec<Case> {
             v["evidence_families"]["families"]["s02_indexing"]["max_bytes"] = json!(1);
         },
     );
-    // families too large: raw bytes > 786,432 (whitespace padding)
-    {
-        let v = base.clone();
-        add(
-            "negative/families-over-cap.json",
-            "complete-clean.json",
-            pad(&v, "evidence_families", 800_000),
-            Some(ins("Bounds")),
-            "evidence_families > 786,432 B",
-        );
-    }
     mutate(
         "manifest-list-under-v2",
         "row still carries candidates",
@@ -625,13 +703,23 @@ pub fn cases() -> Vec<Case> {
         },
     );
     {
-        let v = base.clone();
+        // compact bytes over 16,384: valid digest-form rows, repeated
+        let mut v = base.clone();
+        let row = v["policy_guidance"]["manifest"][0].clone();
+        let rows = v["policy_guidance"]["manifest"].as_array_mut().unwrap();
+        while serde_json::to_vec(&Value::Array(rows.clone()))
+            .unwrap()
+            .len()
+            <= 16_384
+        {
+            rows.push(row.clone());
+        }
         add(
             "negative/manifest-over-16384-v2.json",
             "complete-clean.json",
-            pad(&v, "manifest", 17_000),
+            bytes(&v),
             Some(ins("Bounds")),
-            "v2 manifest > 16,384 B",
+            "v2 manifest compact > 16,384 B",
         );
     }
     mutate(

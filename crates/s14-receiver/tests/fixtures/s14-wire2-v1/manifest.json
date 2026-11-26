@@ -122,6 +122,66 @@
     },
     {
       "base": "complete-clean.json",
+      "bytes": 858146,
+      "expect": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
+      },
+      "handmade": true,
+      "note": "evidence_families raw > 786,432 B, compact small: bounds count compact bytes",
+      "path": "positive/families-raw-over-cap-compact-ok.json",
+      "sha256": "1f6e6a8ceb362ac050ce4def0a2dc1f5815e88abd4aaa43a6ef7dfe36b3b7d17"
+    },
+    {
+      "base": "complete-clean.json",
+      "bytes": 75146,
+      "expect": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
+      },
+      "handmade": true,
+      "note": "v2 manifest raw > 16,384 B, compact small: bounds count compact bytes",
+      "path": "positive/manifest-raw-over-16384-compact-ok.json",
+      "sha256": "81657f91046b957648c3d2351a1c58769f5329618808574f617a70139313f226"
+    },
+    {
+      "base": "complete-clean.json",
+      "bytes": 58157,
+      "expect": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
+      },
+      "handmade": true,
+      "note": "facts nested to depth 4 (facts itself counts as level 1): the boundary",
+      "path": "positive/families-facts-depth-4.json",
+      "sha256": "08e8aa50443bf31d8447615d691a8fd09633bff02a110dc9f62c5da13483fa82"
+    },
+    {
+      "base": "crawl.json",
+      "bytes": 416079,
+      "expect": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
+      },
+      "handmade": true,
+      "note": "item locator /pages/0/links/22 (last link of page 0)",
+      "path": "positive/links-locator-v2.json",
+      "sha256": "4bd2bc6826434c967fc9fcc343c46fde4c87ecfcf4465736025c655d0782ada0"
+    },
+    {
+      "base": "crawl.json",
+      "bytes": 416087,
+      "expect": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
+      },
+      "handmade": true,
+      "note": "item locator /pages/0/relationships/22 (last relationship of page 0)",
+      "path": "positive/relationships-locator-v2.json",
+      "sha256": "85bf8eb3c958c5aa0b10546bb31bdbed229fdbaad892eeea6f1b2aa28f231a5f"
+    },
+    {
+      "base": "complete-clean.json",
       "bytes": 51551,
       "expect": {
         "admit": false,
@@ -420,6 +480,58 @@
       "sha256": "78b730e57ee6dec3d6b1120a7de02cdbf3dbee6ec8dcea906257854e23324df9"
     },
     {
+      "base": "crawl.json",
+      "bytes": 416079,
+      "expect": {
+        "admit": false,
+        "error": "Shape",
+        "stage": "inspection"
+      },
+      "handmade": true,
+      "note": "links/M with M = len",
+      "path": "negative/families-link-locator-out-of-range.json",
+      "sha256": "7199231e84d82a050993748f4bdbbbc1245cb60c5648f19cc830f5f177123511"
+    },
+    {
+      "base": "crawl.json",
+      "bytes": 416087,
+      "expect": {
+        "admit": false,
+        "error": "Shape",
+        "stage": "inspection"
+      },
+      "handmade": true,
+      "note": "relationships/M with M = len",
+      "path": "negative/families-relationship-locator-out-of-range.json",
+      "sha256": "d1369f8e993697aa5b0fedd334eda135478d79f15ee72215e484fcf4d61f1b5a"
+    },
+    {
+      "base": "crawl.json",
+      "bytes": 416078,
+      "expect": {
+        "admit": false,
+        "error": "Shape",
+        "stage": "inspection"
+      },
+      "handmade": true,
+      "note": "links/0 on a page with no links",
+      "path": "negative/families-link-locator-on-linkless-page.json",
+      "sha256": "e7a179ecad07f01236b935686b491a1affc0ad704963b237ac9724fb250cc248"
+    },
+    {
+      "base": "crawl.json",
+      "bytes": 416086,
+      "expect": {
+        "admit": false,
+        "error": "Shape",
+        "stage": "inspection"
+      },
+      "handmade": true,
+      "note": "relationships/0 on a page with none",
+      "path": "negative/families-relationship-locator-on-empty-page.json",
+      "sha256": "6191fd48e489defed9ca55f702a809f07d6316893e296d2cf56b230ebe840408"
+    },
+    {
       "base": "complete-clean.json",
       "bytes": 62354,
       "expect": {
@@ -486,19 +598,6 @@
     },
     {
       "base": "complete-clean.json",
-      "bytes": 858146,
-      "expect": {
-        "admit": false,
-        "error": "Bounds",
-        "stage": "inspection"
-      },
-      "handmade": true,
-      "note": "evidence_families > 786,432 B",
-      "path": "negative/families-over-cap.json",
-      "sha256": "1f6e6a8ceb362ac050ce4def0a2dc1f5815e88abd4aaa43a6ef7dfe36b3b7d17"
-    },
-    {
-      "base": "complete-clean.json",
       "bytes": 58162,
       "expect": {
         "admit": false,
@@ -551,16 +650,16 @@
     },
     {
       "base": "complete-clean.json",
-      "bytes": 75146,
+      "bytes": 71646,
       "expect": {
         "admit": false,
         "error": "Bounds",
         "stage": "inspection"
       },
       "handmade": true,
-      "note": "v2 manifest > 16,384 B",
+      "note": "v2 manifest compact > 16,384 B",
       "path": "negative/manifest-over-16384-v2.json",
-      "sha256": "81657f91046b957648c3d2351a1c58769f5329618808574f617a70139313f226"
+      "sha256": "8f5dc3b591fe00636e74170affd1daa2a7cdf03923e541f3965d9dfe2008d34a"
     },
     {
       "base": "complete-clean.json",

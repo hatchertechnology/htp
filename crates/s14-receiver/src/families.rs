@@ -6,7 +6,7 @@
 //! unknown keys, and an explicit `null` is never read as absent.
 //!
 //! Error mapping (the parity pair compares these names):
-//! * `Bounds`: raw size > 786,432 B; section/item/summary/facts byte or depth or
+//! * `Bounds`: compact size > 786,432 B; section/item/summary/facts byte or depth or
 //!   count bounds (§3.2-6).
 //! * `UnsupportedSchema`: `version` is an integer other than 1.
 //! * `Shape`: everything else (absent, `null`, not an object, unknown or missing
@@ -138,6 +138,8 @@ fn entity_id(url: &str, resource: bool) -> String {
         )
     )
 }
+/// Nesting depth; the `facts` object itself is level 1, so `MAX_FACTS_DEPTH` = 4 admits
+/// `{"a":{"b":{"c":{"d":1}}}}` and rejects one more level.
 fn depth(v: &Value) -> usize {
     match v {
         Value::Object(o) => 1 + o.values().map(depth).max().unwrap_or(0),
@@ -154,6 +156,11 @@ fn strings_ok(v: &Value) -> bool {
         Value::Object(o) => o.iter().all(|(k, v)| s(k) && strings_ok(v)),
         _ => true,
     }
+}
+/// Compact serialized JSON bytes (`serde_json::to_vec`) of a raw member.
+pub(crate) fn compact_raw_len(raw: &RawValue) -> Result<usize, E> {
+    let v: Value = serde_json::from_str(raw.get()).map_err(|_| E::Shape)?;
+    compact_len(&v)
 }
 fn compact_len(v: &impl serde::Serialize) -> Result<usize, E> {
     serde_json::to_vec(v).map(|b| b.len()).map_err(|_| E::Shape)
@@ -296,7 +303,8 @@ fn section(raw: &RawValue, want: (&str, usize, usize), pages: &[PageRef]) -> Res
 /// See the module doc for the error mapping.
 pub(crate) fn check(raw: Option<&RawValue>, pages: &[PageRef], deadline: Instant) -> Result<(), E> {
     let raw = raw.ok_or(E::Shape)?;
-    if raw.get().len() > MAX_FAMILIES_BYTES {
+    // compact bytes (3.2-6), not the raw length: padding is not content
+    if compact_raw_len(raw)? > MAX_FAMILIES_BYTES {
         return Err(E::Bounds);
     }
     let top: Top = serde_json::from_str(raw.get()).map_err(|_| E::Shape)?;
@@ -327,4 +335,89 @@ pub(crate) fn check(raw: Option<&RawValue>, pages: &[PageRef], deadline: Instant
         section(raw, want, pages)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    //! F2 (review-8c1-h): the 786,432 B cap counts compact bytes (§3.2-6), at the
+    //! boundary between compact and raw length. The six per-family caps sum to exactly
+    //! 786,432 B, so only the envelope can push the compact total over the cap.
+    use super::*;
+    use serde_json::json;
+    use std::time::Duration;
+
+    const URL: &str = "https://example.test/";
+
+    fn section_of_len(max_items: usize, max_bytes: usize, target: usize) -> Value {
+        let mk = |facts_len: &[usize]| {
+            let items: Vec<Value> = facts_len
+                .iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    json!({"entity_id": entity_id(URL, false), "locator": "/pages/0",
+                        "kind": format!("k_{i:03}"), "outcome": "pass", "reason": null,
+                        "facts": {"p": "x".repeat(*l / 2), "q": "y".repeat(*l - *l / 2)}})
+                })
+                .collect();
+            json!({"section_version":1,"semantics":"t","state":"complete","reason":null,
+                "coverage":{"entities":1,"eligible":1,"attempted":1,"observed":1,
+                    "unknown":0,"unknown_reasons":{}},
+                "summary":{"pages":1},"items":items.clone(),"items_total":items.len(),
+                "omitted_items":0,"omitted_reason":null,"truncated":false,
+                "max_items":max_items,"max_bytes":max_bytes})
+        };
+        let len = |v: &Value| serde_json::to_vec(v).unwrap().len();
+        let mut lens: Vec<usize> = Vec::new();
+        while len(&mk(&[lens.clone(), vec![0]].concat())) <= target {
+            lens.push(3000); // two fields of 1,500 B: each string <= 2,048 B
+        }
+        lens.pop();
+        let base = len(&mk(&[lens.clone(), vec![0]].concat()));
+        lens.push(target - base);
+        let v = mk(&lens);
+        assert_eq!(len(&v), target);
+        assert!(lens.len() <= max_items);
+        v
+    }
+    fn families(shave: usize) -> String {
+        let s: Vec<Value> = TABLE
+            .iter()
+            .map(|(_, items, bytes)| section_of_len(*items, *bytes, bytes - shave))
+            .collect();
+        serde_json::to_string(&json!({"version":1,"semantics":"s14-families-1",
+            "max_bytes":MAX_FAMILIES_BYTES,"budget_state":"within_budget",
+            "families":{"s02_indexing":s[0],"s03_integrity":s[1],"s04_structured_data":s[2],
+                "s05_link_graph":s[3],"s06_duplicates":s[4],"s08_resources":s[5]}}))
+        .unwrap()
+    }
+    fn run(text: String) -> Result<(), E> {
+        let raw = RawValue::from_string(text).unwrap();
+        let pages = [PageRef {
+            url: URL.into(),
+            is_resource: false,
+            links: 0,
+            relationships: 0,
+        }];
+        check(Some(&raw), &pages, Instant::now() + Duration::from_secs(30))
+    }
+
+    #[test]
+    fn compact_bytes_over_the_cap_are_bounds() {
+        let text = families(0);
+        assert!(text.len() > MAX_FAMILIES_BYTES, "{}", text.len());
+        assert!(matches!(run(text), Err(E::Bounds)));
+    }
+    #[test]
+    fn compact_bytes_under_the_cap_are_admitted() {
+        let text = families(1000);
+        assert!(text.len() <= MAX_FAMILIES_BYTES, "{}", text.len());
+        run(text).unwrap();
+    }
+    #[test]
+    fn padding_that_pushes_the_raw_length_over_the_cap_is_not_content() {
+        let text = families(1000);
+        let padded = format!("{{{}{}", " ".repeat(100_000), &text[1..]);
+        assert!(padded.len() > MAX_FAMILIES_BYTES);
+        run(padded).unwrap();
+    }
 }
