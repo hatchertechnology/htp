@@ -52,7 +52,7 @@ A follow-on local test passes exact producer-emitted pass/fail bytes (SHA-256 `a
 
 **Late or tied receipts are held, visibly.** A receipt is held `late_or_tied` only if a newer-`scan_at` receipt was already *processed* (genuinely late, since emitted events were computed without it) or if another receipt has the same `scan_at` (baseline ambiguous). It emits nothing; it is never silent. `public.audit_event_queue_status` (service-only view) counts jobs by state and hold reason, with the oldest `created_at` and the highest attempt count, so late, capped and poisoned receipts are all countable. Operators should alert on any non-zero `held` row other than the expected one `history_unknown` per binding generation. Correction events for late receipts remain future work and need a separate policy.
 
-**Errors.** Contract outcomes are held by the processor (`incompatible`, `index_pending`, `history_unknown`, `late_or_tied`, `history_capped`). Transient errors (`55P03` lock timeout, `40P01`, `40001`, `57014`, classes `53`, `08`, `57P`, and `invalid_isolation`/`snapshot_lock_required`) leave the job `pending` with an attempt count in `audit_event_job_attempts`, and **stop the run** so a binding is never processed out of order; the next tick retries. After 5 attempts the job is held `processor_unavailable`. Any other error is deterministic poison and is held `processor_unavailable` at once. `lease_invalid` means another runner owns the job and is left alone; a disabled gate returns the lease to `pending`.
+**Errors.** Contract outcomes are held by the processor (`incompatible`, `index_pending`, `history_unknown`, `late_or_tied`, `history_capped`). Transient errors (`55P03` lock timeout, `40P01`, `40001`, `57014`, classes `53`, `08`, `57P`, and `invalid_isolation`/`snapshot_lock_required`) leave the job `pending` with an attempt count in `audit_event_job_attempts`, and **stop the run** so a binding is never processed out of order; the next tick retries. The retry budget is time, not ticks: once a job has been failing for 30 minutes (measured from the first failure of the episode) it is held `processor_unavailable`; a failure more than 30 minutes after the previous one starts a new episode. Any other error is deterministic poison and is held `processor_unavailable` at once. `lease_invalid` means another runner owns the job and is left alone; a disabled gate returns the lease to `pending`.
 
 **History cap.** A binding generation may have at most **500** receipts at or before the receipt being processed. Beyond that the receipt is held `history_capped`, visible in the status view (it was 100, silent, in the earlier prototype). A new generation resets the history.
 
@@ -61,3 +61,18 @@ A follow-on local test passes exact producer-emitted pass/fail bytes (SHA-256 `a
 The migration creates **no schedule**. `supabase/cron/audit-events.sql` unschedules any `htp-audit-events` job and schedules `call public.audit_event_run(50)` every minute; the rollout operator applies it after the gates are verified. `supabase/rollbacks/20261214000000_audit_event_runner_unschedule.sql` removes the job and asserts that none remains. To stop emission entirely, run it together with `20261203000000_audit_notifications_disable.sql`. Retained: jobs, events, episodes, attempts and the procedures.
 
 Tested with PGlite (`supabase/tests/audit-event-runner.test.mjs`, stubbed `cron` schema) and on real PG17 with real concurrent sessions and pg_cron (`scripts/audit-event-runner-pg17/run.sh`): two concurrent runners over 96 jobs, receipt-insert blocking while the snapshot lock is held and release after success and after a failed job, `lock_timeout` retry, and a real pg_cron tick. The PG17 receipts are synthetic rows in the real tables with the validation and index triggers disabled; schema-4 receiver admission is covered by `scripts/s14-schema4-native`. R3 still verifies the schedule on production's `cron.job`.
+
+## Producer state in the stored-history reads
+
+`audit_event_history` and `audit_operational_history` no longer return a literal. `availability` is a stable code and `producer` carries the evidence. For events:
+
+| `availability` | Meaning |
+|---|---|
+| `producer_unavailable` | `processing_enabled` is false (gates off) |
+| `producer_not_enqueuing` | processing on, `enqueue_enabled` off |
+| `producer_starting` | enabled, runner has not run since |
+| `producer_stale` | runner has not run for 5 minutes |
+| `producer_degraded` | last run hit transient errors, or this site has a job held `processor_unavailable` |
+| `producer_active` | runner running normally |
+
+`producer` = `{processing_enabled, enqueue_enabled, last_run_at, last_success_at, last_outcome (success|retry|null), pending, held, held_by_reason, counts_capped}`; counts are this site's unprocessed jobs, capped at 1000 rows (`counts_capped` makes them lower bounds). Operational history returns `producer_unavailable` or `producer_active` from `operations_enabled`, with `producer={operations_enabled}`. Only `producer_active` supports reading an empty history as "no events"; every other code means events may be missing or delayed.

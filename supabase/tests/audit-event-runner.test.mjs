@@ -209,9 +209,15 @@ test('M-1: transient errors leave the job pending with a bounded attempt count; 
       const j = (await states(db)).find(x => x.delivery_id === uid(2)); assert.equal(j.state, 'pending', `attempt ${i} stays retryable`)
       assert.equal((await db.query('select attempts,last_sqlstate from public.audit_event_job_attempts')).rows[0].attempts, i)
     }
-    await run(db) // 5th attempt exhausts the bound
+    // R-2: the budget is time, not ticks: many quick ticks stay retryable, and the same job
+    // is held only once the failure episode is older than 30 minutes.
+    for (let i = 0; i < 20; i++) await run(db)
+    assert.equal((await states(db)).find(x => x.delivery_id === uid(2)).state, 'pending', '24 ticks within minutes never exhaust the budget')
+    await db.query("update public.audit_event_job_attempts set first_failed_at=now()-interval '29 minutes',last_at=now()-interval '1 minute'"); await run(db)
+    assert.equal((await states(db)).find(x => x.delivery_id === uid(2)).state, 'pending', '29 minutes is still inside the window')
+    await db.query("update public.audit_event_job_attempts set first_failed_at=now()-interval '31 minutes',last_at=now()-interval '1 minute'"); await run(db)
     assert.deepEqual((await states(db)).find(x => x.delivery_id === uid(2)), { delivery_id: uid(2), state: 'held', hold_reason: 'processor_unavailable' })
-    assert.deepEqual(await status(db), [{ state: 'held', hold_reason: 'processor_unavailable', jobs: 1, max_attempts: 5 }, { state: 'processed', hold_reason: null, jobs: 1, max_attempts: 0 }])
+    assert.deepEqual(await status(db), [{ state: 'held', hold_reason: 'processor_unavailable', jobs: 1, max_attempts: 26 }, { state: 'processed', hold_reason: null, jobs: 1, max_attempts: 0 }])
     // A transient failure recovers: the retried job is processed once the fault clears.
     await db.query("update public.audit_event_jobs set state='pending',hold_reason=null where delivery_id=$1", [uid(2)])
     await db.query('delete from public.audit_event_job_attempts')
@@ -264,4 +270,86 @@ test('M-2: history cap is 500 receipts per binding; the 501st is held history_ca
       }
     } finally { await db.close() }
   }
+})
+
+test('R-2: a failure long after the previous one starts a new episode instead of holding at once', async () => {
+  const db = await setup()
+  try {
+    await enable(db)
+    await receipt(db, 1, '2026-11-01T00:00:00Z', 'pass'); await receipt(db, 2, '2026-11-02T00:00:00Z', 'fail')
+    await db.query("update public.audit_event_jobs set state='processed' where delivery_id=$1", [uid(1)])
+    await err(db, '55P03'); await run(db)
+    await db.query("update public.audit_event_job_attempts set first_failed_at=now()-interval '3 days',last_at=now()-interval '3 days'")
+    await run(db)
+    const a = (await db.query("select attempts,first_failed_at>now()-interval '1 minute' fresh from public.audit_event_job_attempts")).rows[0]
+    assert.deepEqual([a.attempts, a.fresh], [1, true])
+    assert.equal((await states(db)).find(x => x.delivery_id === uid(2)).state, 'pending')
+  } finally { await db.close() }
+})
+
+const asOwner = async (db) => {
+  await db.exec(`create or replace function auth.jwt() returns jsonb language sql as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
+    create or replace function auth.uid() returns uuid language sql as $$select (auth.jwt()->>'sub')::uuid$$`)
+  await db.query("select set_config('request.jwt.claims',$1,false)", [JSON.stringify({ sub: owner, is_anonymous: false })])
+}
+const history = async (db) => { await db.exec('set role authenticated'); try { return (await db.query('select public.audit_event_history($1) h', [site])).rows[0].h } finally { await db.exec('reset role') } }
+
+test('WP3: the stored-history reads report the real producer state with stable codes', async () => {
+  const db = await setup()
+  try {
+    await asOwner(db)
+    const code = async () => (await history(db)).availability
+    assert.equal(await code(), 'producer_unavailable', 'gates off')
+    const off = await history(db)
+    assert.deepEqual([off.producer.processing_enabled, off.producer.last_success_at, off.producer.pending, off.producer.counts_capped], [false, null, 0, false])
+    await db.exec('update public.audit_event_config set processing_enabled=true')
+    assert.equal(await code(), 'producer_not_enqueuing')
+    await db.exec('update public.audit_event_config set enqueue_enabled=true')
+    assert.equal(await code(), 'producer_starting', 'enabled but never ran')
+    await receipt(db, 1, '2026-11-01T00:00:00Z', 'pass'); await receipt(db, 2, '2026-11-02T00:00:00Z', 'fail'); await receipt(db, 3, '2026-11-03T00:00:00Z', 'pass')
+    assert.equal((await history(db)).producer.pending, 3)
+    await run(db)
+    let h = await history(db)
+    assert.equal(h.availability, 'producer_active')
+    assert.deepEqual([h.producer.pending, h.producer.held, h.producer.last_outcome], [0, 1, 'success'])
+    assert.deepEqual(h.producer.held_by_reason, { history_unknown: 1 })
+    assert.ok(h.producer.last_success_at)
+    await db.exec("update public.audit_event_run_state set last_run_at=now()-interval '6 minutes'")
+    assert.equal(await code(), 'producer_stale')
+    // A retrying run is degraded and does not advance last_success_at.
+    await receipt(db, 4, '2026-11-04T00:00:00Z', 'fail'); await err(db, '55P03')
+    const before = (await history(db)).producer.last_success_at
+    await run(db)
+    h = await history(db)
+    assert.deepEqual([h.availability, h.producer.last_outcome, h.producer.pending, h.producer.last_success_at], ['producer_degraded', 'retry', 1, before])
+    await db.exec('drop trigger boom on public.audit_events'); await run(db)
+    assert.equal(await code(), 'producer_active')
+    // Disabling processing is reported at once; the runner no-op does not refresh liveness.
+    await db.exec('update public.audit_event_config set processing_enabled=false')
+    const ran = (await db.query('select last_run_at from public.audit_event_run_state')).rows[0].last_run_at
+    await run(db)
+    assert.deepEqual((await db.query('select last_run_at from public.audit_event_run_state')).rows[0].last_run_at, ran)
+    assert.equal(await code(), 'producer_unavailable')
+    // Counts are capped at 1000 and say so.
+    await db.exec(`update public.audit_event_config set processing_enabled=true;
+      insert into public.seosmith_audits select gen_random_uuid(),website_id,fqdn,generation,ingestion_source,summary,scan_at+(g||' minutes')::interval,report
+        from public.seosmith_audits, generate_series(1,1001) g where delivery_id='${uid(1)}'`)
+    h = await history(db)
+    assert.deepEqual([h.producer.counts_capped, h.producer.pending + h.producer.held], [true, 1001])
+  } finally { await db.close() }
+})
+
+test('WP3: operational history reports the operations gate; producer helpers are not client-callable', async () => {
+  const db = await setup()
+  try {
+    await asOwner(db)
+    const read = async () => { await db.exec('set role authenticated'); try { return (await db.query('select public.audit_operational_history($1) h', [site])).rows[0].h } finally { await db.exec('reset role') } }
+    let h = await read(); assert.deepEqual([h.availability, h.producer], ['producer_unavailable', { operations_enabled: false }])
+    await db.exec('update public.audit_event_config set operations_enabled=true')
+    h = await read(); assert.equal(h.availability, 'producer_active')
+    await db.exec('set role authenticated')
+    await assert.rejects(() => db.query('select public.audit_event_producer_state($1,$2)', [site, 'example.com']), /permission denied/)
+    await assert.rejects(() => db.query('select * from public.audit_event_run_state'), /permission denied/)
+    await db.exec('reset role')
+  } finally { await db.close() }
 })
