@@ -591,6 +591,39 @@ async fn the_service_key_is_never_sent_on_the_legacy_route() {
     assert_eq!(sent.as_object().unwrap().get("p_validator_revision"), None);
 }
 
+#[tokio::test]
+async fn a_3xx_from_the_supabase_endpoint_is_refused_by_the_shared_client() {
+    // B is where a redirect would send the service key; it must see nothing.
+    let target = Upstream::replying(200, json!({"accepted": true}));
+    let target_url = target.serve().await;
+    let location = format!("{target_url}/rest/v1/rpc/commit_seosmith_audit_v4");
+    let redirector = Router::new().fallback(move || {
+        let location = location.clone();
+        async move {
+            (
+                StatusCode::TEMPORARY_REDIRECT,
+                [(header::LOCATION, location)],
+            )
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, redirector).await.unwrap() });
+
+    let store = WebsiteStore::new(&url, "publishable");
+    let mut headers = HeaderMap::new();
+    headers.insert(header::AUTHORIZATION, TOKEN.parse().unwrap());
+    let result = store
+        .rpc(
+            &headers,
+            "commit_seosmith_audit_v4",
+            json!({"k": SERVICE_KEY}),
+        )
+        .await;
+    assert!(result.is_err(), "a 3xx must not be followed or accepted");
+    assert_eq!(target.count(), 0, "the redirect target was contacted");
+}
+
 #[test]
 fn the_validator_revision_is_the_h1_constant() {
     assert_eq!(
