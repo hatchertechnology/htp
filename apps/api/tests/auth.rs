@@ -7,7 +7,7 @@ use axum::{
     Json, Router,
     body::{Body, to_bytes},
     http::{Request, StatusCode},
-    routing::get,
+    routing::{get, post},
 };
 use htp_api::auth::SupabaseAuth;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode, get_current_timestamp};
@@ -34,6 +34,19 @@ impl TestAuth {
     }
 
     async fn with_routes(routes: Router) -> Self {
+        Self::with_capabilities(
+            routes,
+            htp_api::RolloutCapabilities {
+                search_evidence: true,
+                lifecycle: true,
+                remediation: true,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    async fn with_capabilities(routes: Router, capabilities: htp_api::RolloutCapabilities) -> Self {
         let requests = Arc::new(AtomicUsize::new(0));
         let hits = requests.clone();
         let jwks = Router::new().route("/auth/v1/.well-known/jwks.json", get(async move || {
@@ -49,12 +62,7 @@ impl TestAuth {
             SupabaseAuth::new(&url),
             htp_api::websites::WebsiteStore::new(&url, "publishable-fixture-key"),
             htp_api::analytics::AnalyticsClient::new(&url),
-            htp_api::RolloutCapabilities {
-                search_evidence: true,
-                lifecycle: true,
-                remediation: true,
-                ..Default::default()
-            },
+            capabilities,
         );
         Self {
             url,
@@ -148,13 +156,16 @@ async fn official_mcp_client_authenticates_every_request() {
         );
         let client = ClientConfig::default().serve(transport).await.unwrap();
         let tools = client.list_tools(None).await.unwrap();
-        assert_eq!(tools.tools.len(), 25);
+        assert_eq!(tools.tools.len(), 28);
         for name in [
             "website_audit_export_start_v1",
             "website_audit_export_chunk_v1",
             "website_audit_export_close_v1",
             "website_audit_events",
             "website_operational_episodes",
+            "website_audit_lifecycle",
+            "website_url_lifecycle",
+            "website_remediation_list",
         ] {
             assert!(tools.tools.iter().any(|tool| tool.name == name));
         }
@@ -2689,4 +2700,125 @@ async fn playground_secured_uses_existing_auth_and_matches_mcp() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+// The deployed composition: `app_with_capabilities` -> /mcp/secured -> management router
+// -> rollout hold -> REST handler -> (mocked) RPC. Nothing here is rebuilt by hand.
+async fn parity_calls(
+    capabilities: htp_api::RolloutCapabilities,
+) -> (Vec<rmcp::model::CallToolResult>, usize) {
+    use rmcp::{
+        ServiceExt as _,
+        model::{CallToolRequestParams, ClientConfig},
+        transport::{
+            StreamableHttpClientTransport,
+            streamable_http_client::StreamableHttpClientTransportConfig,
+        },
+    };
+    let upstream = Arc::new(AtomicUsize::new(0));
+    let seen = upstream.clone();
+    let page = json!({"version":1,"items":[],"has_more":false,"next_cursor":null});
+    let routes = Router::new()
+        .route(
+            "/rest/v1/rpc/seosmith_lifecycle_history",
+            counting(&seen, page.clone()),
+        )
+        .route(
+            "/rest/v1/rpc/seosmith_url_lifecycle_history",
+            counting(&seen, page),
+        )
+        .route(
+            "/rest/v1/rpc/seosmith_remediation_list",
+            counting(&seen, json!([])),
+        );
+    let auth = TestAuth::with_capabilities(routes, capabilities).await;
+    let token = TestAuth::token(&auth.claims(), "test-key");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/mcp/secured", listener.local_addr().unwrap());
+    let app = auth.app.clone();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let site = "00000000-0000-4000-8000-000000000001";
+    let entity = format!("sha256:{}", "a".repeat(64));
+    let results = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let transport = StreamableHttpClientTransport::with_client(
+            reqwest::Client::new(),
+            StreamableHttpClientTransportConfig::with_uri(endpoint).auth_header(token),
+        );
+        let client = ClientConfig::default().serve(transport).await.unwrap();
+        let mut results = Vec::new();
+        for (name, args) in [
+            (
+                "website_audit_lifecycle",
+                json!({"website_id":site,"entity_id":entity,"rule":"missing_title"}),
+            ),
+            (
+                "website_url_lifecycle",
+                json!({"website_id":site,"entity_id":entity}),
+            ),
+            (
+                "website_remediation_list",
+                json!({"website_id":site,"delivery_id":site,"finding_index":0}),
+            ),
+        ] {
+            results.push(
+                client
+                    .call_tool(
+                        CallToolRequestParams::new(name)
+                            .with_arguments(args.as_object().unwrap().clone()),
+                    )
+                    .await
+                    .unwrap(),
+            );
+        }
+        client.cancel().await.unwrap();
+        results
+    })
+    .await
+    .expect("parity MCP calls timed out");
+    server.abort();
+    (results, upstream.load(Ordering::SeqCst))
+}
+
+fn counting(seen: &Arc<AtomicUsize>, reply: Value) -> axum::routing::MethodRouter {
+    let seen = seen.clone();
+    post(move || {
+        let (seen, reply) = (seen.clone(), reply.clone());
+        async move {
+            seen.fetch_add(1, Ordering::SeqCst);
+            Json(reply)
+        }
+    })
+}
+
+#[tokio::test]
+async fn deployed_composition_holds_the_parity_reads_when_flags_are_off() {
+    let (results, upstream) = parity_calls(htp_api::RolloutCapabilities::default()).await;
+    assert_eq!(upstream, 0, "a held read never reaches the database");
+    for result in results {
+        assert_eq!(result.is_error, Some(true));
+        let value = result.structured_content.unwrap();
+        assert_eq!(value["code"], "unavailable");
+        assert_eq!(value["status"], 503);
+        assert!(value.get("items").is_none(), "held is never an empty page");
+    }
+}
+
+#[tokio::test]
+async fn deployed_composition_serves_the_parity_reads_when_flags_are_on() {
+    let (results, upstream) = parity_calls(htp_api::RolloutCapabilities {
+        lifecycle: true,
+        remediation: true,
+        ..Default::default()
+    })
+    .await;
+    assert_eq!(upstream, 3);
+    for result in results {
+        assert_eq!(
+            result.is_error,
+            Some(false),
+            "{:?}",
+            result.structured_content
+        );
+        assert!(result.structured_content.unwrap()["items"].is_array());
+    }
 }

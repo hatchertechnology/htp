@@ -141,5 +141,6 @@ function download() {
       </template>
       <details class="seo-history-table"><summary>Saved runs ({{ runs.length }} loaded)</summary><div class="table-scroll"><table><thead><tr><th>Scan time ({{ zone() }})</th><th>Coverage</th><th>URLs checked</th><th>Critical</th><th>Alerts</th><th>Warnings</th></tr></thead><tbody><tr v-for="run in runs" :key="run.delivery_id"><td><button class="refresh-control" :title="run.scan_at" @click="select(run.delivery_id)"><time :datetime="run.scan_at">{{ stamp(run.scan_at) }}</time></button></td><td>{{ run.summary.coverage_complete === true ? 'Complete' : run.summary.coverage_complete === false ? 'Incomplete' : 'Unknown' }}</td><td>{{ run.summary.pages.checked }}</td><td>{{ severityCount(run.summary, 'critical') }}</td><td>{{ severityCount(run.summary, 'alert') }}</td><td>{{ severityCount(run.summary, 'warning') }}</td></tr></tbody></table></div></details>
     </template>
+    <AuditEvents v-if="ws.user.value && ws.selectedId.value" :website-id="ws.selectedId.value" />
   </section>
 </template>

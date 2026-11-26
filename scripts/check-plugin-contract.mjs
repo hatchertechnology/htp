@@ -9,6 +9,8 @@ import { profile, validateProviderResults } from './provider-request-contract.mj
 import { exportProfile, validateExportResults } from './audit-export-contract.mjs';
 import { syntheticExportResults } from './audit-export-fixtures.mjs';
 import { auditReadProfile, auditReadFixtures, validateAuditReadResults, syntheticAuditReadResults } from './audit-read-contract.mjs';
+import { auditAvailabilityProfile, syntheticAuditAvailabilityResults, validateAuditAvailability } from './audit-read-availability.mjs';
+import { parityReadProfile, parityReadFixtures, validateParityReadResults, syntheticParityReadResults } from './parity-read-contract.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const dir = resolve(root, 'docs/plugin-contract/v1');
@@ -76,6 +78,7 @@ const additiveBindings = [...new Set([
   ...profile.operations.map(op => op.binding),
   ...exportProfile.operations.map(op => op.binding),
   ...auditReadProfile.operations.map(op => op.binding),
+  ...parityReadProfile.operations.map(op => op.binding),
 ])];
 const latestHtpBindings = [...new Set([
   ...ops.filter(o => o.service === 'htp').map(o => o.binding),
@@ -131,6 +134,27 @@ for (const op of auditReadProfile.operations) {
     assert.equal(hints.match(new RegExp(hint + '\\s*=\\s*(true|false)'))?.[1], String(value), 'audit read annotation drift: ' + op.binding + ':' + hint);
   }
 }
+// Parity profile 1.4.0 is additive over the frozen 1.0.0 inventory and 1.1-1.3.
+assert.deepEqual(parityReadProfile.extends,[inventory.contractVersion,profile.contractVersion,exportProfile.contractVersion,auditReadProfile.contractVersion]);
+assert.equal(parityReadProfile.operations.length, 3, 'parity profile must name exactly the three additive reads');
+for (const op of parityReadProfile.operations) {
+  assert.equal(op.effect, 'read', 'parity reads must be reads');
+  assert.equal(op.collection, false);
+  assert.ok(op.authorization && op.id && op.binding && op.result && op.rolloutFlag && Array.isArray(op.resultFields) && op.pageField && op.versionField);
+  if (!annotations.has(op.binding)) continue; // not deployed/implemented in this baseline
+  const hints = annotations.get(op.binding);
+  for (const [hint, value] of [['read_only_hint', true], ['idempotent_hint', op.idempotency], ['destructive_hint', op.destructive]]) {
+    assert.equal(hints.match(new RegExp(hint + '\\s*=\\s*(true|false)'))?.[1], String(value), 'parity read annotation drift: ' + op.binding + ':' + hint);
+  }
+}
+// 1.4.0 amends audit-read availability additively; 1.3.0 stays frozen.
+assert.equal(auditAvailabilityProfile.amends, auditReadProfile.contractVersion);
+assert.deepEqual(auditAvailabilityProfile.operations, auditReadProfile.operations.map(o => o.id));
+assert.equal(auditAvailabilityProfile.availability.heldValue, auditReadProfile.availability.disabledValue);
+{ const { events, episodes } = syntheticAuditAvailabilityResults();
+  for (const r of events) validateAuditAvailability('htp.website_audit_events', r);
+  for (const r of episodes) validateAuditAvailability('htp.website_operational_episodes', r); }
+for (const host of ['backend','claude','codex','pi']) validateParityReadResults(parityReadFixtures, syntheticParityReadResults(host));
 for (const host of ['claude','codex','pi']) validateProviderResults(providerFixtures, {
   contractVersion: profile.contractVersion, host, observations: providerFixtures.scenarios.map(s => ({id:s.id, steps:s.steps.map(t => t.expected)}))
 });
@@ -174,3 +198,7 @@ console.log(`Provider profile ${profile.contractVersion}: ${providerFixtures.sce
 console.log(`Audit export profile ${exportProfile.contractVersion}: synthetic semantic assertions only; backend implementation/deployment and three-host current-source parity remain gated.`);
 
 console.log(`Audit read profile ${auditReadProfile.contractVersion}: ${auditReadFixtures.scenarios.length} synthetic stored-read traces; H15 producer, deployment and three-host current-source parity remain gated.`);
+
+console.log(`Parity read profile ${parityReadProfile.contractVersion}: ${parityReadFixtures.scenarios.length} synthetic stored-read traces; rollout flags, deployment and three-host current-source parity remain gated.`);
+
+console.log(`Audit read availability amendment ${auditAvailabilityProfile.contractVersion} (over ${auditAvailabilityProfile.amends}): ${auditAvailabilityProfile.availability.codes['htp.website_audit_events'].length} event codes, ${auditAvailabilityProfile.availability.codes['htp.website_operational_episodes'].length} operational codes; synthetic only.`);

@@ -92,7 +92,10 @@ pub fn app_with_capabilities(
     let s14_policy_ingest = s14_worker::router(websites.clone());
     let mcp_limit = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
     let mcp_routes = Router::new()
-        .nest_service("/mcp/secured", mcp::secured_service(websites.clone()))
+        .nest_service(
+            "/mcp/secured",
+            mcp::secured_service_with(websites.clone(), capabilities),
+        )
         .layer(middleware::from_fn_with_state(
             mcp_limit,
             limit_mcp_responses,
