@@ -1,0 +1,49 @@
+# S14 schema 4 part X: local end-to-end results
+
+HTP head `66226f9`, SEOsmith head `1a0b870`, run 2026-11-26T02:51:34Z, host loadavg at start 2.43 4.20 4.85.
+
+| Result | Step | Name | Detail |
+|---|---|---|---|
+| PASS | 1 | stack up, all migrations | 57/57 migrations applied (lexical order); lifecycle trigger tgenabled=O; validator row enabled; head 66226f9 |
+| PASS | 2 | HTP API up | pid 2372748 under MemoryMax=256M CPUQuota=100%; capabilities [1,2,4] |
+| PASS | 2b | gate off by default | policy-audits answers 503 without HTP_S14_ADMISSION |
+| PASS | 3a | N-M1 plain build refuses http loopback | Error: HTTPS required  |
+| PASS | 3 | SEOsmith serve up (local-e2e) | loopback ingest http://127.0.0.1:3917/integrations/seosmith/policy-audits, policy wire v1 |
+| PASS | 4 | run 1 delivered | state={"state":"partial","delivery_state":"delivered"} |
+| PASS | 5a | receipt sha = jobs.report_hash; one HTP row, summary v5 | sha 808972a4ac8b2909…, row: 4f1a5198c70a508cb4f40a911d545904bedbdd0e48d60ff4913f8eeb30d4b863 s14-wire-1/full-population-1/evidence-v1 5 worker |
+| PASS | 5b | cmp detail report_json vs jobs.report | byte-identical (229352 bytes) via API detail |
+| PASS | 5c | admit reproduces summary_text | stored summary_text == receiver admit output (7810 bytes) |
+| PASS | 5d | lifecycle indexed_v1 | seosmith_lifecycle_indexed.state=indexed_v1, evaluations=26 |
+| PASS | 6a | alert enqueue | exactly one audit_event_jobs row for run 2 (run 1, before enqueue_enabled: 0) |
+| INFO | 6b | processor on run 2 | claim={"fqdn": "www.kerryhatcher.com", "generation": 1, "website_id": "11111111-1111-4111-8111-111111111111", "delivery_id": " result=processed job=processed events=0 |
+| PASS | 6c | event history read path | GET audit-events 200: {"n":0} |
+| INFO | 6d | lifecycle history transitions (run1->run2) | entity=sha256:59da30dfa974fd2f5bbdbbf30b495f19a rule=large_image transitions=["fail"] :: {"entity_id":"sha256:59da30dfa974fd2f5bbdbbf30b495f19a8107c0bf818185d83dbb988d6983754","has_more":false,"items":[{"comparison_key":"b801986edf6b3e73672e69f088e51113f90843e8901ffae318cbb98ddd5d5d3a","delivery_id":"32bed511-2d8f-4ea5-bc61-355db4436065","engine_version":"0.2.0","evaluation":{"attempt": |
+| PASS | 6d | transitions not all not_observed | ["fail"] |
+| PASS | 7a | validator disabled -> job stays pending, retried | {"state":"partial","delivery_state":"pending","attempts":1,"error":"htp_delivery_failed"}; seosmith log: [2m2026-11-26T02:45:33.512013Z[0m [33m WARN[0m [2mseosmith::delivery[0m[2m:[0m HTP delivery deferred [3mrun_id[0m[2m=[0mb9680de2-312b-40c3-8f06-2453 |
+| PASS | 7b | re-enabled -> delivered | {"state":"partial","delivery_state":"delivered"}; audit row present=1 |
+| INFO | 8g | remediation enablement | migration 20261202 ships the three functions with no EXECUTE (fail-closed hold); X grants authenticated EXECUTE as the rollout step (same grant as supabase/tests/remediation-pg17/verify.sql:21) |
+| PASS | 8 | remediation_save on a schema-4 finding | work saved: {"status":"in_progress","finding_key":"3b3055b5e86ccfc4"} |
+| PASS | 8b | schema-4 fixture admits (id/website/timestamp rewritten) | {"status":200,"ms":141,"bytes":51835} |
+| PASS | 8 | remediation_save on a schema-4 finding (POST /work) | {"status":"in_progress","finding_key":"dbd88a561a13b3ab"} |
+| PASS | 8c | remediation_list on schema 4 | 200 |
+| PASS | 9 | mutated report refused 422 | deliver_once: 'terminal 422'; id-correct send: {"status":422,"body":"{\"error\":\"semantic_mismatch\",\"reason\":\"SemanticMismatch\",\"stage\":\"summary\"}"}; no row stored=0 |
+| PASS | 10 | legacy schema 1/2 via /integrations/seosmith/audits | v2: {"status":200,"ms":167}, v1: {"status":200,"ms":67}); detail report_json byte-identical for both; indexed state v2=indexed_v1 v1=legacy |
+| PASS | 10b | capabilities | {"evidence_contract_versions":[1],"exact_bytes":true,"max_evaluations":512,"max_evidence_contract_bytes":1048576,"max_evidence_observations":128,"max_findings":400000,"max_observations":40000,"max_pages":20000,"max_report_bytes":4952756,"max_resources":20000,"max_schema2_nesting_depth":64,"policy_wire_contracts":["s14-wire-1"],"receipt_fields":["delivery_id","sha256","accepted"],"receiver":"htp","schema2_unique_object_keys":true,"schema_versions":[1,2,4]} |
+| INFO | 11a | mixed generation G=1 audits (scan order) | 2@g1/worker , 4@g1/worker , 4@g1/worker; jobs: schema2=held:history_unknown schema4(first)=held:history_unknown schema4(second)=held:history_unknown |
+| PASS | 11b | processor raises history_unknown for the schema-4 job in a mixed 2/4 generation | second schema-4 job: held:history_unknown; first schema-4: held:history_unknown; schema-2: held:history_unknown |
+| PASS | 11c | after the generation bump (G=1 -> 2) the schema-4 pair processes cleanly | first=held:history_unknown second=processed; audit_events in gen 2: 0 (an unchanged site raises no event); audit_events held jobs in old gen unchanged |
+| PASS | 11d | audit list read path on a mixed-generation website | [4,4,4,4,2] |
+| PASS | 12m | MCP detail/export on a real schema-4 audit | {"detail":{"isError":true,"code":"EXPORT_REQUIRED"},"export":{"representation":"htp.audit-detail-json.v1","byteLength":512344,"bytes":512344,"sha256_ok":true,"length_ok":true},"report_json_identical":true,"schema_version":4,"summary_version":5} |
+| PASS | 12n | MCP detail/export on the schema-4 fixture audit | {"detail":{"inline":true,"keys":12},"report_json_identical":true,"schema_version":4,"summary_version":5} |
+| INFO | 13q | host load before timing | loadavg 1.56 2.86 4.17, cpu idle 82% (16 cpus; others running: 38.7 hatchdeck-sim; 6.7 claude; 6.5 Isolated Web Co;) |
+| INFO | 12a | exact-cap API round trip (20 runs, ms) | p50=818 p99=969 max=969; commit estimate (response end - received_at) p50=584 p99=740 max=740; margin to 25 s = 24031 ms; loadavg 1.84 2.82 4.12 |
+| PASS | 12b | round trip inside 25 s | max 969 ms, margin 24031 ms; p99 969 ms |
+| INFO | 12c | API peak memory on the 256 MB scope | VmHWM 42 MiB (start 20); cgroup memory.peak 33 MiB; oom_kill=0 |
+| PASS | 12d | API handles exact-cap deliveries inside 256 MB | peak 33 MiB, no OOM kill, 20 deliveries |
+| PASS | 12e | exact-cap rows stored and lifecycle indexed | 20 rows, 20 indexed_v1 |
+| INFO | 13 | N-M3 stages | NOTICE:  schema "bench" does not exist, skipping;throttle: podman update --cpus 0.2 ok; NanoCpus=200000000;cgroup cpu.max=20000 100000;container limits: NanoCpus=200000000; cpu.stat: usage_usec 22660645 user_usec 17465285 system_usec 5195359 nice_usec 0 core_sched.force_idle_usec 0 nr_periods 361 nr_throttled 338 throttled_usec 18093105 nr_bursts 0 burst_usec 0 ;stage                                                                        p50_ms     max_ms       runs;raw sha256                                                                      3.9       85.7          5;raw::jsonb parse                                                               57.9       85.2          5;raw/report equality (re-parse + compare)                                       91.2       95.4          5;evidence validation                                                          1508.2     3799.2          5;INSER |
+| PASS | 13a | N-M3 commit <= 10 s at 0.2 CPU (5 runs) | COMMIT total (RPC)                                                           2184.7     2282.8          5 |
+| INFO | 13m9 | M9 resource_check admit exact-cap | rc=0 secs=.170609487 peak=16306176 max=268435456 :: mode=admit fixture=/mnt/storage/worktrees/s4-x-seosmith/fixtures/contracts/s14-schema4-v1/exact-cap.json source_bytes=4952756 source_sha256=ea554393c0860d6fbeb425044492294b88e3805a02089bda98747bd3c53058cb global_deadline_ms=25000 stage_deadline_ms=3500 deadline_remaining_us_at_start=3500000 admit_de |
+| PASS | 13m9 | M9: peak <= 150 MiB and within 15 s on a 256 MB cgroup | peak 15 MiB, .170609487 s |
+| PASS | 14 | M8 payload and N-M4 evaluations at the Q2 bounds | max_pages=100 max_resources=200 pages=121 bytes(db length(report text))=1872575 jobs.report=1874114; evidence_contract=231522B policy_guidance=438617B finding_coverage=4473B; evaluations=371 truncated=false observations=121 findings=250 stop_reason=robots_unavailable outcome=partial |
+| PASS | 15 | Q9 purge semantics (delete schema-2 rows + remediation first) | Q9 bare delete of a schema-2 audit with a verification attempt FAILS (restrict): ERROR:  update or delete on table "seosmith_audits" violates foreign key constraint "seosmith_verification_attempts_delivery_id_fkey" on table "seosmith_verification_attempts" DETAIL:  Key (delivery_i;Q9 ordered purge: candidates=1 rows 5 -> 4; schema-1/2 left=0; schema-4 before/after=4/4; derived rows (lifecycle idx/evals/jobs) of the purged audit before=1/26/1, orphans after=0; |
