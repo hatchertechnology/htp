@@ -262,7 +262,7 @@ fn check_consistency_v2_matches_the_v1_twin() {
         .filter(|f| f["expect"]["admit"] == true)
         .count();
     assert_eq!(twins, positives, "every v2 positive has a twin");
-    assert!(twins >= 14, "{twins}");
+    assert!(twins >= 15, "{twins}");
     // the cap fixture really omits records, so the comparison is not vacuous
     assert!(omitting > 0);
 }

@@ -8,7 +8,9 @@
 //! Error mapping (the parity pair compares these names):
 //! * `Bounds`: compact size > 786,432 B; section/item/summary/facts byte or depth or
 //!   count bounds (§3.2-6).
-//! * `UnsupportedSchema`: `version` is an integer other than 1.
+//! * `UnsupportedSchema`: `version` is present and is not the integer 1 (any other
+//!   number, a string, `null`), decided before the strict parse, as in `check_evidence`.
+//!   A missing `version` or a non-object is `Shape`.
 //! * `Shape`: everything else (absent, `null`, not an object, unknown or missing
 //!   keys, wrong types, any other §3.2 invariant, table mismatch).
 use crate::InspectionError as E;
@@ -44,6 +46,7 @@ pub(crate) struct PageRef {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Top<'a> {
+    #[allow(dead_code)] // gated on the raw value before this parse
     version: u64,
     semantics: String,
     max_bytes: u64,
@@ -71,6 +74,7 @@ struct Set<'a> {
 #[serde(deny_unknown_fields)]
 struct Section {
     #[serde(rename = "section_version")]
+    #[allow(dead_code)] // gated on the raw value before this parse
     version: u64,
     semantics: String,
     state: String,
@@ -209,7 +213,8 @@ fn section(raw: &RawValue, want: (&str, usize, usize), pages: &[PageRef]) -> Res
         return Err(E::Shape);
     }
     // §3.2-1/2/3
-    if s.items_total != s.items.len() as u64 + s.omitted_items
+    // checked: a wrapped sum would admit a false invariant in release builds (R1)
+    if (s.items.len() as u64).checked_add(s.omitted_items) != Some(s.items_total)
         || s.truncated != (s.omitted_items > 0)
     {
         return Err(E::Shape);
@@ -226,8 +231,14 @@ fn section(raw: &RawValue, want: (&str, usize, usize), pages: &[PageRef]) -> Res
         (None, false) => {}
         _ => return Err(E::Shape),
     }
-    let unknown_total: u64 = s.coverage.unknown_reasons.values().sum();
-    if unknown_total != s.coverage.unknown || s.coverage.unknown_reasons.keys().any(|k| !code(k)) {
+    let unknown_total = s
+        .coverage
+        .unknown_reasons
+        .values()
+        .try_fold(0u64, |a, v| a.checked_add(*v));
+    if unknown_total != Some(s.coverage.unknown)
+        || s.coverage.unknown_reasons.keys().any(|k| !code(k))
+    {
         return Err(E::Shape);
     }
     if (s.state == "complete" && (s.coverage.unknown != 0 || s.truncated))
@@ -307,10 +318,15 @@ pub(crate) fn check(raw: Option<&RawValue>, pages: &[PageRef], deadline: Instant
     if compact_raw_len(raw)? > MAX_FAMILIES_BYTES {
         return Err(E::Bounds);
     }
-    let top: Top = serde_json::from_str(raw.get()).map_err(|_| E::Shape)?;
-    if top.version != 1 {
-        return Err(E::UnsupportedSchema);
+    // The version gate runs before the strict parse, like `check_evidence`: a future
+    // families version may add keys and must read as unsupported, not as a bad v1 (R2).
+    let probe: Value = serde_json::from_str(raw.get()).map_err(|_| E::Shape)?;
+    match probe.as_object().ok_or(E::Shape)?.get("version") {
+        Some(v) if v.as_u64() == Some(1) => {}
+        Some(_) => return Err(E::UnsupportedSchema),
+        None => return Err(E::Shape),
     }
+    let top: Top = serde_json::from_str(raw.get()).map_err(|_| E::Shape)?;
     if top.semantics != "s14-families-1"
         || top.max_bytes != MAX_FAMILIES_BYTES as u64
         || !matches!(
@@ -419,5 +435,96 @@ mod tests {
         let padded = format!("{{{}{}", " ".repeat(100_000), &text[1..]);
         assert!(padded.len() > MAX_FAMILIES_BYTES);
         run(padded).unwrap();
+    }
+
+    // ---- review-8c1-o R1/R2 ----
+    /// Valid families with one empty section per family, then `edit` applied to s02.
+    fn small(edit: impl Fn(&mut Value)) -> String {
+        let sec = |items: usize, bytes: usize| {
+            json!({"section_version":1,"semantics":"t","state":"complete","reason":null,
+                "coverage":{"entities":1,"eligible":1,"attempted":1,"observed":1,
+                    "unknown":0,"unknown_reasons":{}},
+                "summary":{"pages":1},"items":[],"items_total":0,
+                "omitted_items":0,"omitted_reason":null,"truncated":false,
+                "max_items":items,"max_bytes":bytes})
+        };
+        let mut s: Vec<Value> = TABLE.iter().map(|(_, i, b)| sec(*i, *b)).collect();
+        edit(&mut s[0]);
+        serde_json::to_string(&json!({"version":1,"semantics":"s14-families-1",
+            "max_bytes":MAX_FAMILIES_BYTES,"budget_state":"within_budget",
+            "families":{"s02_indexing":s[0],"s03_integrity":s[1],"s04_structured_data":s[2],
+                "s05_link_graph":s[3],"s06_duplicates":s[4],"s08_resources":s[5]}}))
+        .unwrap()
+    }
+    fn with_top(key: &str, v: Value) -> String {
+        let mut t: Value = serde_json::from_str(&small(|_| {})).unwrap();
+        match t.as_object_mut() {
+            Some(o) if v.is_null() && key.starts_with('-') => {
+                o.remove(&key[1..]);
+            }
+            Some(o) => {
+                o.insert(key.into(), v);
+            }
+            None => unreachable!(),
+        }
+        serde_json::to_string(&t).unwrap()
+    }
+
+    #[test]
+    fn a_small_valid_report_is_admitted() {
+        run(small(|_| {})).unwrap();
+    }
+    #[test]
+    fn items_total_sum_overflow_is_shape_not_a_panic_or_a_wrap() {
+        // 1 item + u64::MAX omitted wraps to 0 == items_total in release builds
+        let text = small(|s| {
+            let item = json!({"entity_id": entity_id(URL, false), "locator": "/pages/0",
+                "kind": "k_000", "outcome": "pass", "reason": null, "facts": {}});
+            s["items"] = json!([item]);
+            s["items_total"] = json!(0);
+            s["omitted_items"] = json!(u64::MAX);
+            s["truncated"] = json!(true);
+            s["omitted_reason"] = json!("family_item_limit");
+        });
+        assert!(matches!(run(text), Err(E::Shape)));
+    }
+    #[test]
+    fn unknown_reasons_sum_overflow_is_shape_not_a_panic_or_a_wrap() {
+        // u64::MAX + 1 wraps to 0 == coverage.unknown in release builds
+        let text = small(|s| {
+            s["coverage"]["unknown_reasons"] = json!({"a": u64::MAX, "b": 1});
+        });
+        assert!(matches!(run(text), Err(E::Shape)));
+    }
+    #[test]
+    fn version_other_than_one_is_unsupported_even_with_an_unknown_key() {
+        // mirrors evidence_contract: the gate runs before the strict parse
+        for v in [json!(2), json!("1"), json!(1.5), json!(null), json!(-1)] {
+            let mut t: Value = serde_json::from_str(&small(|_| {})).unwrap();
+            t["version"] = v.clone();
+            t["new_in_v2"] = json!(true);
+            assert!(
+                matches!(run(t.to_string()), Err(E::UnsupportedSchema)),
+                "{v} with unknown key"
+            );
+            t.as_object_mut().unwrap().remove("new_in_v2");
+            assert!(
+                matches!(run(t.to_string()), Err(E::UnsupportedSchema)),
+                "{v} alone"
+            );
+        }
+    }
+    #[test]
+    fn missing_version_or_non_object_is_shape() {
+        assert!(matches!(
+            run(with_top("-version", Value::Null)),
+            Err(E::Shape)
+        ));
+        assert!(matches!(run("[1]".into()), Err(E::Shape)));
+        assert!(matches!(run("null".into()), Err(E::Shape)));
+    }
+    #[test]
+    fn version_one_with_an_unknown_key_stays_shape() {
+        assert!(matches!(run(with_top("extra", json!(1))), Err(E::Shape)));
     }
 }
