@@ -140,12 +140,21 @@ test('the evidence validator keeps its 1-argument form at 128/512 and gains a li
     await rejects(db.query('select public.seosmith_validate_evidence($1::jsonb)', [small]), '22023', /evidence_contract_limit/)
     await rejects(db.query('select public.seosmith_validate_evidence($1::jsonb,128,512)', [small]), '22023', /evidence_contract_limit/)
     await db.query('select public.seosmith_validate_evidence($1::jsonb,1024,1024)', [small])
-    // The 1-argument form keeps its existing ACL (service_role may hold the provider's default grant); the new overload has none.
-    for (const [sig, roles] of [['seosmith_validate_evidence(jsonb)', ['anon', 'authenticated']], ['seosmith_validate_evidence(jsonb,integer,integer)', ['anon', 'authenticated', 'service_role']]]) {
-      for (const role of roles) {
-        assert.equal((await db.query('select has_function_privilege($1,$2::regprocedure,\'execute\') ok', [role, `public.${sig}`])).rows[0].ok, false, `${role} ${sig}`)
+    // Both forms carry the same ACL: service_role may execute (the 1-arg form is an invoker wrapper over the 3-arg one); anon and authenticated may not.
+    for (const sig of ['seosmith_validate_evidence(jsonb)', 'seosmith_validate_evidence(jsonb,integer,integer)']) {
+      for (const [role, want] of [['anon', false], ['authenticated', false], ['service_role', true]]) {
+        assert.equal((await db.query('select has_function_privilege($1,$2::regprocedure,\'execute\') ok', [role, `public.${sig}`])).rows[0].ok, want, `${role} ${sig}`)
       }
     }
+    // PGlite has no provider default ACL; on the provider service_role holds the helper's default grant (migration 20261116210550 revokes only public, anon, authenticated).
+    await db.exec('grant execute on function public.seosmith_compact_json_size(jsonb) to service_role')
+    // F1: as service_role the 1-arg wrapper must reach the 3-arg body (a contract error, not 42501).
+    await as(db, 'service_role')
+    await rejects(db.query('select public.seosmith_validate_evidence($1::jsonb)', [small]), '22023', /evidence_contract_limit/)
+    await rejects(db.query('select public.seosmith_validate_evidence($1::jsonb,128,512)', [small]), '22023', /evidence_contract_limit/)
+    await as(db, 'anon')
+    await rejects(db.query('select public.seosmith_validate_evidence($1::jsonb)', [small]), '42501', /permission denied/)
+    await rejects(db.query('select public.seosmith_validate_evidence($1::jsonb,1024,1024)', [small]), '42501', /permission denied/)
   } finally { await db.close() }
 })
 
@@ -235,6 +244,7 @@ test('capabilities: stable, v1 keys unchanged, wire-2 appears only while the val
   try {
     const volatility = () => db.query("select provolatile v from pg_proc where oid='public.seosmith_receiver_capabilities()'::regprocedure").then(r => r.rows[0].v)
     assert.equal(await volatility(), 's')
+    assert.equal((await db.query("select prosecdef d from pg_proc where oid='public.seosmith_receiver_capabilities()'::regprocedure")).rows[0].d, true)
     const wire1 = { max_evidence_observations: 128, max_evaluations: 512, max_manifest_bytes: 262144 }
     const before = await caps(db)
     assert.deepEqual(before.policy_wire_contracts, ['s14-wire-1'])

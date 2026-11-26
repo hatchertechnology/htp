@@ -20,7 +20,7 @@ insert into public.seosmith_s14_validators(revision,enabled)
   values ('s14-wire-2/full-population-1/evidence-v1/families-v1',false);
 
 -- 3. The S01 evidence validator takes its limits. Same body as 20261121130000 except for the two
--- limits; the 1-argument form keeps its name, ACL and behaviour (128 observations, 512 evaluations).
+-- limits; the 1-argument form keeps its name and behaviour, and service_role keeps EXECUTE on both forms (anon and authenticated on neither) (128 observations, 512 evaluations).
 create function public.seosmith_validate_evidence(r jsonb,p_max_observations integer,p_max_evaluations integer) returns void
 language plpgsql immutable set search_path='' as $$
 declare
@@ -244,9 +244,13 @@ begin
     raise exception 'invalid_evidence_coverage' using errcode='22023';
   end if;
 end $$;
-revoke all on function public.seosmith_validate_evidence(jsonb,integer,integer) from public,anon,authenticated,service_role;
+revoke all on function public.seosmith_validate_evidence(jsonb,integer,integer) from public,anon,authenticated;
+-- service_role keeps EXECUTE, matching the 1-arg form (provider default grant), because the 1-arg form is an invoker wrapper over this overload.
+grant execute on function public.seosmith_validate_evidence(jsonb,integer,integer) to service_role;
 create or replace function public.seosmith_validate_evidence(r jsonb) returns void
 language sql immutable set search_path='' as $$ select public.seosmith_validate_evidence(r,128,512) $$;
+-- No-op on the provider (service_role already holds the default grant); makes the ACL explicit where there is no default ACL.
+grant execute on function public.seosmith_validate_evidence(jsonb) to service_role;
 
 -- 4. Schema-4 insert trigger: limits by revision (wire 1: 128/512, wire 2: 1024/1024) and the
 -- evidence_families structure. Otherwise the 20261211000000 body.
@@ -298,6 +302,7 @@ begin
     -- Families are present if and only if the row was admitted by a wire-2 validator. Only the
     -- cheap structure is checked here (the receiver validates the content): an object, version 1
     -- and at most 786,432 COMPACT bytes (jsonb::text is not compact, so the helper is used).
+    -- Size is measured on jsonb's canonical form, so non-canonical numbers (1.50, 1e20) can count a few bytes above serde's; producer output is serde-canonical integers.
     if wire2 then
       fam := new.report->'evidence_families';
       if jsonb_typeof(fam) is distinct from 'object' or fam->'version' is distinct from '1'::jsonb
