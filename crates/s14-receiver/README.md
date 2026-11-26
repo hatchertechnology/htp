@@ -355,3 +355,19 @@ source bytes/SHA-256, summary path, summary bytes/SHA-256 and case name. The
 `tests/saved_summary.rs` regression regenerates each summary, byte-compares it,
 checks the digest and enforces the 16 KiB ceiling. See that fixture README for the
 generation command and scope.
+
+## Schema-4 admission corpus (H1-final)
+
+`tests/fixtures/s14-schema4-v1/` is a byte-identical copy of SEOsmith's
+`fixtures/contracts/s14-schema4-v1/` at `c9ca3cd` (9 reports, `manifest.json`,
+README). `tests/fixtures/s14-schema4-historical/` holds the surviving historical
+positives (10 `s14-wire-1-candidate` accepts and the 4 finding-coverage cases) with
+S2's pruned manifests. `tests/schema4_fixtures.rs` pins each manifest digest, checks
+every file's bytes and sha256 against its manifest, and requires `admit` to accept
+all of them (summary bytes/digest and revision equal the S2 manifest; `exact-cap.json`
+is exactly `MAX_REPORT_BYTES`). The `#88` successor bundle pins (27 accepts, 61 files)
+describe the frozen `s14-worker-slice-r2` bundle and are unchanged.
+
+M9 resource gate: `cargo build --release --locked -p htp-s14-receiver --example resource_check`, then
+`systemd-run --user --scope -p MemoryMax=256M -p CPUQuota=100% target/release/examples/resource_check admit <exact-cap.json>`
+(`derive` and `stages` modes remain).
