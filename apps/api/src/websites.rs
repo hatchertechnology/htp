@@ -518,6 +518,10 @@ impl WebsiteStore {
     }
 
     /// Configure a trusted Supabase project and its publishable API key.
+    ///
+    /// # Panics
+    /// If the shared HTTP client cannot be built (fails closed, never falls
+    /// back to a redirect-following client).
     #[must_use]
     pub fn new(project_url: &str, publishable_key: &str) -> Self {
         Self {
@@ -528,7 +532,7 @@ impl WebsiteStore {
             client: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
-                .unwrap_or_else(|_| reqwest::Client::new()),
+                .expect("the shared Supabase client must build; never fall back to a redirect-following one"),
         }
     }
 
