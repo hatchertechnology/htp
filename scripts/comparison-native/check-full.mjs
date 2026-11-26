@@ -10,7 +10,7 @@ const jwt = id => { const enc = x => Buffer.from(JSON.stringify(x)).toString('ba
 const owner = jwt('00000000-0000-0000-0000-000000000001'), other = jwt('00000000-0000-0000-0000-000000000002')
 const rpc = async (token, name, body) => { const r = await fetch(`${base}/rpc/${name}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) }); const text = await r.text(); return { status: r.status, text, json: JSON.parse(text || 'null'), bytes: Buffer.byteLength(text) } }
 
-const csv = await readFile('apps/web/tests/fixtures/independent-tool-controlled.csv')
+const csv = await readFile('apps/web/tests/fixtures/comparison-s4/controlled.csv')
 const csvText = csv.toString('utf8'), csvSha = createHash('sha256').update(csv).digest('hex')
 const imported = await rpc(owner, 'import_independent_audit', { p_website_id: site, p_format: 'controlled-csv-v1', p_source: csvText, p_metadata: { filename: 'independent-tool-controlled.csv', provenance: { tool: 'locally generated standalone crawler', version: '9.4' } } })
 if (imported.status !== 200 || imported.json.source_sha256 !== csvSha) throw Error(`owner import failed: ${imported.status} ${imported.text}`)
@@ -24,6 +24,9 @@ for (const [name, body] of [
 ]) { const denied = await rpc(other, name, body); if (denied.status !== 403) throw Error(`nonowner ${name} not denied: ${denied.status} ${denied.text}`) }
 const saved = await rpc(owner, 'save_independent_comparison', { p_website_id: site, p_import_id: src, p_delivery_id: delivery, p_asserted: true })
 if (saved.status !== 200) throw Error(`owner save failed: ${saved.status} ${saved.text}`)
+if (saved.json.semantics !== 's15-metadata-2') throw Error(`new comparison pinned ${saved.json.semantics}`)
+const older = await rpc(owner, 'independent_comparison_detail', { p_website_id: site, p_comparison_id: '00000000-0000-0000-0000-00000000000d' })
+if (older.status !== 200 || older.json.comparison.semantics !== 's15-metadata-1') throw Error('stored s15-metadata-1 comparison is not replayable')
 const replay = await rpc(owner, 'independent_comparison_detail', { p_website_id: site, p_comparison_id: cmp })
 if (replay.status !== 200 || replay.json.source.source_text !== csvText || replay.json.seosmith.report.engine_version !== '0.2.0') throw Error('seeded comparison replay lost pinned evidence')
 console.log(`native report detail: import ${detail.bytes} bytes; comparison detail ${replay.bytes} bytes; source ${csv.byteLength} bytes sha ${csvSha}`)
@@ -45,7 +48,7 @@ try {
       if (path.startsWith('/api/google/') || path.startsWith('/api/bing/')) return route.fulfill({ json: { connected: false, configured: false } })
       if (path === '/api/websites') return route.fulfill({ json: { items: [{ id: site, fqdn: 'independent.example' }], has_more: false } })
       if (path === `/api/websites/${site}/seo/audits`) return route.fulfill({ json: { items: [{ delivery_id: delivery, scan_at: '2026-11-20T09:00:00Z', summary: { outcome: 'completed' } }], next_cursor: null } })
-      if (path === `/api/websites/${site}/seo/audits/${delivery}`) return route.fulfill({ json: { report: JSON.parse(await readFile('apps/web/tests/fixtures/independent-tool-report.json', 'utf8')), fqdn: 'independent.example', sha256: createHash('sha256').update(await readFile('apps/web/tests/fixtures/independent-tool-report.json')).digest('hex') } })
+      if (path === `/api/websites/${site}/seo/audits/${delivery}`) return route.fulfill({ json: { report: JSON.parse(await readFile('apps/web/tests/fixtures/comparison-s4/unicode.json', 'utf8')), fqdn: 'independent.example', sha256: createHash('sha256').update(await readFile('apps/web/tests/fixtures/comparison-s4/unicode.json')).digest('hex') } })
       if (u.hostname !== '127.0.0.1') return route.abort()
       return route.continue()
     })
@@ -58,9 +61,11 @@ try {
       const got = await readFile(await (await download).path())
       if (!got.equals(csv)) throw Error('downloaded original CSV is not byte-identical')
       await page.getByText('locally generated standalone crawler').waitFor()
-      await page.getByRole('button', { name: /s15-metadata-1/ }).first().click()
+      await page.getByRole('button', { name: /s15-metadata-2/ }).first().click()
       await page.getByRole('table').waitFor()
       await page.getByText(/2 agreement/).waitFor()
+      // An uninstrumented rule is unknown with SEOsmith's own reason key and its per-rule count.
+      await page.getByRole('table').getByText(/unknown \(legacy_not_instrumented × 6\)/).first().waitFor()
       for (const category of ['independent_only', 'seosmith_only', 'unknown', 'unmapped']) if (!await page.getByRole('table').getByText(category, { exact: true }).count()) throw Error(`comparison table missing ${category}`)
       await page.getByText('Unknown / not provided').first().waitFor()
       await page.getByText(/Compared SEOsmith report/).waitFor()
