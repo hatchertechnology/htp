@@ -17,7 +17,7 @@ await page.addInitScript(({token,exp})=>localStorage.setItem('sb-raxuvdbdfmmtpqj
 const report={schema_version:1,engine_version:'0.2.0',ruleset_version:'2026-11-01.1',outcome:'completed',stop_reason:'frontier_exhausted',coverage_complete:true,pages:[{url:'https://example.com/',status:200,content_type:'text/html',error:null,is_resource:false,blocked_by_robots:false,flags:[],extraction_truncated:false}],findings:[]}
 // The schema-4 report the dashboard and s15-metadata-2 use. Entity ids are SEOsmith's: sha256('seosmith-entity-v1\npage\n' + url).
 const entity=url=>'sha256:'+createHash('sha256').update(`seosmith-entity-v1\npage\n${url}`).digest('hex')
-const report4={schema_version:4,engine_version:'0.2.0',ruleset_version:'2026-11-01.1',outcome:'completed',stop_reason:'frontier_exhausted',coverage_complete:true,pages:report.pages,findings:[],evidence_contract:{version:1,truncated:false,evaluation_coverage_complete:false,evaluations:[{entity_id:entity('https://example.com/'),rule:'missing_title',outcome:'pass',unknown_reason:null}],coverage:[{rule:'missing_title',unknown:0,unknown_reasons:{}},{rule:'missing_description',unknown:1,unknown_reasons:{legacy_not_instrumented:1}}]}}
+const report4={schema_version:4,engine_version:'0.2.0',ruleset_version:'2026-11-01.1',outcome:'completed',stop_reason:'frontier_exhausted',coverage_complete:true,pages:report.pages,findings:[],evidence_contract:{version:1,truncated:false,omitted_observations:0,observations:[{entity_id:entity('https://example.com/'),source_locator:'/pages/0'}],evaluation_coverage_complete:false,evaluations:[{entity_id:entity('https://example.com/'),rule:'missing_title',outcome:'pass',unknown_reason:null}],coverage:[{rule:'missing_title',entities:1,unknown:0,unknown_reasons:{}},{rule:'missing_description',unknown:1,unknown_reasons:{legacy_not_instrumented:1}}]}}
 const snapshot={id:'00000000-0000-0000-0000-000000000007',fqdn:'old.example.com',created_at:'saved comparison',semantics:'s15-metadata-1',import_id:src,delivery_id:a,unmodified_v1_asserted:true}
 const snapshot4={...snapshot,id:'00000000-0000-0000-0000-00000000000c',created_at:'schema four comparison',semantics:'s15-metadata-2'}
 const unsupported={...snapshot,id:'00000000-0000-0000-0000-000000000008',created_at:'future comparison',semantics:'future-semantics'}
@@ -136,7 +136,7 @@ if (mode === 'off') {
     await select.selectOption(b)
     if(await box.isChecked()) throw Error('assertion persisted across run switch')
     await box.check()
-    // The default semantics is s15-metadata-2: the schema-4 report gives an absent observation that agrees with the CSV.
+    // The default semantics is s15-metadata-3: the schema-4 report gives an absent observation that agrees with the CSV.
     await page.getByText(/1 agreement/).first().waitFor()
     delaySource = true
     const failed = page.waitForResponse(response => response.url().endsWith('/independent_audit_history') && response.status() === 500)

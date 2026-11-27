@@ -12,7 +12,7 @@ const cases = [
   ['comparison', [id, id], `independent-comparisons/${id}`, 'GET', undefined, undefined, 'independent_comparison_detail', { p_website_id: id, p_comparison_id: id }],
   ['fingerprint', [id], 'independent-evidence/fingerprint', 'GET', undefined, undefined, 'independent_evidence_fingerprint', { p_website_id: id }],
   ['import', [id, source, { provenance: 'legacy' }], 'independent-audits', 'POST', { format: 'controlled-csv-v1', source, metadata: { provenance: 'legacy' } }, undefined, 'import_independent_audit', { p_website_id: id, p_format: 'controlled-csv-v1', p_source: source, p_metadata: { provenance: 'legacy' } }],
-  ['save', [id, id, id, false], 'independent-comparisons', 'POST', { import_id: id, delivery_id: id, asserted: false }, undefined, 'save_independent_comparison', { p_website_id: id, p_import_id: id, p_delivery_id: id, p_asserted: false }],
+  ['save', [id, id, id, false], 'independent-comparisons', 'POST', { import_id: id, delivery_id: id, asserted: false, semantics: 's15-metadata-3' }, undefined, 'save_independent_comparison_versioned', { p_website_id: id, p_import_id: id, p_delivery_id: id, p_asserted: false, p_semantics: 's15-metadata-3' }],
   ['remove', [id, 'DELETE INDEPENDENT EVIDENCE', 'exact proof'], 'independent-evidence', 'DELETE', { confirmation: 'DELETE INDEPENDENT EVIDENCE', export_fingerprint: 'exact proof' }, undefined, 'delete_independent_audit_evidence', { p_website_id: id, p_confirmation: 'DELETE INDEPENDENT EVIDENCE', p_export_fingerprint: 'exact proof' }],
 ] as const
 // Invoke the public typed methods from one shared contract table.

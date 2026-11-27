@@ -56,6 +56,7 @@ struct Save {
     import_id: Uuid,
     delivery_id: Uuid,
     asserted: bool,
+    semantics: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -159,7 +160,11 @@ async fn save(
     Path(id): Path<Uuid>,
     Json(body): Json<Save>,
 ) -> Response {
-    respond(store.rpc(&headers, "save_independent_comparison", json!({"p_website_id":id,"p_import_id":body.import_id,"p_delivery_id":body.delivery_id,"p_asserted":body.asserted})).await)
+    match body.semantics {
+        None => respond(store.rpc(&headers, "save_independent_comparison", json!({"p_website_id":id,"p_import_id":body.import_id,"p_delivery_id":body.delivery_id,"p_asserted":body.asserted})).await),
+        Some(semantics) if semantics == "s15-metadata-3" => respond(store.rpc(&headers, "save_independent_comparison_versioned", json!({"p_website_id":id,"p_import_id":body.import_id,"p_delivery_id":body.delivery_id,"p_asserted":body.asserted,"p_semantics":semantics})).await),
+        Some(_) => respond(Err(WebsiteError::Invalid("invalid_comparison"))),
+    }
 }
 async fn remove(
     State(store): State<WebsiteStore>,
@@ -184,6 +189,7 @@ pub(crate) fn is_rpc(name: &str) -> bool {
             | "independent_evidence_fingerprint"
             | "import_independent_audit"
             | "save_independent_comparison"
+            | "save_independent_comparison_versioned"
             | "delete_independent_audit_evidence"
     )
 }
@@ -324,6 +330,13 @@ mod tests {
                 json!({"import_id":ID,"delivery_id":ID,"asserted":false}),
                 "save_independent_comparison",
                 json!({"p_website_id":ID,"p_import_id":ID,"p_delivery_id":ID,"p_asserted":false}),
+            ),
+            (
+                "independent-comparisons".to_owned(),
+                "POST",
+                json!({"import_id":ID,"delivery_id":ID,"asserted":true,"semantics":"s15-metadata-3"}),
+                "save_independent_comparison_versioned",
+                json!({"p_website_id":ID,"p_import_id":ID,"p_delivery_id":ID,"p_asserted":true,"p_semantics":"s15-metadata-3"}),
             ),
             (
                 "independent-evidence".to_owned(),

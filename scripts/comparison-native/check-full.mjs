@@ -22,9 +22,15 @@ for (const [name, body] of [
   ['independent_audit_history', { p_website_id: site }],
   ['save_independent_comparison', { p_website_id: site, p_import_id: src, p_delivery_id: delivery, p_asserted: true }],
 ]) { const denied = await rpc(other, name, body); if (denied.status !== 403) throw Error(`nonowner ${name} not denied: ${denied.status} ${denied.text}`) }
-const saved = await rpc(owner, 'save_independent_comparison', { p_website_id: site, p_import_id: src, p_delivery_id: delivery, p_asserted: true })
+const saved = await rpc(owner, 'save_independent_comparison_versioned', { p_website_id: site, p_import_id: src, p_delivery_id: delivery, p_asserted: true, p_semantics: 's15-metadata-3' })
 if (saved.status !== 200) throw Error(`owner save failed: ${saved.status} ${saved.text}`)
-if (saved.json.semantics !== 's15-metadata-2') throw Error(`new comparison pinned ${saved.json.semantics}`)
+if (saved.json.semantics !== 's15-metadata-3') throw Error(`new comparison pinned ${saved.json.semantics}`)
+const [oldConcurrent, newConcurrent] = await Promise.all([
+  rpc(owner, 'save_independent_comparison', { p_website_id: site, p_import_id: src, p_delivery_id: delivery, p_asserted: true }),
+  rpc(owner, 'save_independent_comparison_versioned', { p_website_id: site, p_import_id: src, p_delivery_id: delivery, p_asserted: true, p_semantics: 's15-metadata-3' }),
+])
+if (oldConcurrent.status !== 200 || oldConcurrent.json.semantics !== 's15-metadata-2' || newConcurrent.status !== 200 || newConcurrent.json.semantics !== 's15-metadata-3') throw Error('concurrent old/new client pins changed')
+
 const older = await rpc(owner, 'independent_comparison_detail', { p_website_id: site, p_comparison_id: '00000000-0000-0000-0000-00000000000d' })
 if (older.status !== 200 || older.json.comparison.semantics !== 's15-metadata-1') throw Error('stored s15-metadata-1 comparison is not replayable')
 if (older.json.seosmith.report.schema_version !== 1 || older.json.seosmith.report.outcome !== 'completed') throw Error('stored s15-metadata-1 comparison is not pinned to a schema-1 report')
@@ -86,11 +92,23 @@ try {
       await page.getByRole('button', { name: 'Save import' }).click()
       await page.getByText('Source saved.').waitFor()
       if (!calls.includes('import_independent_audit')) throw Error('browser import did not reach the native RPC')
+      await page.getByRole('button', { name: /independent-tool-controlled.csv/ }).first().click()
+      await page.getByLabel('SEOsmith run').selectOption(delivery)
+      await page.getByLabel(/I verified this is the unmodified/).check()
+      await page.getByRole('button', { name: 'Save comparison' }).click()
+      await page.getByText('Comparison saved.').waitFor()
+      await page.getByRole('button', { name: /s15-metadata-3/ }).first().click()
+      await page.getByRole('table').waitFor()
+      if (!calls.includes('save_independent_comparison_versioned')) throw Error('browser did not save explicit semantics')
+      const exported = page.waitForEvent('download')
+      await page.getByRole('button', { name: 'Export all independent evidence' }).click()
+      const bundle = JSON.parse(await readFile(await (await exported).path(), 'utf8'))
+      if (!bundle.comparisons.some(x => x.comparison.semantics === 's15-metadata-3')) throw Error('export lost v3 pin')
     } else {
       await page.getByRole('alert').first().waitFor()
     }
     if (errors.length) throw Error(errors.join(';'))
-    const allowed = ['independent_audit_history', 'independent_comparison_history', 'independent_comparison_detail', 'save_independent_comparison', 'import_independent_audit']
+    const allowed = ['independent_audit_history', 'independent_comparison_history', 'independent_comparison_detail', 'save_independent_comparison', 'save_independent_comparison_versioned', 'import_independent_audit', 'independent_evidence_fingerprint']
     if (calls.some(x => !allowed.includes(x))) throw Error(`unexpected RPC ${calls}`)
     console.log(`${label} browser RPCs: ${calls.join(', ')}`)
     await page.close()

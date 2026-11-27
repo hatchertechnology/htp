@@ -1,3 +1,5 @@
+import { provePagePopulation } from './independent-page-proof.ts'
+
 /** S15 controlled-csv-v1: an explicit observation, never inferred from missing rows. */
 export type Observation = { url: string; rule: string; state: 'present' | 'absent' | 'unknown' }
 const mappedRules = new Set(['missing_title', 'missing_description'])
@@ -97,7 +99,7 @@ export function parseControlledCsv(source: string): Observation[] {
 
 type Evaluation = { entity_id?: string; rule?: string; outcome?: string; unknown_reason?: string | null }
 type Coverage = { entities?: number; rule?: string; unknown?: number; unknown_reasons?: Record<string, number> }
-type EvidenceContract = { observations?: unknown[]; omitted_observations?: number; version?: number; truncated?: boolean; evaluation_coverage_complete?: boolean; evaluations?: Evaluation[]; coverage?: Coverage[] }
+type EvidenceContract = { observations?: Array<{entity_id?: string; source_locator?: string}>; omitted_observations?: number; version?: number; truncated?: boolean; evaluation_coverage_complete?: boolean; evaluations?: Evaluation[]; coverage?: Coverage[] }
 type Report = { schema_version?: number; engine_version?: string; ruleset_version?: string; outcome?: string; coverage_complete?: boolean; stop_reason?: string | null; pages?: Array<{url: string; status?: number; content_type?: string; error?: unknown; extraction_truncated?: boolean; is_resource?: boolean; blocked_by_robots?: boolean; flags?: string[]}>; findings?: Array<{url: string; rule: string}>; evidence_contract?: EvidenceContract }
 /** Newest semantics, used for new comparisons. Older supported versions stay replayable. */
 export const CURRENT_SEMANTICS = 's15-metadata-3'
@@ -166,7 +168,8 @@ export function sha256HexSync(input: string): string {
 }
 
 /** SEOsmith `entity_id` for a page: the URL is hashed exactly as the report spells it (no normalization). */
-export function pageEntityId(url: string): string { return `sha256:${sha256HexSync(`seosmith-entity-v1\npage\n${url}`)}` }
+export function pageEntityId(url: string): string { return entityId(url, false) }
+function entityId(url: string, resource: boolean): string { return `sha256:${sha256HexSync(`seosmith-entity-v1\n${resource ? 'resource' : 'page'}\n${url}`)}` }
 
 // Frozen implementation: add a new version rather than changing this after release.
 // Schema 4 reports. Matching is by SEOsmith entity_id; `evaluation_coverage_complete` is deliberately NOT a gate
@@ -234,30 +237,16 @@ function compareS15Metadata2(rows: Observation[], report: Report, assertedUnmodi
 function compareS15Metadata3(rows: Observation[], report: Report, assertedUnmodified: boolean): ComparisonRow[] {
   const contract = report.evidence_contract
   const compatible = assertedUnmodified && report.schema_version === 4 && report.outcome === 'completed' && report.coverage_complete === true
-    && !!contract && contract.version === 1 && typeof contract.truncated === 'boolean' && Array.isArray(contract.evaluations) && Array.isArray(contract.coverage)
+    && !!contract && contract.version === 1 && typeof contract.truncated === 'boolean' && Array.isArray(contract.evaluations) && contract.evaluations.every(e => !!e && typeof e === 'object') && Array.isArray(contract.coverage) && contract.coverage.every(c => !!c && typeof c === 'object')
   const evaluations = new Map<string, Evaluation>(), duplicates = new Set<string>()
   const coverage = new Map<string, Coverage>(), duplicateCoverage = new Set<string>()
   if (compatible) {
     for (const e of contract!.evaluations!) { const key = JSON.stringify([e.entity_id, e.rule]); if (evaluations.has(key)) duplicates.add(key); evaluations.set(key, e) }
     for (const c of contract!.coverage!) { if (coverage.has(c.rule!)) duplicateCoverage.add(c.rule!); coverage.set(c.rule!, c) }
   }
-  // Count and classify the entire raw population before allowing page-level absence.
-  const titleCoverage = contract?.coverage?.filter(c => c.rule === 'missing_title')
   const pages = report.pages
-  const urls = new Set<string>()
-  let pageProof = compatible && Array.isArray(pages) && titleCoverage?.length === 1
-    && Number.isSafeInteger(titleCoverage[0]?.entities) && titleCoverage[0]?.entities === pages.length
-    && Array.isArray(contract?.observations) && Number.isSafeInteger(contract.omitted_observations)
-    && contract.omitted_observations! >= 0 && contract.observations.length + contract.omitted_observations! === pages.length
-  if (pageProof) for (const page of pages!) {
-    if (!page || typeof page.url !== 'string' || !page.url || typeof page.is_resource !== 'boolean' || urls.has(page.url)) { pageProof = false; break }
-    urls.add(page.url)
-    if (!page.is_resource) {
-      const key = JSON.stringify([pageEntityId(page.url), 'missing_title'])
-      if (duplicates.has(key) || !['pass', 'fail', 'not_applicable'].includes(evaluations.get(key)?.outcome || '')) { pageProof = false; break }
-    }
-  }
-  const pageUrls = new Set((pages || []).filter(p => p && p.is_resource === false).map(p => p.url))
+  const pageProof = provePagePopulation(pages, contract, evaluations, duplicates, compatible, entityId)
+  const pageUrls = new Set((Array.isArray(pages) ? pages : []).filter(p => p && p.is_resource === false).map(p => p.url))
   const known = new Set(rows.map(row => JSON.stringify([row.url, row.rule])))
   const combined = [...rows]
   for (const finding of report.findings || []) {
@@ -282,6 +271,7 @@ function compareS15Metadata3(rows: Observation[], report: Report, assertedUnmodi
   const observe = (row: Observation): { state: Observation['state']; reason?: string; count?: number } => {
     if (!mappedRules.has(row.rule)) return { state: 'unknown' }
     if (!compatible) return { state: 'unknown', reason: 'report_not_comparable' }
+    if (!pageProof && (contract?.truncated === true || row.rule === 'missing_title')) return { state: 'unknown', reason: 'page_population_unverified' }
     const cov = coverage.get(row.rule)
     if (!cov || duplicateCoverage.has(row.rule) || typeof cov.unknown !== 'number') return { state: 'unknown', reason: 'no_coverage' }
     const key = JSON.stringify([pageEntityId(row.url), row.rule])
