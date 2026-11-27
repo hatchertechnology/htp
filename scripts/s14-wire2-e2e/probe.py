@@ -3,17 +3,23 @@
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import time
 import urllib.error
 import urllib.request
 import uuid
-from urllib.parse import urlsplit
+from local_url import check
 endpoint, report_file = sys.argv[1:]
-u = urlsplit(endpoint)
-if u.scheme != 'http' or u.hostname != '127.0.0.1':
-    raise SystemExit('endpoint must be loopback HTTP')
+check(endpoint)
+subprocess.run([sys.executable, str(Path(__file__).with_name('preflight.py')), 'probe', endpoint], check=True)
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 raw = Path(report_file).read_text()
 old = json.loads(raw)['request']['request_id']
 new = str(uuid.uuid4())
@@ -25,7 +31,7 @@ body = json.dumps({'delivery_id': new, 'sha256': sha, 'report_json': raw}, separ
 req = urllib.request.Request(endpoint, body, {'content-type': 'application/json', 'authorization': 'Bearer ' + os.environ['HTP_INGEST_TOKEN'], 'idempotency-key': new})
 t = time.monotonic()
 try:
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with opener.open(req, timeout=30) as resp:
         status, response = resp.status, resp.read().decode()
 except urllib.error.HTTPError as exc:
     status, response = exc.code, exc.read().decode()

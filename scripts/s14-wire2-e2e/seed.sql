@@ -1,3 +1,9 @@
+\if :{?w1c8e_local_only}
+\else
+\echo Use seed.sh for the dedicated local container
+SELECT 1/0;
+\quit
+\endif
 -- Dedicated local PG17 stack only. The runner creates :owner_id in local Auth.
 -- Hashes correspond to fixture-only local tokens; never use these outside tests.
 insert into public.websites(id,owner_id,fqdn) values
