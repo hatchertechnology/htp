@@ -1,0 +1,5 @@
+source repo: seosmith (worktree /mnt/storage/worktrees/w1c-seosmith-wire2-fix, branch w1c/wire2-fixtures)
+source commit: ad1e8612268fcaae92d618cb867fdeea10552094
+source path: fixtures/wire2/**
+copied byte-for-byte (cp -r); do not edit. manifest.json admit/stage/error recorded against this receiver at 2384151.
+receiver-only cases the 8b-4 set lacks are generated in-test by tests/wire2_common (see tests/wire2_conformance.rs).

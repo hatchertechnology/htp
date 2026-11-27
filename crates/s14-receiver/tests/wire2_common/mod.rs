@@ -1,10 +1,9 @@
-//! Hand-built wire-2 fixtures (WP8c-1). Until `SEOsmith` 8b-4 publishes its
-//! `fixtures/wire2/**`, every positive and negative here is derived from a
-//! committed wire-1 fixture by `to_v2` plus one named mutation. The committed
-//! files under `tests/fixtures/s14-wire2-v1/` are checked byte-for-byte against
-//! this generator, so they cannot be hand-edited. Each file is listed in
-//! `manifest.json` with `"handmade": true`; those entries are to be swapped
-//! for byte-copies of the 8b-4 fixtures (see `coordination/tasks/w1c-8c1.md`).
+//! Receiver-side HANDMADE wire-2 cases (WP8c-1). The committed corpus under
+//! `tests/fixtures/s14-wire2-v1/` is the `SEOsmith` 8b-4 set (byte-copies, see its
+//! `SOURCE`). This generator derives wire-2 cases from a committed wire-1 fixture by
+//! `to_v2` plus one named mutation; nothing here is committed as a file. Only the
+//! five paths in `RECEIVER_ONLY` (`wire2_conformance.rs`) are asserted; the rest are
+//! the retired hand-built set, kept as the generator that produced them.
 #![allow(
     dead_code,
     clippy::too_many_lines,
@@ -324,7 +323,7 @@ pub fn cases() -> Vec<Case> {
         let v = to_v2(&load(base), scen);
         add(
             &format!("positive/{name}.json"),
-            base_name(base),
+            base,
             bytes(&v),
             None,
             note,
@@ -829,32 +828,4 @@ pub fn cases() -> Vec<Case> {
         );
     }
     out.into_inner()
-}
-fn base_name(b: &str) -> &'static str {
-    match b {
-        "complete-clean.json" => "complete-clean.json",
-        "partial-sources.json" => "partial-sources.json",
-        "mixed-caps-exceeded.json" => "mixed-caps-exceeded.json",
-        _ => "external-links-checked.json",
-    }
-}
-
-pub fn manifest_text(cases: &[Case]) -> String {
-    let files: Vec<Value> = cases
-        .iter()
-        .map(|c| {
-            let expect = match c.expect {
-                None => json!({"admit": true, "validator_revision": V2_REV}),
-                Some((s, e)) => json!({"admit": false, "stage": s, "error": e}),
-            };
-            json!({"path": c.path, "bytes": c.bytes.len(), "sha256": sha_hex(&c.bytes),
-                "base": c.base, "handmade": true, "note": c.note, "expect": expect})
-        })
-        .collect();
-    let mut s = serde_json::to_string_pretty(&json!({
-        "manifest_version": 1,
-        "origin": "hand-built by WP8c-1 from tests/fixtures/s14-schema4-v1 (generator: tests/wire2_common/mod.rs); replace with byte-copies of SEOsmith 8b-4 fixtures/wire2",
-        "files": files})).unwrap();
-    s.push('\n');
-    s
 }

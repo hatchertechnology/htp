@@ -1,810 +1,1272 @@
 {
+  "contract": "docs/contracts/s14-wire-2.md",
   "files": [
     {
-      "base": "complete-clean.json",
-      "bytes": 58146,
+      "base": "scale(6 pages, 8 resources)",
+      "bytes": 158853,
+      "entities": 14,
       "expect": {
         "admit": true,
         "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
       },
-      "handmade": true,
-      "note": "all six families complete",
+      "families": {
+        "s02_indexing": "complete",
+        "s03_integrity": "complete",
+        "s04_structured_data": "complete",
+        "s05_link_graph": "complete",
+        "s06_duplicates": "partial",
+        "s08_resources": "complete"
+      },
+      "note": "five families complete; S06 partial (near-duplicate similarity is always unknown, main_text_not_retained)",
       "path": "positive/complete-small.json",
-      "sha256": "9975c716607e4fd7f3e1a96de99bd5a0407a6df4422f946c5f105279eb3822dc"
+      "sha256": "7fedf667cdd3c161da5535f352603c006815bb8d3d01bab8889603da4a8313a7",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1",
+        "summary_sha256": "sha256:0d7c67e1aa5aa950f5131c0faeed6ba250040a00306a70a594e6a1cd1e56181f",
+        "summary_bytes": 7695
+      }
     },
     {
-      "base": "partial-sources.json",
-      "bytes": 57849,
+      "base": "fixture_input(partial-missing-h1)+1 page",
+      "bytes": 64910,
+      "entities": 2,
       "expect": {
         "admit": true,
         "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
       },
-      "handmade": true,
-      "note": "families partial with reasons",
+      "families": {
+        "s02_indexing": "partial",
+        "s03_integrity": "partial",
+        "s04_structured_data": "unavailable",
+        "s05_link_graph": "partial",
+        "s06_duplicates": "partial",
+        "s08_resources": "complete"
+      },
+      "note": "families partial with reasons (analyzer_row_limit, sitemap_evidence_mismatch, link_limit); S04 unavailable (analysis_deadline)",
       "path": "positive/partial-sources.json",
-      "sha256": "f81847b5cce708c3a4b47914ab1f27082a5755392f229d36d4c400260aacd512"
+      "sha256": "ca4401ee7a10069efa36dc0b872ac64f150ab359116ed8d9e1967845fd4b0c33",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1",
+        "summary_sha256": "sha256:3d12a6a8cc0ddc9823fe21614a116afa5b0fc27060bd952194ff86252ec6cc27",
+        "summary_bytes": 7650
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 60810,
+      "base": "scale(6 pages, 8 resources)",
+      "bytes": 154615,
+      "entities": 14,
       "expect": {
         "admit": true,
         "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
       },
-      "handmade": true,
-      "note": "collector_byte_limit/run_byte_limit are unknown, never pass",
+      "families": {
+        "s02_indexing": "partial",
+        "s03_integrity": "complete",
+        "s04_structured_data": "complete",
+        "s05_link_graph": "partial",
+        "s06_duplicates": "partial",
+        "s08_resources": "unavailable"
+      },
+      "note": "collector_byte_limit and run_byte_limit are unknown with a reason, never pass; S08 unavailable (run_byte_limit)",
       "path": "positive/capture-omissions.json",
-      "sha256": "c8fcfda4b12c03474e58f9069b1716b34f9d2a39001ffe20196795b1eba8d77f"
+      "sha256": "3a02aeb581e88661881847b4ed44e42ac791dcefbb43cb7685fdf47c9e258a6d",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1",
+        "summary_sha256": "sha256:0d7c67e1aa5aa950f5131c0faeed6ba250040a00306a70a594e6a1cd1e56181f",
+        "summary_bytes": 7695
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58161,
+      "base": "site(150 pages)",
+      "bytes": 1048952,
+      "entities": 150,
       "expect": {
         "admit": true,
         "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
       },
-      "handmade": true,
-      "note": "family_item_limit truncation",
+      "families": {
+        "s02_indexing": "complete",
+        "s03_integrity": "complete",
+        "s04_structured_data": "complete",
+        "s05_link_graph": "complete",
+        "s06_duplicates": "partial",
+        "s08_resources": "complete"
+      },
+      "note": "S06 has 300 items against max_items 128: family_item_limit truncation",
       "path": "positive/family-item-limit.json",
-      "sha256": "81b81ea1c91da9cbecae8e2410ae4ef2be69a959ce7811d578ac43a4f2298c6e"
+      "sha256": "210f110a8b9788017a36c92b6e02476b9acc00fd971e859f03f1aef2e6f3a52b",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1",
+        "summary_sha256": "sha256:e9ef2892b715781caf1afe787d684bd02d7a18a193c218480083306f7386ee8e",
+        "summary_bytes": 7695
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58161,
+      "base": "site(150 pages)",
+      "bytes": 1350952,
+      "entities": 150,
       "expect": {
         "admit": true,
         "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
       },
-      "handmade": true,
-      "note": "family_byte_budget truncation",
+      "families": {
+        "s02_indexing": "complete",
+        "s03_integrity": "partial",
+        "s04_structured_data": "partial",
+        "s05_link_graph": "partial",
+        "s06_duplicates": "partial",
+        "s08_resources": "complete"
+      },
+      "note": "S03/S04/S05 items cut by the family byte allowance: family_byte_budget truncation",
       "path": "positive/family-byte-budget.json",
-      "sha256": "cb81fdee84898640e7d13ca1febb5adf31e43ca41afa2d16d98b74a16fafc8fd"
+      "sha256": "39c6959a9cf670ab3df9bcb6af09f712e2419e54cbcbba04d5b6af52a6d9cf41",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1",
+        "summary_sha256": "sha256:e9ef2892b715781caf1afe787d684bd02d7a18a193c218480083306f7386ee8e",
+        "summary_bytes": 7695
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 56765,
+      "base": "site(150 pages)",
+      "bytes": 1075966,
+      "entities": 150,
       "expect": {
         "admit": true,
         "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
       },
-      "handmade": true,
-      "note": "report_byte_budget degradation, unavailable sections",
+      "families": {
+        "s02_indexing": "partial",
+        "s03_integrity": "partial",
+        "s04_structured_data": "partial",
+        "s05_link_graph": "partial",
+        "s06_duplicates": "partial",
+        "s08_resources": "partial"
+      },
+      "note": "producer cap tightened so the families budget (~200 KB) is under 786,432 B: budget_state report_byte_budget",
       "path": "positive/report-budget-degraded.json",
-      "sha256": "49effadfa47fbdc1cba6722b0340aec53884a9861187b3a7ae9dcf7f6a6a22fb"
+      "sha256": "a0045d5023fa7e0700b078bf67e9895b41ee587b659ad5b01ec915b3d8cd2878",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1",
+        "summary_sha256": "sha256:e9ef2892b715781caf1afe787d684bd02d7a18a193c218480083306f7386ee8e",
+        "summary_bytes": 7695
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58275,
+      "base": "limits-site(150 pages without titles)",
+      "bytes": 1351859,
+      "entities": 150,
       "expect": {
         "admit": true,
         "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
       },
-      "handmade": true,
-      "note": "null locator with facts.url",
-      "path": "positive/unbound-url-item.json",
-      "sha256": "8c33da1e3673aadf21fea6311c62e88c98c8fe3d97a46bef3756daafb1bda268"
-    },
-    {
-      "base": "mixed-caps-exceeded.json",
-      "bytes": 882648,
-      "expect": {
-        "admit": true,
-        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
+      "families": {
+        "s02_indexing": "complete",
+        "s03_integrity": "complete",
+        "s04_structured_data": "complete",
+        "s05_link_graph": "complete",
+        "s06_duplicates": "partial",
+        "s08_resources": "complete"
       },
-      "handmade": true,
-      "note": "per-rule record omissions present",
-      "path": "positive/s14-record-limit.json",
-      "sha256": "e27f9a70acc2ee708730a595b8b919c4c8f06433e716d06449b621d45968d5bd"
-    },
-    {
-      "base": "external-links-checked.json",
-      "bytes": 84840,
-      "expect": {
-        "admit": true,
-        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
-      },
-      "handmade": true,
-      "note": "out-of-scope entity and edge ids in v1 list",
-      "path": "positive/external-links-checked-v2.json",
-      "sha256": "f391ea888a5fd3fcc9cd9a78312534f4cb0b8e21318b3b653fe9e1a2b8034d3f"
-    },
-    {
-      "base": "complete-clean.json",
-      "bytes": 59878,
-      "expect": {
-        "admit": true,
-        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
-      },
-      "handmade": true,
-      "note": "200 observations (> v1 limit 128), v2 limit 1024",
+      "note": "150 observations (> the wire-1 limit of 128) and more than 512 evaluations, untruncated under 1,024/1,024",
       "path": "positive/wire2-limits.json",
-      "sha256": "011ddaf0fb355689960edd43577a48e04e496b6b9053393f2c5417f53fe8fcdf"
+      "sha256": "4c1b789f37141b9a1bd197f5102adc46ebf8c303d9ad34cbbe9ee37ce9d68120",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1",
+        "summary_sha256": "sha256:9dbc75d95725ffd4890940182c22d1fbc8bce9749fe5d4736ce8ede5201e5581",
+        "summary_bytes": 7740
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 858146,
+      "base": "scale(6 pages, 8 resources)",
+      "bytes": 159008,
+      "entities": 14,
       "expect": {
         "admit": true,
         "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
       },
-      "handmade": true,
-      "note": "evidence_families raw > 786,432 B, compact small: bounds count compact bytes",
-      "path": "positive/families-raw-over-cap-compact-ok.json",
-      "sha256": "1f6e6a8ceb362ac050ce4def0a2dc1f5815e88abd4aaa43a6ef7dfe36b3b7d17"
+      "families": {
+        "s02_indexing": "complete",
+        "s03_integrity": "complete",
+        "s04_structured_data": "complete",
+        "s05_link_graph": "complete",
+        "s06_duplicates": "partial",
+        "s08_resources": "complete"
+      },
+      "note": "an item with a null locator and entity_id carries facts.url (sitemap entry not crawled)",
+      "path": "positive/unbound-url-item.json",
+      "sha256": "d134492d4ca747d689919ed726c7f175014d6bd65b00b9081dce9cdd1c374fef",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1",
+        "summary_sha256": "sha256:0d7c67e1aa5aa950f5131c0faeed6ba250040a00306a70a594e6a1cd1e56181f",
+        "summary_bytes": 7695
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 75146,
+      "base": "scale(1 page, 23 resources, 23 links, 23 relationships)",
+      "bytes": 213018,
+      "entities": 24,
       "expect": {
         "admit": true,
         "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
       },
-      "handmade": true,
-      "note": "v2 manifest raw > 16,384 B, compact small: bounds count compact bytes",
-      "path": "positive/manifest-raw-over-16384-compact-ok.json",
-      "sha256": "81657f91046b957648c3d2351a1c58769f5329618808574f617a70139313f226"
+      "families": {
+        "s02_indexing": "complete",
+        "s03_integrity": "complete",
+        "s04_structured_data": "complete",
+        "s05_link_graph": "complete",
+        "s06_duplicates": "partial",
+        "s08_resources": "complete"
+      },
+      "note": "items at /pages/0/links/22 and /pages/0/relationships/22: the last link and relationship of page 0",
+      "path": "positive/locators-v2.json",
+      "sha256": "dbb946b23c56d57a73497bc02129af25db76c473abb553d47277051d9c81e53d",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1",
+        "summary_sha256": "sha256:5094447ce4cee16a744299eb3f8a126f27cc05b19d6bd01469eab81c401db30c",
+        "summary_bytes": 7695
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58157,
+      "base": "mixed-caps(200 pages)",
+      "bytes": 1154956,
+      "entities": 200,
       "expect": {
         "admit": true,
         "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
       },
-      "handmade": true,
-      "note": "facts nested to depth 4 (facts itself counts as level 1): the boundary",
-      "path": "positive/families-facts-depth-4.json",
-      "sha256": "08e8aa50443bf31d8447615d691a8fd09633bff02a110dc9f62c5da13483fa82"
+      "families": {
+        "s02_indexing": "complete",
+        "s03_integrity": "complete",
+        "s04_structured_data": "complete",
+        "s05_link_graph": "complete",
+        "s06_duplicates": "partial",
+        "s08_resources": "complete"
+      },
+      "note": "S14 policy records capped at 512/128: per-rule omissions (record_limit, observation_limit); finding_coverage partial",
+      "path": "positive/s14-record-limit.json",
+      "sha256": "a480e227388db211c4935eca3cfd94459d5c84cfb2ba68b65bcb5a127507b074",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1",
+        "summary_sha256": "sha256:5249363e297f2600a05d6044ca45996421cc47be2dde2733ccc5822264d8d2ed",
+        "summary_bytes": 7759
+      }
     },
     {
-      "base": "crawl.json",
-      "bytes": 416079,
+      "base": "v3-local-complete (check_external_links)",
+      "bytes": 83841,
+      "entities": 4,
       "expect": {
         "admit": true,
         "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
       },
-      "handmade": true,
-      "note": "item locator /pages/0/links/22 (last link of page 0)",
-      "path": "positive/links-locator-v2.json",
-      "sha256": "4bd2bc6826434c967fc9fcc343c46fde4c87ecfcf4465736025c655d0782ada0"
+      "families": {
+        "s02_indexing": "complete",
+        "s03_integrity": "complete",
+        "s04_structured_data": "complete",
+        "s05_link_graph": "complete",
+        "s06_duplicates": "partial",
+        "s08_resources": "complete"
+      },
+      "note": "an out-of-scope entity and edge ids in the in-memory candidate lists; digest rows only on the wire",
+      "path": "positive/external-links-checked-v2.json",
+      "sha256": "067fcb9d0f2557182234640daa3e28b6f9f9355546b7d0604400f3e7b2d754c2",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1",
+        "summary_sha256": "sha256:8c0f80c0843eb59b07aa1158961fa2068845eb9dd58966760fd5965b14b72dd0",
+        "summary_bytes": 7837
+      }
     },
     {
-      "base": "crawl.json",
-      "bytes": 416087,
+      "base": "scale(57 pages, 1,696 resources, 8 external links per page)",
+      "bytes": 2402233,
+      "entities": 1753,
       "expect": {
         "admit": true,
         "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
       },
-      "handmade": true,
-      "note": "item locator /pages/0/relationships/22 (last relationship of page 0)",
-      "path": "positive/relationships-locator-v2.json",
-      "sha256": "85bf8eb3c958c5aa0b10546bb31bdbed229fdbaad892eeea6f1b2aa28f231a5f"
+      "families": {
+        "s02_indexing": "complete",
+        "s03_integrity": "complete",
+        "s04_structured_data": "complete",
+        "s05_link_graph": "complete",
+        "s06_duplicates": "partial",
+        "s08_resources": "partial"
+      },
+      "note": "1,753 entities and 456 out-of-scope edges: the geometry that fails under wire-1 (policy_manifest_limit); delivered under wire-2",
+      "path": "positive/manifest-scale.json",
+      "sha256": "1c421c42255b6d21dfa564f5d2c460409a69b8deb7751269f4b729768ee5f2c9",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1",
+        "summary_sha256": "sha256:7c6b65572ee7cd42df7285ce56236f30447781cdecc3d640c5239914030df0b9",
+        "summary_bytes": 7696
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 51551,
+      "base": "scale(57 pages, 967 resources)",
+      "bytes": 1846512,
+      "entities": 1024,
+      "expect": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
+      },
+      "families": {
+        "s02_indexing": "complete",
+        "s03_integrity": "complete",
+        "s04_structured_data": "complete",
+        "s05_link_graph": "complete",
+        "s06_duplicates": "partial",
+        "s08_resources": "partial"
+      },
+      "note": "exactly 1,024 entities (the analyzer row limit is 1,000): admit-time fixture",
+      "path": "positive/entities-1024.json",
+      "sha256": "c695d6677fa9086b2077cc04eace10fa075f06e164ccc56776f75534675bb015",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1",
+        "summary_sha256": "sha256:bf3e977ef4d917a1a263526cccd0fc2c2d8e1562f6ec3663accb4a09921a8c71",
+        "summary_bytes": 7693
+      }
+    },
+    {
+      "base": "cap(60 pages, padded open_graph)",
+      "bytes": 4952756,
+      "entities": 60,
+      "expect": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1"
+      },
+      "families": {
+        "s02_indexing": "complete",
+        "s03_integrity": "complete",
+        "s04_structured_data": "complete",
+        "s05_link_graph": "complete",
+        "s06_duplicates": "partial",
+        "s08_resources": "complete"
+      },
+      "note": "exactly 4,952,756 B (HTP_MAX_REPORT_BYTES), produced through generate_wire_v2_with_cap (the production budgeter keeps a 65,536 B reserve)",
+      "path": "positive/exact-cap-v2.json",
+      "sha256": "666d9e2f242e682bee27c8ac25d7872f0dec8ceb9ed2bdd1a4c2774d19648f38",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": true,
+        "validator_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1",
+        "summary_sha256": "sha256:9c7a43ebafe025681f413f9b07350dc3fdc46f82f7bd4e2fe96d1b30aa347b44",
+        "summary_bytes": 7641
+      }
+    },
+    {
+      "base": "v1 twin of complete-small",
+      "bytes": 156636,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "explicit null",
+      "note": "evidence_families: null under the v1 label",
+      "path": "negative/families-null-v1.json",
+      "sha256": "8c1684c66056a54009607f6658060fff6dbec0a4df99f9d511a99ec2bcf88d4b",
+      "wire": "s14-wire-1",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
+    },
+    {
+      "base": "v1 twin of complete-small",
+      "bytes": 168137,
+      "expect": {
+        "admit": false,
+        "error": "Shape",
+        "stage": "inspection"
+      },
+      "note": "a valid families object under the v1 label",
+      "path": "negative/families-object-v1.json",
+      "sha256": "a48e059a5db3fbc14a5b144baa6f9e90e1cdf2b16b68d8ed8f33b43f2d4aede1",
+      "wire": "s14-wire-1",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
+    },
+    {
+      "base": "complete-small",
+      "bytes": 147352,
+      "expect": {
+        "admit": false,
+        "error": "Shape",
+        "stage": "inspection"
+      },
+      "note": "evidence_families: null under v2",
       "path": "negative/families-null-v2.json",
-      "sha256": "95977cb190fe4c8686a21a1838f67beac752eb158016c46da234986a02695450"
+      "sha256": "9855ee448e4e045d76e629a79528c3df3c7fe177f4f25a3225b234aab089dbe5",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 51526,
+      "base": "complete-small",
+      "bytes": 147327,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "absent under v2",
+      "note": "evidence_families absent under v2",
       "path": "negative/families-missing-v2.json",
-      "sha256": "73d4009a71ad33d9bb19fa8ed73d3fed2d18ec9add6ca8f9f52ed41f983fb0a9"
+      "sha256": "5d1cd0875656b6b26fd3c307ec82016e9b28e946038a280e86cfffb218a6af13",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 51549,
+      "base": "complete-small",
+      "bytes": 147350,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "array",
+      "note": "evidence_families is an array",
       "path": "negative/families-not-object-v2.json",
-      "sha256": "3f9309e2bbe0b6945a77dc8b9a1895b2ccb88d6e4c646e833c89a22e3f3835c5"
+      "sha256": "806954043538a72d7b0f6e5b2ac211649d364f7b4984cd7481d5aaaebf4ea3e4",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58156,
+      "base": "complete-small",
+      "bytes": 158863,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "unknown key at top",
+      "note": "unknown key beside version in evidence_families",
       "path": "negative/families-unknown-top-key.json",
-      "sha256": "31828926e28cebb120e2df245151b9fe619dfceb140cfa73df2a459cb3296c98"
+      "sha256": "49494d868203b3e59a8710a5f24879221030336894e6cc4bc543be63679bd96b",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58155,
+      "base": "complete-small",
+      "bytes": 160958,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "unknown family",
+      "note": "a seventh family",
       "path": "negative/families-unknown-family-key.json",
-      "sha256": "8f573c095b0a0d922a7a250e98e70d8085c60b19076163bd0277b2b61ce337a0"
+      "sha256": "8a81ab37b3a7882366f327a8f7e1d8b93896ed241f77d9826e1c14a85670f6c4",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 57064,
+      "base": "complete-small",
+      "bytes": 156488,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "family absent",
+      "note": "s08_resources absent",
       "path": "negative/families-missing-family.json",
-      "sha256": "194e2869b4ced4649149494c9af065e1cb71a8f1be8610067b52311862b00d49"
+      "sha256": "389e870fb0e1536f583af693ffb48bdeabc8f7305e9e4553fbf96afe5754a114",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58152,
+      "base": "complete-small",
+      "bytes": 158863,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "unknown key in section",
+      "note": "unknown key in a section",
       "path": "negative/families-unknown-section-key.json",
-      "sha256": "f43602517dd8dbf2e5676c700061d38ccd5b42fe3045a0fd4350fe8cae5e4433"
+      "sha256": "21ef8959392b2cb03e7c14767e4e52257a29badc6ae04d25575166d1af4b0097",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58152,
+      "base": "complete-small",
+      "bytes": 158863,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
       "note": "unknown key in coverage",
       "path": "negative/families-unknown-coverage-key.json",
-      "sha256": "12491ae9b824164fa348cec785a74c08dde26deb734a80c33f7b459be4768946"
+      "sha256": "67d549b0b712380cfc8e5a6b98135eeb301a7806f3ce17e84324da8af8a66424",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58152,
+      "base": "complete-small",
+      "bytes": 158863,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "unknown key in item",
+      "note": "unknown key in an item",
       "path": "negative/families-unknown-item-key.json",
-      "sha256": "ab6daeb8d855ab861dd848531b73ac0cfb6334e7f961bc9bf43cf80cd798d038"
+      "sha256": "780ea243023a92a3330983c1645cf360422be635d7422602cb4b451a5d2b16ac",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58146,
+      "base": "complete-small",
+      "bytes": 158853,
       "expect": {
         "admit": false,
         "error": "UnsupportedSchema",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "version 2",
+      "note": "evidence_families.version 2",
       "path": "negative/families-bad-version.json",
-      "sha256": "b9c29c744700dfaa5bdf16197bed1182e71d083da0c44d7cb6b2b164ba3c6a0f"
+      "sha256": "da89890fcb63272fd128364f287a7f8290b10a0a00a4be2008a19c82a1741ffa",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "UnsupportedSchema"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58137,
+      "base": "complete-small",
+      "bytes": 158845,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "unknown budget_state",
+      "note": "budget_state outside the two allowed values",
       "path": "negative/families-bad-budget-state.json",
-      "sha256": "9648ca9e2e3de47a958a1e02b1c2ee51b0e4583a281936ce71f89da3e5c92d85"
+      "sha256": "3f5b2906d1288c1cc2296dc305042096a6b83e04a4ae1b0a4564d4df99f5c4cd",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58147,
+      "base": "complete-small",
+      "bytes": 158853,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 1",
+      "note": "invariant 1: items_total != items + omitted_items",
       "path": "negative/families-items-total-mismatch.json",
-      "sha256": "20557f0f8c5e40579318f3c8c550e25f74f76bf21f7e0c2491a0f56ddf7b783c"
+      "sha256": "d82ef5e12d5153361455bf84f7caf094daa0e9fe80c52baa8259093396aef6f6",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58145,
+      "base": "partial-sources",
+      "bytes": 64924,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 2: truncated without omissions",
+      "note": "invariant 2: truncated with a reason but no omitted items",
       "path": "negative/families-truncated-mismatch.json",
-      "sha256": "6ee5b133bd3e2fd4e66169ff2033e2ac08f968e5ae6f7dbcf5e8e33bc354feb4"
+      "sha256": "ddecd0db7a98d0bd2061b75f873938a4c446ad13921f191a6e4f5bbf6a3c2212",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58145,
+      "base": "partial-sources",
+      "bytes": 64909,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 2: omissions without reason",
+      "note": "invariant 2: omitted items, truncated, without omitted_reason",
       "path": "negative/families-omission-reason-missing.json",
-      "sha256": "d716ede54f74bbbf839b57068855b592535ff3a17be1bb5d08655e7ee8ee9c2a"
+      "sha256": "b6bb442b6f64713bf6c18810575756b09319bdfa6e25f395cb97ddc071dbfb71",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58168,
+      "base": "complete-small",
+      "bytes": 158875,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 3",
+      "note": "invariant 3: state complete with coverage.unknown 1",
       "path": "negative/families-complete-with-unknown.json",
-      "sha256": "db0b485acd39e14930c34da2cf045c240aa0e50159c593df7de5259423c65ef8"
+      "sha256": "add3556cba392688d46ab4039e7ba9a92040decb135e515822153b11debbf9b7",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58161,
+      "base": "complete-small",
+      "bytes": 158868,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 3",
+      "note": "invariant 3: state unavailable with items",
       "path": "negative/families-unavailable-with-items.json",
-      "sha256": "f51dd3d925f97585b253c1eccad5915ca0ae999493110c28b8b0d76108205b29"
+      "sha256": "efea802d24ff29aea34fa34cb8976a3b13666f6d51408761f7ea06692a866a18",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58149,
+      "base": "partial-sources",
+      "bytes": 64894,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 4",
+      "note": "invariant 4: an unknown item with a null reason",
       "path": "negative/families-unknown-without-reason.json",
-      "sha256": "2db8fa6b0f49b28e2fb9a9a0e9e160d42541d9a48e235145e28183e24758a816"
+      "sha256": "08d23eec884f025c4e425f8abc651ddbfdc015041bb28683d4e8705cd2117425",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58145,
+      "base": "partial-sources",
+      "bytes": 64910,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 4: sum mismatch",
+      "note": "invariant 4: unknown_reasons does not sum to coverage.unknown",
       "path": "negative/families-unknown-reasons-sum.json",
-      "sha256": "4c9f84dfc9a060c87785e9d2a3dd7ba0659e8db06690d531df23b1943c4c791c"
+      "sha256": "1e6354ba186eca6fcebc5ec34242c341576d61faea4020c5cb0b95f1052b067d",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58164,
+      "base": "capture-omissions",
+      "bytes": 154606,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 4: omission reported as pass",
+      "note": "invariant 4: a collector_byte_limit item reported as pass",
       "path": "negative/families-pass-with-capture-omission.json",
-      "sha256": "006f38618cc6ceba6095d9c16e6502dbf1e810c46be6d6f93b0bf8351c5cdf54"
+      "sha256": "c8c8c458cb6c505b05e2fc7a47706f1bdc324098d86dadb9518717a481f6e4d4",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58149,
+      "base": "complete-small",
+      "bytes": 158856,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 5",
+      "note": "invariant 5: locator /pages/9999 does not resolve",
       "path": "negative/families-locator-unresolved.json",
-      "sha256": "f450520ccf5129d07def50690b1b0bdb0cd01513e1aa51fdec65b8552d951ebf"
+      "sha256": "1419cbdc3c7c6b378de64ddaabfd2122231e7d681ea846144cb2d859529c6e2b",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58146,
+      "base": "complete-small",
+      "bytes": 158852,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 5",
+      "note": "invariant 5: locator outside the three forms",
       "path": "negative/families-locator-bad-form.json",
-      "sha256": "78e81527fd2748d465765f675901b3614d0cbfa03685e4b45725707cf377c86a"
+      "sha256": "ea58167f3c4d67b9b34d8488063af1c0bd8ea16ad0ef47f9cfed944aeddbd23b",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58146,
+      "base": "complete-small",
+      "bytes": 158853,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 5",
+      "note": "invariant 5: entity_id of another page",
       "path": "negative/families-entity-id-mismatch.json",
-      "sha256": "eb73ca84d0b33883d20758bcc2c8a256b81b742d7f7410dd75a2a7fbe4b99e6d"
+      "sha256": "4e41b2af23b7ba13be70c56af9fdfb6bd354821e0918a7bc4e6c2ee9f18008f0",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58071,
+      "base": "unbound-url-item",
+      "bytes": 158965,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 5",
+      "note": "invariant 5: a null-locator item without facts.url",
       "path": "negative/families-null-locator-no-url.json",
-      "sha256": "78b730e57ee6dec3d6b1120a7de02cdbf3dbee6ec8dcea906257854e23324df9"
+      "sha256": "8dfb9be921a248436464973e7e1361a4338aa3da93db7d08e61af16e1fbf4fa7",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "crawl.json",
-      "bytes": 416079,
+      "base": "locators-v2",
+      "bytes": 213018,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "links/M with M = len",
+      "note": "invariant 5: /pages/0/links/23 on a page with 23 links",
       "path": "negative/families-link-locator-out-of-range.json",
-      "sha256": "7199231e84d82a050993748f4bdbbbc1245cb60c5648f19cc830f5f177123511"
+      "sha256": "beea6db05a83f04d50d14055cc5e2ac06d358ed5a428442fbf8d7800a714b81b",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "crawl.json",
-      "bytes": 416087,
+      "base": "locators-v2",
+      "bytes": 213018,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "relationships/M with M = len",
+      "note": "invariant 5: /pages/0/relationships/23 on a page with 23",
       "path": "negative/families-relationship-locator-out-of-range.json",
-      "sha256": "d1369f8e993697aa5b0fedd334eda135478d79f15ee72215e484fcf4d61f1b5a"
-    },
-    {
-      "base": "crawl.json",
-      "bytes": 416078,
-      "expect": {
+      "sha256": "a59045bf8b8884fdda8fe285b02c72247f7bad0bdd008f9f957c6445ed947415",
+      "wire": "s14-wire-2",
+      "admit": {
         "admit": false,
-        "error": "Shape",
-        "stage": "inspection"
-      },
-      "handmade": true,
-      "note": "links/0 on a page with no links",
-      "path": "negative/families-link-locator-on-linkless-page.json",
-      "sha256": "e7a179ecad07f01236b935686b491a1affc0ad704963b237ac9724fb250cc248"
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "crawl.json",
-      "bytes": 416086,
-      "expect": {
-        "admit": false,
-        "error": "Shape",
-        "stage": "inspection"
-      },
-      "handmade": true,
-      "note": "relationships/0 on a page with none",
-      "path": "negative/families-relationship-locator-on-empty-page.json",
-      "sha256": "6191fd48e489defed9ca55f702a809f07d6316893e296d2cf56b230ebe840408"
-    },
-    {
-      "base": "complete-clean.json",
-      "bytes": 62354,
+      "base": "complete-small",
+      "bytes": 163270,
       "expect": {
         "admit": false,
         "error": "Bounds",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 6: facts > 4096 B",
+      "note": "invariant 6: facts of more than 4,096 serialized bytes",
       "path": "negative/families-facts-too-big.json",
-      "sha256": "523e14c8747028d6670da25f44df5d186f79c81243df64c56e773e7f7d937d22"
+      "sha256": "3c33b9a45eb1ad7e38f5b5af86ec71f23f4c95e3103c41540e6fc0db44a780a6",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Bounds"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58163,
+      "base": "complete-small",
+      "bytes": 158779,
       "expect": {
         "admit": false,
         "error": "Bounds",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 6: depth > 4",
+      "note": "invariant 6: facts nested to depth 5 (facts itself is level 1)",
       "path": "negative/families-facts-too-deep.json",
-      "sha256": "e63017e135fd0bf3f9ddc2c7352f56bc7b6b9683e3c12cc91fc052ab3e9cf040"
+      "sha256": "1b07eca703147c79b725943635d1c1840ad100950c1bd04650c7bd9a507f33fb",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Bounds"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 81401,
+      "base": "family-item-limit",
+      "bytes": 1049166,
       "expect": {
         "admit": false,
         "error": "Bounds",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 6: more items than max_items",
+      "note": "invariant 6: 129 items in a section with max_items 128",
       "path": "negative/families-items-over-max.json",
-      "sha256": "68252a4f5079f6a56dd3773b88d5a9fb1675b18d12c97bc1aff0bcff96d5888b"
+      "sha256": "b9c47b321aa2acb2ba18df990628690ab5188286cac9d88ef1ac24427a2511b4",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Bounds"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58146,
+      "base": "complete-small",
+      "bytes": 933994,
+      "expect": {
+        "admit": false,
+        "error": "Bounds",
+        "stage": "inspection"
+      },
+      "note": "every section filled to exactly its own max_bytes (the six caps sum to 786,432); the envelope pushes the compact total over the families cap",
+      "path": "negative/families-over-786432.json",
+      "sha256": "e3cf74d4d4d3fd80d7157b1204a0363e6dbf0fdab201566b997ad264d211a90f",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Bounds"
+      }
+    },
+    {
+      "base": "complete-small",
+      "bytes": 158627,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "invariant 7",
+      "note": "pages[0].relationships is an object under v2",
+      "path": "negative/families-relationships-not-array.json",
+      "sha256": "f4fa6843badaf6cd02a4e359fac66733d4c79ff1849912963a6c847922b2d713",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
+    },
+    {
+      "base": "complete-small",
+      "bytes": 158853,
+      "expect": {
+        "admit": false,
+        "error": "Shape",
+        "stage": "inspection"
+      },
+      "note": "invariant 7: the first two items of a section swapped",
       "path": "negative/families-unsorted.json",
-      "sha256": "b1d8375aa544ce2e4a88c05712a89ae4577718ec483d9ec89168da9892bc87a9"
+      "sha256": "89dcaf8cbf5fced65f2de2390523cfff19e1a64dedc9c46aca85ff8350a4a760",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58142,
+      "base": "complete-small",
+      "bytes": 158849,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "section max_bytes differs from the table",
+      "note": "a section max_bytes that differs from the table",
       "path": "negative/families-wrong-max-bytes.json",
-      "sha256": "e46faa12c336545f0e19cd102a191cd16659af4f531645d583efb99676e264aa"
+      "sha256": "bdbd3f89a02fd394f6ddfcff2b3e3104a38b60addf6a20fc186fcfd8559a94f1",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58162,
+      "base": "complete-small",
+      "bytes": 158869,
       "expect": {
         "admit": false,
         "error": "Bounds",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "row still carries candidates",
+      "note": "a manifest row still carrying candidates",
       "path": "negative/manifest-list-under-v2.json",
-      "sha256": "59a480bc6e7ab99baa11b0c86ab506824864c23e28bb646cef262f3ea5fd789f"
+      "sha256": "5c3605a65df4c6d5f8cb347b9a1475c760b92a1a95eed4c55a5f588dd97a3852",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Bounds"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58052,
+      "base": "complete-small",
+      "bytes": 158759,
       "expect": {
         "admit": false,
         "error": "Bounds",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "row lacks candidates_digest",
+      "note": "a row without candidates_digest",
       "path": "negative/manifest-row-missing-digest.json",
-      "sha256": "70b54c3af72a115b72a8fcb1dd45e99368970a82f12bf8df7731226ef77e2137"
+      "sha256": "2af17cf51328f29fb0f7f87ae50b2c77b3118e17a6bee5597c816a6d0e23777e",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Bounds"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58085,
+      "base": "complete-small",
+      "bytes": 158791,
       "expect": {
         "admit": false,
         "error": "Bounds",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "malformed digest",
+      "note": "a malformed candidates_digest",
       "path": "negative/manifest-row-bad-digest.json",
-      "sha256": "1bb04e184729662460e3cff0255f98bfff39e2a9e36fd1ef1c10c5331679dfa7"
+      "sha256": "fc7445857066566fb559a475556561feac9624c6640d5b6d92da187a4f528bc5",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Bounds"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58152,
+      "base": "complete-small",
+      "bytes": 158863,
       "expect": {
         "admit": false,
         "error": "Bounds",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "unknown row key",
+      "note": "an unknown key in a manifest row",
       "path": "negative/manifest-row-extra-key.json",
-      "sha256": "1c4fb79a4ddb1066439421b74b812987d2a85c2d8bd0408565f23eaa29a2fee3"
+      "sha256": "ff27b8276d642d3c9e7d4df8eff8db472f74e3ba5494f9ed3f6a8331c2792b9b",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Bounds"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 71646,
+      "base": "complete-small",
+      "bytes": 176884,
       "expect": {
         "admit": false,
         "error": "Bounds",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "v2 manifest compact > 16,384 B",
+      "note": "a v2 manifest of more than 16,384 compact bytes",
       "path": "negative/manifest-over-16384-v2.json",
-      "sha256": "8f5dc3b591fe00636e74170affd1daa2a7cdf03923e541f3965d9dfe2008d34a"
+      "sha256": "12f87d6cdb2ca0e3de928e13a80a064d87a5d5b7da6d70fd44c3a9ce3b6d7c50",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Bounds"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 68153,
+      "base": "complete-small",
+      "bytes": 318591,
       "expect": {
         "admit": false,
         "error": "Bounds",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "1,025 observations",
+      "note": "evidence_contract with 1,025 observations",
       "path": "negative/s01-obs-1025-v2.json",
-      "sha256": "8aba0973ed46e6b80d2213f6480f45c2a766d8fb87a4f30285626ec60f63514a"
+      "sha256": "059014bc1ff28e6d9e32c8a8ca1634129ca691e8cd16da1e0db7037dbc581494",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Bounds"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 65176,
+      "base": "complete-small",
+      "bytes": 601671,
       "expect": {
         "admit": false,
         "error": "Bounds",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "1,025 evaluations",
+      "note": "evidence_contract with 1,025 evaluations",
       "path": "negative/s01-evals-1025-v2.json",
-      "sha256": "8e04588646d238a103cd18beac9167992363f061bf2732870d0408ac8cebc672"
+      "sha256": "4c91f76b9c879b746f195416811d1e2f6b4f2f136a4ecf0a4f56b3fb90a5649d",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Bounds"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 51526,
+      "base": "v1 twin of complete-small",
+      "bytes": 156611,
       "expect": {
         "admit": false,
         "error": "Bounds",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "s14-wire-3 (no families, so the label is the only defect)",
+      "note": "label s14-wire-3, no families: the label is the only defect",
       "path": "negative/unknown-wire-label.json",
-      "sha256": "db4aece145475e4d93a0e74498acdc66428d1dc770536e0663a3febeadad68d5"
+      "sha256": "5983f0c5d2f145cf0c5f37503bbd660ebcc6e8239736de93ce9f3421a83f8475",
+      "wire": "s14-wire-3",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Bounds"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58146,
+      "base": "complete-small",
+      "bytes": 158853,
       "expect": {
         "admit": false,
         "error": "Shape",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "families under an unrecognised label",
+      "note": "evidence_families under an unrecognised label",
       "path": "negative/unknown-wire-label-with-families.json",
-      "sha256": "2b962848dec96cca06f0c2eba3021ea0e839063558ba5a26ebb816269e44b1ba"
+      "sha256": "935178c27e7d497619e6f281e047f2fee49929d7efb0c38239a1cb4bc19579f2",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "inspection",
+        "error": "Shape"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58146,
+      "base": "complete-small",
+      "bytes": 158853,
       "expect": {
         "admit": false,
         "error": "SemanticMismatch",
         "stage": "summary"
       },
-      "handmade": true,
       "note": "candidates_count off by one",
       "path": "negative/manifest-count-mismatch.json",
-      "sha256": "cfe6c5415be611978e05f228ee7002e6dde02f61448e3501cb9414165e591885"
+      "sha256": "2a1c23497aa35b4eddeea302931f00e42ba2831114171d2ec478c6c38690cc6b",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "summary",
+        "error": "SemanticMismatch"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58146,
+      "base": "complete-small",
+      "bytes": 158852,
       "expect": {
         "admit": false,
         "error": "SemanticMismatch",
         "stage": "summary"
       },
-      "handmade": true,
-      "note": "candidates_count < emitted",
+      "note": "candidates_count below the emitted record count",
       "path": "negative/manifest-count-below-emitted.json",
-      "sha256": "30e589195d9ecf6e1f21c0a820aed0503780524afd907466d810a833c245492c"
+      "sha256": "548813e2e2522b90111505390575bdd7a94222eb9b0cbf019f59cc6bfe1d6ae6",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "summary",
+        "error": "SemanticMismatch"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 58146,
+      "base": "complete-small",
+      "bytes": 158853,
       "expect": {
         "admit": false,
         "error": "SemanticMismatch",
         "stage": "summary"
       },
-      "handmade": true,
-      "note": "digest of a different list",
+      "note": "candidates_digest of a different list",
       "path": "negative/manifest-digest-mismatch.json",
-      "sha256": "ce535d481de87f8c00a8101c8da1983b9d0396fe75bac5788c5cee780870d971"
+      "sha256": "8e02caded1b18f85289a86f8daa0b77df29ad95fc7a376ab3a6575ad5241c70f",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "summary",
+        "error": "SemanticMismatch"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 51526,
+      "base": "v1 twin of complete-small",
+      "bytes": 147327,
       "expect": {
         "admit": false,
         "error": "SemanticMismatch",
         "stage": "summary"
       },
-      "handmade": true,
-      "note": "digest rows under the v1 label",
+      "note": "digest-form rows under the v1 label",
       "path": "negative/manifest-digest-under-v1.json",
-      "sha256": "fb7a20e71a8a88bc75ccd5193c7cece3731ef162fe4f0ed1bc046962957012a1"
+      "sha256": "cef06403db900b73309d4b4d98ca22156bea37c0ec70476c3bf9053ac5adc525",
+      "wire": "s14-wire-1",
+      "admit": {
+        "admit": false,
+        "stage": "summary",
+        "error": "SemanticMismatch"
+      }
     },
     {
-      "base": "partial-sources.json",
-      "bytes": 57871,
+      "base": "partial-sources",
+      "bytes": 65223,
       "expect": {
         "admit": false,
         "error": "SemanticMismatch",
         "stage": "population"
       },
-      "handmade": true,
-      "note": "duplicate multiplicity (population stage)",
+      "note": "a finding present twice: multiplicity differs from the rebuilt population",
       "path": "negative/population-duplicate-finding-v2.json",
-      "sha256": "6eecec8bae159a73461eac8ca14fa619d41ccb24f199cea887f5b11c06781ccc"
+      "sha256": "8c748dd7af2391f211fe2a2c0f38a6adce519e28ee7dcfbe1055732de651c148",
+      "wire": "s14-wire-2",
+      "admit": {
+        "admit": false,
+        "stage": "population",
+        "error": "SemanticMismatch"
+      }
     },
     {
-      "base": "complete-clean.json",
-      "bytes": 51067,
+      "base": "exact-cap-v2",
+      "bytes": 4952757,
       "expect": {
         "admit": false,
-        "error": "Shape",
+        "error": "ByteLimit",
         "stage": "inspection"
       },
-      "handmade": true,
-      "note": "families under the v1 label",
-      "path": "negative/families-null-v1.json",
-      "sha256": "8b02ea78bc5080ea5c278f39099f9a805ecc4394121dd25c1020a3b00db2db97"
-    },
-    {
-      "base": "complete-clean.json",
-      "bytes": 51076,
-      "expect": {
+      "note": "4,952,757 B: one byte over HTP_MAX_REPORT_BYTES (the API answers 413 report_limit before admit; admit itself says ByteLimit)",
+      "path": "negative/cap-plus-one-v2.json",
+      "sha256": "92fb8bad643a7a629952f80709e79862c2dfa0d8aa09af0e4db315b0d423c79f",
+      "wire": "s14-wire-2",
+      "admit": {
         "admit": false,
-        "error": "Shape",
-        "stage": "inspection"
-      },
-      "handmade": true,
-      "note": "families under the v1 label",
-      "path": "negative/families-object-v1.json",
-      "sha256": "fc0c36c8bebad8455e3a56b16074ac3738ee238e9fa0335b32b194d5d53aac06"
+        "stage": "inspection",
+        "error": "ByteLimit"
+      }
     }
   ],
+  "generator": "examples/make_wire2_fixtures.rs",
   "manifest_version": 1,
-  "origin": "hand-built by WP8c-1 from tests/fixtures/s14-schema4-v1 (generator: tests/wire2_common/mod.rs); replace with byte-copies of SEOsmith 8b-4 fixtures/wire2"
+  "max_report_bytes": 4952756,
+  "note": "Generated only by the Rust producer; never hand-edited. 'expect' is the design section 5 stage table; scripts/verify-s14-schema4.py --wire2 --admit <bin> compares it with the HTP receiver's `rejected stage=.. error=..` line. No fixture expects the commit stage (SQL-only rejections are tested in 8c-2).",
+  "v1_revision": "s14-wire-1/full-population-1/evidence-v1",
+  "v2_revision": "s14-wire-2/full-population-1/evidence-v1/families-v1",
+  "admit_receiver_commit": "238415136ae01cc05f581f3a6d5d3cb3318111fa"
 }

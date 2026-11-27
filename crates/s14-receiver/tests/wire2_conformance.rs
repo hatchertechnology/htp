@@ -25,31 +25,43 @@ fn name(e: InspectionError) -> String {
     format!("{e:?}")
 }
 
-#[test]
-#[ignore = "writes the fixtures: WIRE2_REGEN=1 cargo test --test wire2_conformance regenerate -- --ignored"]
-fn regenerate() {
-    assert_eq!(std::env::var("WIRE2_REGEN").as_deref(), Ok("1"));
-    let cases = cases();
-    for c in &cases {
-        let p = dir().join(&c.path);
-        fs::create_dir_all(p.parent().unwrap()).unwrap();
-        fs::write(p, &c.bytes).unwrap();
-    }
-    fs::write(dir().join("manifest.json"), manifest_text(&cases)).unwrap();
+/// sha256 of the committed `manifest.json`, i.e. of the `SEOsmith` 8b-4 manifest at
+/// the source commit recorded in `SOURCE`. Changing the manifest means re-copying
+/// the whole 8b-4 set, never editing it here.
+const MANIFEST_SHA256: &str = "8cf09c2ab2d3534590061a7c5a3128753615279958ad5122fc0173d06229448b";
+const SOURCE_COMMIT: &str = "ad1e8612268fcaae92d618cb867fdeea10552094";
+
+fn manifest() -> Value {
+    serde_json::from_slice(&fs::read(dir().join("manifest.json")).unwrap()).unwrap()
 }
 
+/// The fixtures are byte-copies of `SEOsmith` 8b-4 `fixtures/wire2/**`: the manifest is
+/// pinned, every file's size and sha256 equal the manifest, and no file is orphaned.
 #[test]
-fn committed_fixtures_equal_the_generator_and_the_manifest() {
-    let cases = cases();
-    assert!(cases.len() >= 40, "{} cases", cases.len());
-    for c in &cases {
-        let on_disk = fs::read(dir().join(&c.path)).unwrap_or_else(|e| panic!("{}: {e}", c.path));
-        assert_eq!(on_disk, c.bytes, "{} differs from the generator", c.path);
+fn committed_fixtures_are_the_pinned_8b4_set() {
+    let raw = fs::read(dir().join("manifest.json")).unwrap();
+    assert_eq!(sha_hex(&raw), MANIFEST_SHA256, "manifest.json changed");
+    let source = fs::read_to_string(dir().join("SOURCE")).unwrap();
+    assert!(source.contains(SOURCE_COMMIT), "SOURCE: {source}");
+    let m = manifest();
+    assert_eq!(m["manifest_version"], 1);
+    assert_eq!(m["v2_revision"], V2_REV);
+    assert_eq!(m["v1_revision"], V1_REV);
+    assert_eq!(m["max_report_bytes"], 4_952_756);
+    let files = m["files"].as_array().unwrap();
+    let positives = files
+        .iter()
+        .filter(|f| f["expect"]["admit"] == true)
+        .count();
+    assert_eq!((positives, files.len() - positives), (14, 49));
+    let mut listed = Vec::new();
+    for f in files {
+        let path = f["path"].as_str().unwrap();
+        let b = fs::read(dir().join(path)).unwrap_or_else(|e| panic!("{path}: {e}"));
+        assert_eq!(b.len() as u64, f["bytes"].as_u64().unwrap(), "{path} bytes");
+        assert_eq!(sha_hex(&b), f["sha256"].as_str().unwrap(), "{path} sha256");
+        listed.push(path.to_owned());
     }
-    let on_disk = fs::read_to_string(dir().join("manifest.json")).unwrap();
-    assert_eq!(on_disk, manifest_text(&cases));
-    // no orphan files beside the manifest
-    let mut listed: Vec<_> = cases.iter().map(|c| c.path.clone()).collect();
     let mut found = Vec::new();
     for sub in ["positive", "negative"] {
         for e in fs::read_dir(dir().join(sub)).unwrap() {
@@ -61,7 +73,7 @@ fn committed_fixtures_equal_the_generator_and_the_manifest() {
     }
     listed.sort();
     found.sort();
-    assert_eq!(found, listed);
+    assert_eq!(found, listed, "orphan or missing fixture files");
 }
 
 /// Design section 5: on rejection `examples/admit.rs` prints exactly one last
@@ -124,8 +136,7 @@ fn admit_stays_within_the_ten_second_budget_on_the_largest_fixture() {
 
 #[test]
 fn admit_stage_and_error_match_the_manifest_for_every_fixture() {
-    let manifest: Value =
-        serde_json::from_slice(&fs::read(dir().join("manifest.json")).unwrap()).unwrap();
+    let manifest = manifest();
     let files = manifest["files"].as_array().unwrap();
     let (mut accepted, mut rejected) = (0, 0);
     let mut mismatches = Vec::new();
@@ -135,12 +146,29 @@ fn admit_stage_and_error_match_the_manifest_for_every_fixture() {
         assert_eq!(sha_hex(&bytes), f["sha256"].as_str().unwrap(), "{path}");
         let got = admit(&bytes, dl());
         let expect = &f["expect"];
+        // the `admit` record (written by the verify script against this receiver)
+        // must say the same as `expect`
+        let rec = &f["admit"];
+        assert_eq!(rec["admit"], expect["admit"], "{path} admit record");
+        for k in ["validator_revision", "stage", "error"] {
+            assert_eq!(rec.get(k), expect.get(k), "{path} admit.{k}");
+        }
         if expect["admit"] == true {
             let a = got.unwrap_or_else(|e| panic!("{path}: unexpected rejection {e}"));
             assert_eq!(
                 a.validator_revision,
                 expect["validator_revision"].as_str().unwrap(),
                 "{path}"
+            );
+            assert_eq!(
+                format!("sha256:{}", sha_hex(&a.summary.canonical)),
+                rec["summary_sha256"].as_str().unwrap(),
+                "{path} summary sha256"
+            );
+            assert_eq!(
+                a.summary.canonical.len() as u64,
+                rec["summary_bytes"].as_u64().unwrap(),
+                "{path} summary bytes"
             );
             // every independent check agrees
             check_source_bindings(&bytes, dl()).unwrap();
@@ -172,7 +200,7 @@ fn admit_stage_and_error_match_the_manifest_for_every_fixture() {
         }
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
-    assert!(accepted >= 10 && rejected >= 30, "{accepted}/{rejected}");
+    assert_eq!((accepted, rejected), (14, 49));
 }
 
 /// Review R2-1: `check_*` parity on a rejected fixture (section 5/7: "admit and every
@@ -223,48 +251,79 @@ fn check_parity(path: &str, b: &[u8], expect: &Value) -> Vec<String> {
     bad
 }
 
-/// Review R2-1: `check_consistency` under v2 equals its v1 twin, for every v2 positive
-/// that has a v1 base (the base is named in the manifest).
+/// RECEIVER-ONLY cases the 8b-4 set does not cover (w1c-8b4 finding 3): the producer
+/// writes compact JSON only, so raw-whitespace boundary positives, the facts depth-4
+/// boundary and the locator-on-linkless-page negatives cannot come from it. They are
+/// generated in memory by `wire2_common::cases()` (no committed files) and asserted
+/// here; `check_*` parity runs on each.
+const RECEIVER_ONLY: [&str; 5] = [
+    "positive/families-raw-over-cap-compact-ok.json",
+    "positive/manifest-raw-over-16384-compact-ok.json",
+    "positive/families-facts-depth-4.json",
+    "negative/families-link-locator-on-linkless-page.json",
+    "negative/families-relationship-locator-on-empty-page.json",
+];
+
 #[test]
-fn check_consistency_v2_matches_the_v1_twin() {
-    let manifest: Value =
-        serde_json::from_slice(&fs::read(dir().join("manifest.json")).unwrap()).unwrap();
-    let mut twins = 0;
-    let mut omitting = 0;
-    for f in manifest["files"].as_array().unwrap() {
-        if f["expect"]["admit"] != true {
-            continue;
-        }
-        let (path, base) = (f["path"].as_str().unwrap(), f["base"].as_str().unwrap());
-        let a = fs::read(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/s14-schema4-v1")
-                .join(base),
-        )
-        .unwrap();
-        let b = fs::read(dir().join(path)).unwrap();
-        let (x, y) = (
-            check_consistency(&a, dl()).unwrap(),
-            check_consistency(&b, dl()).unwrap(),
-        );
-        assert_eq!(
-            (x.rules_checked, x.omitted_records),
-            (y.rules_checked, y.omitted_records),
-            "{path} vs {base}"
-        );
-        omitting += usize::from(y.omitted_records > 0);
-        twins += 1;
-    }
-    let positives = manifest["files"]
+fn receiver_only_cases_keep_the_coverage_the_8b4_set_lacks() {
+    let all = cases();
+    let manifest_paths: Vec<String> = manifest()["files"]
         .as_array()
         .unwrap()
         .iter()
-        .filter(|f| f["expect"]["admit"] == true)
-        .count();
-    assert_eq!(twins, positives, "every v2 positive has a twin");
-    assert!(twins >= 15, "{twins}");
-    // the cap fixture really omits records, so the comparison is not vacuous
-    assert!(omitting > 0);
+        .map(|f| f["path"].as_str().unwrap().to_owned())
+        .collect();
+    let v1dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/s14-schema4-v1");
+    let mut seen = 0;
+    for want in RECEIVER_ONLY {
+        let c = all
+            .iter()
+            .find(|c| c.path == want)
+            .unwrap_or_else(|| panic!("generator lost {want}"));
+        assert!(
+            !manifest_paths.iter().any(|p| p == want),
+            "{want} now in 8b-4: drop it here"
+        );
+        seen += 1;
+        let got = admit(&c.bytes, dl());
+        match c.expect {
+            None => {
+                let a = got.unwrap_or_else(|e| panic!("{want}: rejected {e}"));
+                assert_eq!(a.validator_revision, V2_REV, "{want}");
+                check_source_bindings(&c.bytes, dl()).unwrap();
+                check_scalar_advisories(&c.bytes, dl()).unwrap();
+                check_reconstructed_rules(&c.bytes, dl()).unwrap();
+                finding_coverage_batch(&c.bytes, dl()).unwrap();
+                // check_consistency under v2 equals its v1 twin (the base is a v1 fixture)
+                let twin = fs::read(v1dir.join(c.base)).unwrap();
+                let (x, y) = (
+                    check_consistency(&twin, dl()).unwrap(),
+                    check_consistency(&c.bytes, dl()).unwrap(),
+                );
+                assert_eq!(
+                    (x.rules_checked, x.omitted_records),
+                    (y.rules_checked, y.omitted_records),
+                    "{want} vs {}",
+                    c.base
+                );
+            }
+            Some((stage, error)) => {
+                let e = got.expect_err(want);
+                assert_eq!(
+                    (e.stage.as_str(), name(e.error)),
+                    (stage, error.to_owned()),
+                    "{want}"
+                );
+                let expect = serde_json::json!({"stage": stage, "error": error});
+                let bad = check_parity(want, &c.bytes, &expect);
+                assert!(bad.is_empty(), "{}", bad.join("\n"));
+            }
+        }
+    }
+    assert_eq!(seen, 5);
+    // the raw-whitespace positives really are over their raw caps (not vacuous)
+    let raw = |n: &str| all.iter().find(|c| c.path == n).unwrap().bytes.len();
+    assert!(raw(RECEIVER_ONLY[0]) > 786_432 && raw(RECEIVER_ONLY[1]) > 16_384);
 }
 
 /// F1 (review-8c1-h): a v1 report whose page carries a non-array `relationships`
