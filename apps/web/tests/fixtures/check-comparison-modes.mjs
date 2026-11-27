@@ -119,7 +119,8 @@ if (mode === 'off') {
     if (await page.locator('main.page-shell input[type=file], main.page-shell textarea, main.page-shell input[type=checkbox], main.page-shell select').count() !== 0) throw Error('read-only exposes editing controls')
     await page.getByRole('button',{name:/future comparison/}).click()
     await page.getByRole('alert').getByText(/unsupported semantics/).waitFor()
-    const allowed = ['independent_audit_history','independent_comparison_history','independent_comparison_detail']
+    // The dashboard entry also reads its saved alerts before opening the comparison page.
+    const allowed = ['audit_event_history', 'audit_operational_history', 'independent_audit_history', 'independent_comparison_history', 'independent_comparison_detail']
     if (auditRequests.length) throw Error(`read-only requested SEOsmith audits: ${auditRequests}`)
     if (calls.some(name => !allowed.includes(name))) throw Error(`unexpected RPC: ${calls}`)
   } else {
@@ -127,7 +128,8 @@ if (mode === 'off') {
     if (await page.getByRole('button',{name:'Save comparison'}).count()) throw Error('s15-metadata-1 replay offers Save comparison')
     await page.getByRole('button',{name:/schema four comparison/}).click()
     await page.getByRole('table').waitFor()
-    await page.getByRole('button',{name:'Save comparison'}).waitFor()
+    await page.getByText(/replays under s15-metadata-2/).waitFor()
+    if (await page.getByRole('button',{name:'Save comparison'}).count()) throw Error('s15-metadata-2 replay offers Save comparison')
     await page.getByRole('button',{name:'Save import'}).waitFor()
     await page.getByRole('button',{name:'Delete independent evidence'}).waitFor()
     await page.getByText(/Compared SEOsmith report: example\.com/).waitFor()
@@ -136,6 +138,7 @@ if (mode === 'off') {
     await select.selectOption(b)
     if(await box.isChecked()) throw Error('assertion persisted across run switch')
     await box.check()
+    await page.getByRole('button',{name:'Save comparison',exact:true}).waitFor()
     // The default semantics is s15-metadata-3: the schema-4 report gives an absent observation that agrees with the CSV.
     await page.getByText(/1 agreement/).first().waitFor()
     delaySource = true
