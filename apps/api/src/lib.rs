@@ -5,6 +5,7 @@ mod audit_export;
 pub mod auth;
 mod bing;
 mod dashboard_cors;
+mod evidence_families;
 mod form_confirmation;
 mod form_inbox;
 mod form_ingress;
@@ -66,6 +67,7 @@ pub struct RolloutCapabilities {
     pub remediation: bool,
     pub comparisons: bool,
     pub comparisons_read_only: bool,
+    pub evidence_families: bool,
 }
 impl RolloutCapabilities {
     fn from_env() -> Self {
@@ -76,6 +78,8 @@ impl RolloutCapabilities {
             comparisons_read_only: std::env::var("HTP_ROLLOUT_COMPARISONS_READ_ONLY").as_deref()
                 == Ok("true"),
             remediation: std::env::var("HTP_ROLLOUT_REMEDIATION").as_deref() == Ok("true"),
+            evidence_families: std::env::var("HTP_ROLLOUT_EVIDENCE_FAMILIES").as_deref()
+                == Ok("true"),
         }
     }
 }
@@ -118,6 +122,10 @@ pub fn app_with_capabilities(
         .merge(insights::router(websites.clone()))
         .merge(bing::router(websites.clone()))
         .merge(seosmith::read_router(websites.clone()))
+        .merge(evidence_families::router(
+            websites.clone(),
+            capabilities.evidence_families,
+        ))
         .merge(repositories::router(websites.clone()))
         .merge(form_verification::router(
             form_verification::FormVerificationState {
