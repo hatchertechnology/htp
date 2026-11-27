@@ -284,8 +284,7 @@ function compareS15Metadata3(rows: Observation[], report: Report, assertedUnmodi
     if (!pageUrls.has(row.url)) return { state: 'unknown', reason: 'no_page' }
     if (evaluation.outcome === 'fail') return { state: 'present' }
     if (evaluation.outcome === 'pass' && row.rule === 'missing_title' && pageProof) return { state: 'absent' }
-    // A `pass` for missing_description, an `unknown`/`not_applicable`/other outcome, and a `pass` for
-    // missing_title while the rule still carries unknown coverage all take the coverage reason.
+    if (evaluation.outcome === 'not_applicable') return { state: 'unknown', reason: 'not_applicable' }
     return { state: 'unknown', ...coverageReason(row.rule, cov.unknown, evaluation.outcome === 'pass' ? 'absence_not_established' : 'unknown_outcome') }
   }
   return combined.map(row => {

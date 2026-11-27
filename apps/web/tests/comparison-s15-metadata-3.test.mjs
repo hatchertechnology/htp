@@ -1,4 +1,4 @@
-import { test } from 'node:test'
+import { test } from 'vitest'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { compareIndependent, pageEntityId } from '../shared/utils/independent-audit.ts'
@@ -44,7 +44,9 @@ test('Kerry saved report projections prove complete pages and reject partial cra
   const kerryRows = complete.pages.filter(p => !p.is_resource).map(p => ({ url: p.url, rule: 'missing_title', state: 'absent' }))
   const outcomes = compareIndependent(kerryRows, complete, true, 's15-metadata-3')
   assert.equal(outcomes.filter(r => r.seosmith === 'absent').length, 48)
-  assert.equal(outcomes.filter(r => r.seosmith === 'unknown').length, 9)
+  const unknown = outcomes.filter(r => r.seosmith === 'unknown')
+  assert.equal(unknown.length, 9)
+  assert.ok(unknown.every(r => r.reason === 'not_applicable' && r.reason_count === undefined))
   assert.ok(compareIndependent(kerryRows, partial, true, 's15-metadata-3').every(r => r.seosmith === 'unknown'))
   complete.pages.pop()
   assert.ok(compareIndependent(kerryRows, complete, true, 's15-metadata-3').every(r => r.seosmith !== 'absent'))
