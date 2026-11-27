@@ -11,6 +11,7 @@ drop function if exists public.delete_independent_audit_evidence(uuid,text,text)
 drop function if exists public.independent_evidence_fingerprint(uuid);
 drop function if exists public.independent_comparison_detail(uuid,uuid);
 drop function if exists public.independent_comparison_history(uuid,timestamptz,uuid);
+drop function if exists public.save_independent_comparison_versioned(uuid,uuid,uuid,boolean,text);
 drop function if exists public.save_independent_comparison(uuid,uuid,uuid,boolean);
 drop table if exists public.independent_audit_comparisons;
 drop function if exists public.independent_audit_history(uuid,uuid,timestamptz,uuid);

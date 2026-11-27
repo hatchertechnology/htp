@@ -6,6 +6,8 @@ const target = new URL(origin)
 if (target.protocol !== 'http:' || target.hostname !== '127.0.0.1') throw new Error('This test only runs against loopback HTTP.')
 const mode = process.env.HTP_COMPARISON_MODE || 'off'
 const calls = [], auditRequests = [], importBodies = []
+const dashboardRpcs = ['audit_event_history', 'audit_operational_history']
+const createComparisonHint = /Select a schema 4 run to create a comparison under s15-metadata-3/
 let delaySource = false, releaseSource, sourceRequested
 const sourceRequest = new Promise(resolve => { sourceRequested = resolve })
 const sourceRelease = new Promise(resolve => { releaseSource = resolve })
@@ -17,7 +19,7 @@ await page.addInitScript(({token,exp})=>localStorage.setItem('sb-raxuvdbdfmmtpqj
 const report={schema_version:1,engine_version:'0.2.0',ruleset_version:'2026-11-01.1',outcome:'completed',stop_reason:'frontier_exhausted',coverage_complete:true,pages:[{url:'https://example.com/',status:200,content_type:'text/html',error:null,is_resource:false,blocked_by_robots:false,flags:[],extraction_truncated:false}],findings:[]}
 // The schema-4 report the dashboard and s15-metadata-2 use. Entity ids are SEOsmith's: sha256('seosmith-entity-v1\npage\n' + url).
 const entity=url=>'sha256:'+createHash('sha256').update(`seosmith-entity-v1\npage\n${url}`).digest('hex')
-const report4={schema_version:4,engine_version:'0.2.0',ruleset_version:'2026-11-01.1',outcome:'completed',stop_reason:'frontier_exhausted',coverage_complete:true,pages:report.pages,findings:[],evidence_contract:{version:1,truncated:false,evaluation_coverage_complete:false,evaluations:[{entity_id:entity('https://example.com/'),rule:'missing_title',outcome:'pass',unknown_reason:null}],coverage:[{rule:'missing_title',unknown:0,unknown_reasons:{}},{rule:'missing_description',unknown:1,unknown_reasons:{legacy_not_instrumented:1}}]}}
+const report4={schema_version:4,engine_version:'0.2.0',ruleset_version:'2026-11-01.1',outcome:'completed',stop_reason:'frontier_exhausted',coverage_complete:true,pages:report.pages,findings:[],evidence_contract:{version:1,truncated:false,omitted_observations:0,observations:[{entity_id:entity('https://example.com/'),source_locator:'/pages/0'}],evaluation_coverage_complete:false,evaluations:[{entity_id:entity('https://example.com/'),rule:'missing_title',outcome:'pass',unknown_reason:null}],coverage:[{rule:'missing_title',entities:1,unknown:0,unknown_reasons:{}},{rule:'missing_description',unknown:1,unknown_reasons:{legacy_not_instrumented:1}}]}}
 const snapshot={id:'00000000-0000-0000-0000-000000000007',fqdn:'old.example.com',created_at:'saved comparison',semantics:'s15-metadata-1',import_id:src,delivery_id:a,unmodified_v1_asserted:true}
 const snapshot4={...snapshot,id:'00000000-0000-0000-0000-00000000000c',created_at:'schema four comparison',semantics:'s15-metadata-2'}
 const unsupported={...snapshot,id:'00000000-0000-0000-0000-000000000008',created_at:'future comparison',semantics:'future-semantics'}
@@ -58,7 +60,7 @@ if (mode === 'off') {
   if (await link.count()) throw Error('off mode exposes dashboard link')
   await page.goto(`${origin}/independent-audits`)
   await page.getByText('Independent audit comparisons are not available yet.').waitFor()
-  if (calls.length) throw Error(`off mode issued RPCs: ${calls}`)
+  if (calls.some(name => !dashboardRpcs.includes(name))) throw Error(`unexpected off-mode RPC: ${calls}`)
 } else {
   await link.click()
   await page.getByRole('button',{name:/example.csv/}).waitFor({timeout:20000})
@@ -85,6 +87,8 @@ if (mode === 'off') {
     await page.getByRole('table').waitFor()
     await page.getByText(/1 agreement/).first().waitFor()
     await page.getByRole('table').getByText('absent',{exact:true}).first().waitFor()
+    await page.getByText('This schema version 4 report replays under s15-metadata-2.', { exact: true }).waitFor()
+    if (await page.getByText(createComparisonHint).count()) throw Error('read-only replay offers a run selection instruction')
     await page.getByRole('button',{name:/saved comparison/}).click()
     await page.getByRole('table').waitFor()
     await page.getByText(/Compared SEOsmith report: example\.com/).waitFor()
@@ -119,7 +123,8 @@ if (mode === 'off') {
     if (await page.locator('main.page-shell input[type=file], main.page-shell textarea, main.page-shell input[type=checkbox], main.page-shell select').count() !== 0) throw Error('read-only exposes editing controls')
     await page.getByRole('button',{name:/future comparison/}).click()
     await page.getByRole('alert').getByText(/unsupported semantics/).waitFor()
-    const allowed = ['independent_audit_history','independent_comparison_history','independent_comparison_detail']
+    // The dashboard entry also reads its saved alerts before opening the comparison page.
+    const allowed = [...dashboardRpcs, 'independent_audit_history', 'independent_comparison_history', 'independent_comparison_detail']
     if (auditRequests.length) throw Error(`read-only requested SEOsmith audits: ${auditRequests}`)
     if (calls.some(name => !allowed.includes(name))) throw Error(`unexpected RPC: ${calls}`)
   } else {
@@ -127,7 +132,9 @@ if (mode === 'off') {
     if (await page.getByRole('button',{name:'Save comparison'}).count()) throw Error('s15-metadata-1 replay offers Save comparison')
     await page.getByRole('button',{name:/schema four comparison/}).click()
     await page.getByRole('table').waitFor()
-    await page.getByRole('button',{name:'Save comparison'}).waitFor()
+    await page.getByText(/replays under s15-metadata-2/).waitFor()
+    await page.getByText(createComparisonHint).waitFor()
+    if (await page.getByRole('button',{name:'Save comparison'}).count()) throw Error('s15-metadata-2 replay offers Save comparison')
     await page.getByRole('button',{name:'Save import'}).waitFor()
     await page.getByRole('button',{name:'Delete independent evidence'}).waitFor()
     await page.getByText(/Compared SEOsmith report: example\.com/).waitFor()
@@ -136,7 +143,8 @@ if (mode === 'off') {
     await select.selectOption(b)
     if(await box.isChecked()) throw Error('assertion persisted across run switch')
     await box.check()
-    // The default semantics is s15-metadata-2: the schema-4 report gives an absent observation that agrees with the CSV.
+    await page.getByRole('button',{name:'Save comparison',exact:true}).waitFor()
+    // The default semantics is s15-metadata-3: the schema-4 report gives an absent observation that agrees with the CSV.
     await page.getByText(/1 agreement/).first().waitFor()
     delaySource = true
     const failed = page.waitForResponse(response => response.url().endsWith('/independent_audit_history') && response.status() === 500)

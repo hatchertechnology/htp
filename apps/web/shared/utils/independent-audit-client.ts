@@ -39,8 +39,8 @@ export function createIndependentAuditClient(runtime: Runtime, request: Request,
       ? rest(site, 'independent-audits', 'POST', { format: 'controlled-csv-v1', source, metadata })
       : legacy('import_independent_audit', { p_website_id: site, p_format: 'controlled-csv-v1', p_source: source, p_metadata: metadata }),
     save: (site: string, importId: string, deliveryId: string, asserted: boolean) => staticMode
-      ? rest(site, 'independent-comparisons', 'POST', { import_id: importId, delivery_id: deliveryId, asserted })
-      : legacy('save_independent_comparison', { p_website_id: site, p_import_id: importId, p_delivery_id: deliveryId, p_asserted: asserted }),
+      ? rest(site, 'independent-comparisons', 'POST', { import_id: importId, delivery_id: deliveryId, asserted, semantics: 's15-metadata-3' })
+      : legacy('save_independent_comparison_versioned', { p_website_id: site, p_import_id: importId, p_delivery_id: deliveryId, p_asserted: asserted, p_semantics: 's15-metadata-3' }),
     remove: (site: string, confirmation: string, fingerprint: string) => staticMode
       ? rest(site, 'independent-evidence', 'DELETE', { confirmation, export_fingerprint: fingerprint })
       : legacy('delete_independent_audit_evidence', { p_website_id: site, p_confirmation: confirmation, p_export_fingerprint: fingerprint }),

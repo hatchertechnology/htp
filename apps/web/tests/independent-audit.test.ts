@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { compareIndependent, parseControlledCsv, normalizeProvenance, provenanceEntries, summarizeComparison, sourceByteLength, PROVENANCE_FIELDS } from '../shared/utils/independent-audit'
 
-// s15-metadata-1 is frozen: these tests pin it explicitly now that the default semantics is s15-metadata-2.
+// s15-metadata-1 is frozen: these tests pin it explicitly now that the default semantics is s15-metadata-3.
 const compare1 = (rows: Parameters<typeof compareIndependent>[0], report: Parameters<typeof compareIndependent>[1], asserted: boolean) => compareIndependent(rows, report, asserted, 's15-metadata-1')
 
 describe('S15 independent observations', () => {

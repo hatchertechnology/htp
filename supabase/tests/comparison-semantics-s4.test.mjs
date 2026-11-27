@@ -116,3 +116,42 @@ test('migration 13 is idempotent only by refusing a second run', async () => {
     await assert.rejects(() => db.exec(migration), /comparison_semantics_function_drift/)
   } finally { await db.close() }
 })
+
+test('page migration keeps old clients at v2 and explicit clients at v3', async () => {
+  const db = await baseline()
+  try {
+    await db.exec(await read('../migrations/20261213000000_comparison_semantics_s4.sql'))
+    await db.query("insert into public.independent_audit_imports(id,website_id,fqdn,format,source_text,source_sha256,metadata) values('00000000-0000-0000-0000-000000000006',$1,'example.com','controlled-csv-v1',$2,repeat('b',64),'{}')", [site, source])
+    await db.query('insert into public.comparison_pilot_approved_sites values($1,$2)', [site, owner])
+    await db.exec('grant execute on function public.save_independent_comparison(uuid,uuid,uuid,boolean) to authenticated')
+    await db.exec('alter default privileges in schema public grant execute on functions to service_role')
+    await db.exec(await read('../migrations/20261216000000_comparison_semantics_page.sql'))
+    assert.equal((await db.query("select has_function_privilege('service_role','public.save_independent_comparison_versioned(uuid,uuid,uuid,boolean,text)','execute') allowed")).rows[0].allowed, false)
+    await db.exec('set role authenticated')
+    await db.query("select set_config('request.jwt.claims',$1,false)", [JSON.stringify({ sub: owner, is_anonymous: false })])
+    const args = [site, '00000000-0000-0000-0000-000000000006', delivery]
+    assert.equal((await db.query('select public.save_independent_comparison($1,$2,$3,true) c', args)).rows[0].c.semantics, 's15-metadata-2')
+    assert.equal((await db.query("select public.save_independent_comparison_versioned($1,$2,$3,true,'s15-metadata-3') c", args)).rows[0].c.semantics, 's15-metadata-3')
+    await assert.rejects(() => db.query("select public.save_independent_comparison_versioned($1,$2,$3,true,'s15-metadata-2')", args), /invalid_comparison/)
+  } finally { await db.close() }
+})
+
+test('page migration preserves held grants and rejects source drift atomically', async () => {
+  const migration = await read('../migrations/20261216000000_comparison_semantics_page.sql')
+  let db = await baseline()
+  try {
+    await db.exec(await read('../migrations/20261213000000_comparison_semantics_s4.sql'))
+    await db.exec(migration)
+    assert.equal((await db.query("select has_function_privilege('authenticated','public.save_independent_comparison_versioned(uuid,uuid,uuid,boolean,text)','execute') a")).rows[0].a, false)
+    assert.equal((await db.query("select has_function_privilege('anon','public.save_independent_comparison_versioned(uuid,uuid,uuid,boolean,text)','execute') a")).rows[0].a, false)
+  } finally { await db.close() }
+  db = await baseline()
+  try {
+    await db.exec(await read('../migrations/20261213000000_comparison_semantics_s4.sql'))
+    await db.exec('alter function public.save_independent_comparison(uuid,uuid,uuid,boolean) set search_path=public')
+    await assert.rejects(() => db.exec(migration), /comparison_page_function_drift/)
+    await db.exec('rollback')
+    assert.doesNotMatch(await constraint(db), /s15-metadata-3/)
+    assert.equal((await db.query("select to_regprocedure('public.save_independent_comparison_versioned(uuid,uuid,uuid,boolean,text)') f")).rows[0].f, null)
+  } finally { await db.close() }
+})
