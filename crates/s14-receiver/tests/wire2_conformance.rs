@@ -366,7 +366,8 @@ fn receiver_only_cases_keep_the_coverage_the_8b4_set_lacks() {
 /// Review R2-1 (restored, F1/B1): `check_consistency` under v2 equals its v1 twin for
 /// every generated v2 positive. The committed 8b-4 manifest `base` is free text, so the
 /// twins come from the in-test generator (`wire2_common::cases()`), which still builds
-/// each positive from a real v1 base fixture.
+/// each positive from a real v1 base fixture. The 14 committed positives have no v1
+/// twin (8b-4 does not produce them); see `committed_positives_consistency_matches_own_coverage_rows`.
 #[test]
 fn check_consistency_v2_matches_the_v1_twin() {
     let v1dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/s14-schema4-v1");
@@ -390,6 +391,76 @@ fn check_consistency_v2_matches_the_v1_twin() {
     assert!(twins >= 15, "{twins}");
     // the record-limit twin really omits records, so the comparison is not vacuous
     assert!(omitting > 0);
+}
+
+/// Per committed 8b-4 positive: `(file, rules_checked, omitted_records)` pinned.
+const COMMITTED_COVERAGE: [(&str, usize, u64); 14] = [
+    ("capture-omissions", 13, 0),
+    ("complete-small", 13, 0),
+    ("entities-1024", 13, 7965),
+    ("exact-cap-v2", 13, 148),
+    ("external-links-checked-v2", 13, 0),
+    ("family-byte-budget", 13, 1138),
+    ("family-item-limit", 13, 1138),
+    ("locators-v2", 13, 0),
+    ("manifest-scale", 13, 14139),
+    ("partial-sources", 13, 0),
+    ("report-budget-degraded", 13, 1138),
+    ("s14-record-limit", 13, 1688),
+    ("unbound-url-item", 13, 0),
+    ("wire2-limits", 13, 1138),
+];
+
+/// H-B1 (coordinator decision, not owner retirement): `SEOsmith` 8b-4 does not produce
+/// v1 twins for the 14 committed positives (manifest `base` is free text), so a v1
+/// twin comparison is impossible for them. Coverage is instead (1) the generated-positive
+/// twin check above and (2) this per-file check: `check_consistency`'s `rules_checked`
+/// and `omitted_records` equal values derived independently from the file's own
+/// `policy_guidance.candidate.coverage` rows (row count; sum of `candidates - emitted`,
+/// which must equal each row's `omitted`), and both equal the pinned table.
+#[test]
+fn committed_positives_consistency_matches_own_coverage_rows() {
+    let man = manifest();
+    let mut seen = Vec::new();
+    for f in man["files"].as_array().unwrap() {
+        if f["expect"]["admit"] != true {
+            continue;
+        }
+        let path = f["path"].as_str().unwrap();
+        let stem = path
+            .strip_prefix("positive/")
+            .and_then(|n| n.strip_suffix(".json"))
+            .unwrap();
+        let bytes = fs::read(dir().join(path)).unwrap();
+        let doc: Value = serde_json::from_slice(&bytes).unwrap();
+        let rows = doc["policy_guidance"]["candidate"]["coverage"]
+            .as_array()
+            .unwrap();
+        let mut omitted = 0u64;
+        for r in rows {
+            let (cand, emit, omit) = (
+                r["candidates"].as_u64().unwrap(),
+                r["emitted"].as_u64().unwrap(),
+                r["omitted"].as_u64().unwrap(),
+            );
+            assert_eq!(cand - emit, omit, "{stem} {}", r["rule_id"]);
+            omitted += omit;
+        }
+        let got = check_consistency(&bytes, dl()).unwrap();
+        assert_eq!(
+            (got.rules_checked, got.omitted_records),
+            (rows.len(), omitted),
+            "{stem}: check_consistency vs own coverage rows"
+        );
+        let pin = COMMITTED_COVERAGE
+            .iter()
+            .find(|p| p.0 == stem)
+            .unwrap_or_else(|| panic!("{stem}: not pinned"));
+        assert_eq!((pin.1, pin.2), (rows.len(), omitted), "{stem}: pin");
+        seen.push(stem.to_owned());
+    }
+    assert_eq!(seen.len(), COMMITTED_COVERAGE.len());
+    assert!(COMMITTED_COVERAGE.iter().any(|p| p.2 > 0));
 }
 
 /// F1 (review-8c1-h): a v1 report whose page carries a non-array `relationships`
