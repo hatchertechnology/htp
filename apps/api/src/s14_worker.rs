@@ -33,9 +33,7 @@ use axum::{
     routing::post,
 };
 use futures_util::StreamExt;
-use htp_s14_receiver::{
-    AdmissionError, Admitted, InspectionError, MAX_REPORT_BYTES, VALIDATOR_REVISION, admit,
-};
+use htp_s14_receiver::{AdmissionError, Admitted, InspectionError, MAX_REPORT_BYTES, admit};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -380,7 +378,6 @@ async fn handle(State(state): State<Arc<State14>>, request: Request) -> Response
         p_summary_text: summary_text,
         p_validator_revision: admitted.validator_revision,
     };
-    debug_assert_eq!(admitted.validator_revision, VALIDATOR_REVISION);
     let commit_budget = left(Duration::MAX);
     if commit_budget.is_zero() {
         return error(StatusCode::SERVICE_UNAVAILABLE, "unavailable");

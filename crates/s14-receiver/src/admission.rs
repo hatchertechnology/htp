@@ -15,6 +15,9 @@ use std::time::Instant;
 /// The one validator revision. H2 seeds exactly this string in
 /// `seosmith_s14_validators`; H3 sends it with every commit.
 pub const VALIDATOR_REVISION: &str = "s14-wire-1/full-population-1/evidence-v1";
+/// The wire-2 revision (`s14-wire-2`): v1 plus `evidence_families` and the
+/// digest-form manifest. `admit` returns it only for a report labelled `s14-wire-2`.
+pub const VALIDATOR_REVISION_V2: &str = "s14-wire-2/full-population-1/evidence-v1/families-v1";
 
 /// Where admission stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,9 +113,15 @@ pub fn admit(raw: &[u8], deadline: Instant) -> Result<Admitted, AdmissionError> 
     let summary =
         derive_saved_summary(raw, deadline).map_err(|e| fail(AdmissionStage::Summary, e))?;
     findings_match(raw, deadline).map_err(|e| fail(AdmissionStage::Population, e))?;
+    // `inspect` already accepted the label, so `wire_of` cannot fail here.
+    let revision =
+        match crate::wire::wire_of(raw).map_err(|e| fail(AdmissionStage::Inspection, e))? {
+            crate::wire::Wire::V1 => VALIDATOR_REVISION,
+            crate::wire::Wire::V2 => VALIDATOR_REVISION_V2,
+        };
     Ok(Admitted {
         summary,
-        validator_revision: VALIDATOR_REVISION,
+        validator_revision: revision,
     })
 }
 

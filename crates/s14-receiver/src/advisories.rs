@@ -25,6 +25,7 @@ fn flag(v: &Value, k: &str) -> Result<bool, E> {
 #[allow(clippy::too_many_lines)]
 pub fn check_scalar_advisories(input: &[u8], deadline: Instant) -> Result<(), E> {
     inspect(input, deadline)?;
+    let wire = crate::wire::wire_of(input)?;
     let v: Value = crate::projection::project(input)?;
     let pages = v["pages"].as_array().ok_or(E::SemanticMismatch)?;
     let g = &v["policy_guidance"];
@@ -157,7 +158,14 @@ pub fn check_scalar_advisories(input: &[u8], deadline: Instant) -> Result<(), E>
             .filter(|r| r["category"] == "advisory" && r["rule_id"] == *rule)
             .cloned()
             .collect();
-        let expected_manifest = json!({"category":"advisory","rule_id":rule,"rule_version":"s14-1","expected_pointer":format!("/policy/{threshold}"),"candidates":ids});
+        let expected_manifest = match wire {
+            crate::wire::Wire::V1 => {
+                json!({"category":"advisory","rule_id":rule,"rule_version":"s14-1","expected_pointer":format!("/policy/{threshold}"),"candidates":ids})
+            }
+            crate::wire::Wire::V2 => {
+                json!({"category":"advisory","rule_id":rule,"rule_version":"s14-1","expected_pointer":format!("/policy/{threshold}"),"candidates_count":ids.len(),"candidates_digest":crate::wire::candidates_digest(&ids)})
+            }
+        };
         let expected_coverage = json!({"category":"advisory","rule_id":rule,"candidates":pages.len(),"emitted":expected_records.len(),"omitted":omitted,"omission_reason":if omitted > 0 {Some("record_limit")} else {None},"complete":crawl_complete && omitted == 0 && !outcomes.contains_key("unknown"),"eligibility_counts":eligibility,"attempt_counts":attempts,"outcomes":outcomes,"unknown_reasons":reasons});
         if manifest.get(row) != Some(&expected_manifest)
             || coverage.get(row) != Some(&expected_coverage)

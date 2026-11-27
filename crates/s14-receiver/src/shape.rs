@@ -1,3 +1,4 @@
+use crate::wire::Wire;
 use crate::{MAX_POLICY_BYTES, MAX_REPORT_BYTES, raw};
 use serde::{
     Deserialize,
@@ -54,7 +55,7 @@ const MAX_EVIDENCE_BYTES: usize = 1_048_576;
 /// the integer 1 (`UnsupportedSchema`). An explicit `null` reaches this check
 /// as a present member and is rejected here. The evidence content is otherwise
 /// opaque: the receiver crate does not interpret it, SQL does.
-fn check_evidence(evidence: &RawValue) -> Result<(), InspectionError> {
+fn check_evidence(evidence: &RawValue, wire: Option<Wire>) -> Result<(), InspectionError> {
     if evidence.get().len() > MAX_EVIDENCE_BYTES {
         return Err(InspectionError::Bounds);
     }
@@ -64,10 +65,24 @@ fn check_evidence(evidence: &RawValue) -> Result<(), InspectionError> {
         return Err(InspectionError::Shape);
     }
     match parsed.get("version") {
-        Some(version) if version.as_u64() == Some(1) => Ok(()),
-        Some(_) => Err(InspectionError::UnsupportedSchema),
-        None => Err(InspectionError::Shape),
+        Some(version) if version.as_u64() == Some(1) => {}
+        Some(_) => return Err(InspectionError::UnsupportedSchema),
+        None => return Err(InspectionError::Shape),
     }
+    // Wire-2 only: observation/evaluation counts. An absent array is left to SQL,
+    // as under v1; v1 is deliberately not counted here (SQL is its authority).
+    if let Some((observations, evaluations)) = wire.and_then(Wire::evidence_counts) {
+        for (key, max) in [("observations", observations), ("evaluations", evaluations)] {
+            if parsed
+                .get(key)
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|a| a.len() > max)
+            {
+                return Err(InspectionError::Bounds);
+            }
+        }
+    }
+    Ok(())
 }
 /// Presence-preserving evidence decode. serde maps a JSON `null` onto
 /// `Option<&RawValue>` as `None`, which would silently downgrade a present but
@@ -155,6 +170,34 @@ struct Report<'a> {
     #[serde(borrow)]
     #[serde(deserialize_with = "present_evidence")]
     evidence_contract: Option<&'a RawValue>,
+    // Wire-2 `evidence_families`. Present-preserving like `evidence_contract`:
+    // an explicit `null` is `Some` and is rejected, never read as absent. Under
+    // the v1 label any presence is rejected (`Shape`, as `deny_unknown_fields`
+    // did before the member was declared). Validated from the raw bytes.
+    #[serde(default)]
+    #[serde(borrow)]
+    #[serde(deserialize_with = "present_evidence")]
+    evidence_families: Option<&'a RawValue>,
+}
+/// One S14 manifest row under wire-2: counts and a digest, never the id list.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)] // shape-checked here; compared against the pages at `summary`
+struct DigestRow {
+    category: String,
+    rule_id: String,
+    rule_version: String,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
+    expected_pointer: Option<String>,
+    candidates_count: u64,
+    candidates_digest: String,
+}
+fn digest_form(d: &str) -> bool {
+    d.strip_prefix("sha256:").is_some_and(|h| {
+        h.len() == 64
+            && h.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
 }
 #[derive(Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -285,12 +328,24 @@ struct PageView {
     is_resource: bool,
     links: Bounded<UrlView, MAX_REPORT_BYTES>,
     alternates: Bounded<UrlView, MAX_REPORT_BYTES>,
+    /// Kept raw: v1 ignores the member at inspection (a non-array value must not move
+    /// the v1 stage), v2 counts its entries for locator resolution.
+    #[serde(default)]
+    relationships: Option<Box<RawValue>>,
 }
 #[derive(Deserialize)]
 struct UrlView {
     url: String,
 }
 
+/// Byte length the manifest cap applies to. v1 keeps the existing raw length; v2 counts
+/// compact serialized JSON bytes (design 3.2-6), so whitespace padding cannot trip it.
+fn manifest_len(wire: Wire, raw: &RawValue) -> Result<usize, InspectionError> {
+    match wire {
+        Wire::V1 => Ok(raw.get().len()),
+        Wire::V2 => crate::families::compact_raw_len(raw),
+    }
+}
 fn parse<'a, T: Deserialize<'a>>(raw: &'a str) -> Result<T, InspectionError> {
     serde_json::from_str(raw).map_err(|_| InspectionError::Shape)
 }
@@ -376,6 +431,7 @@ fn deadline_check(deadline: Instant) -> Result<(), InspectionError> {
 /// # Errors
 /// Rejects syntax, bounds, URL/policy metadata errors or an expired inspection deadline.
 /// A successful result does not certify source facts, coverage or registry semantics.
+#[allow(clippy::too_many_lines)]
 pub fn inspect(input: &[u8], deadline: Instant) -> Result<InspectedCandidate, InspectionError> {
     deadline_check(deadline)?;
     if input.len() > MAX_REPORT_BYTES {
@@ -390,36 +446,44 @@ pub fn inspect(input: &[u8], deadline: Instant) -> Result<InspectedCandidate, In
         }
     })?;
     let r: Report = parse(text)?;
+    // The claimed label, read from the guidance bytes only (no judgement here:
+    // an unknown label is rejected `Bounds` below, exactly where v1 rejected it).
+    let claimed = crate::wire::claimed_guidance(r.policy_guidance.get());
+    if r.evidence_families.is_some() && claimed != Some(Wire::V2) {
+        return Err(InspectionError::Shape);
+    }
     if r.schema_version != 4 || r.policy_guidance.get().len() > 1_048_576 {
         return Err(InspectionError::Bounds);
     }
     if let Some(evidence) = r.evidence_contract {
-        check_evidence(evidence)?;
+        check_evidence(evidence, claimed)?;
     }
     let q = &r.request;
     check_request(q)?;
     let g: Guidance = parse(r.policy_guidance.get())?;
     let p = &g.config;
-    if g.version != "s14-wire-1"
-        || [
-            p.title_min,
-            p.title_max,
-            p.description_min,
-            p.description_max,
-            p.words_min,
-            p.links_max,
-        ]
-        .iter()
-        .any(|n| *n > 1_000_000)
+    let Some(wire) = Wire::from_label(&g.version) else {
+        return Err(InspectionError::Bounds);
+    };
+    if [
+        p.title_min,
+        p.title_max,
+        p.description_min,
+        p.description_max,
+        p.words_min,
+        p.links_max,
+    ]
+    .iter()
+    .any(|n| *n > 1_000_000)
         || p.title_min > p.title_max
         || p.description_min > p.description_max
         || g.candidate.policy_canonical_json.len() > MAX_POLICY_BYTES
-        || g.manifest.get().len() > 262_144
+        || manifest_len(wire, g.manifest)? > wire.manifest_cap()
         || g.candidate.coverage.get().len() > 262_144
     {
         return Err(InspectionError::Bounds);
     }
-    let expected = serde_json::json!({"catalog_version":"s14-1","collection":{"check_external_links":q.check_external_links,"delay_ms":q.delay_ms,"max_duration_seconds":q.max_duration_seconds,"max_pages":q.max_pages,"max_resources":q.max_resources,"seed_url":q.url},"engine_version":r.engine_version,"policy":p,"ruleset_version":r.ruleset_version,"schema_version":4,"validator_version":"s14-wire-1","wire_contract_version":"s14-wire-1"});
+    let expected = serde_json::json!({"catalog_version":"s14-1","collection":{"check_external_links":q.check_external_links,"delay_ms":q.delay_ms,"max_duration_seconds":q.max_duration_seconds,"max_pages":q.max_pages,"max_resources":q.max_resources,"seed_url":q.url},"engine_version":r.engine_version,"policy":p,"ruleset_version":r.ruleset_version,"schema_version":4,"validator_version":wire.label(),"wire_contract_version":wire.label()});
     if g.candidate.policy_canonical_json != canonical(&expected)
         || g.candidate.policy_digest
             != format!(
@@ -445,20 +509,49 @@ pub fn inspect(input: &[u8], deadline: Instant) -> Result<InspectedCandidate, In
     {
         return Err(InspectionError::Bounds);
     }
+    if wire == Wire::V2 {
+        for row in &manifest.0 {
+            let row: DigestRow =
+                serde_json::from_str(row.get()).map_err(|_| InspectionError::Bounds)?;
+            if !digest_form(&row.candidates_digest) {
+                return Err(InspectionError::Bounds);
+            }
+        }
+    }
     let mut resources = 0;
+    let mut refs = Vec::with_capacity(r.pages.0.len());
     for source in &r.pages.0 {
         deadline_check(deadline)?;
         let page: PageView = parse(source.get())?;
+        // v2 only: a non-array member is `Shape`; absent and `null` count 0.
+        let relationships = match (wire, &page.relationships) {
+            (Wire::V2, Some(raw)) => parse::<Bounded<de::IgnoredAny, MAX_REPORT_BYTES>>(raw.get())?
+                .0
+                .len(),
+            _ => 0,
+        };
         admitted_url(&page.url)?;
         resources += usize::from(page.is_resource);
         for target in page.links.0.iter().chain(page.alternates.0.iter()) {
             admitted_url(&target.url)?;
+        }
+        if wire == Wire::V2 {
+            refs.push(crate::families::PageRef {
+                url: page.url,
+                is_resource: page.is_resource,
+                links: page.links.0.len(),
+                relationships,
+            });
         }
     }
     if resources > 20000 || r.pages.0.len() - resources > 20000 {
         return Err(InspectionError::Bounds);
     }
     deadline_check(deadline)?;
+    if wire == Wire::V2 {
+        // Required, an object, and every §3.2 invariant; from the raw bytes.
+        crate::families::check(r.evidence_families, &refs, deadline)?;
+    }
     Ok(InspectedCandidate {
         raw_sha256: sha(input),
         raw_bytes: input.len(),
