@@ -128,10 +128,25 @@ fn admit_example_prints_the_stage_line_for_each_stage() {
 
 #[test]
 fn admit_stays_within_the_ten_second_budget_on_the_largest_fixture() {
-    let b = fs::read(dir().join("positive/s14-record-limit.json")).unwrap();
-    let t = Instant::now();
-    admit(&b, dl()).unwrap();
-    assert!(t.elapsed() < Duration::from_secs(10), "{:?}", t.elapsed());
+    // exact-cap-v2 is the largest committed fixture (== max_report_bytes); the
+    // record-limit one is kept as the heaviest per-record workload.
+    let largest = manifest()["max_report_bytes"].as_u64().unwrap();
+    for n in [
+        "positive/exact-cap-v2.json",
+        "positive/s14-record-limit.json",
+    ] {
+        let b = fs::read(dir().join(n)).unwrap();
+        if n.contains("exact-cap") {
+            assert_eq!(b.len() as u64, largest, "{n} is the largest fixture");
+        }
+        let t = Instant::now();
+        admit(&b, dl()).unwrap();
+        assert!(
+            t.elapsed() < Duration::from_secs(10),
+            "{n}: {:?}",
+            t.elapsed()
+        );
+    }
 }
 
 #[test]
@@ -256,12 +271,32 @@ fn check_parity(path: &str, b: &[u8], expect: &Value) -> Vec<String> {
 /// boundary and the locator-on-linkless-page negatives cannot come from it. They are
 /// generated in memory by `wire2_common::cases()` (no committed files) and asserted
 /// here; `check_*` parity runs on each.
-const RECEIVER_ONLY: [&str; 5] = [
-    "positive/families-raw-over-cap-compact-ok.json",
-    "positive/manifest-raw-over-16384-compact-ok.json",
-    "positive/families-facts-depth-4.json",
-    "negative/families-link-locator-on-linkless-page.json",
-    "negative/families-relationship-locator-on-empty-page.json",
+const RECEIVER_ONLY: [(&str, usize, &str); 5] = [
+    (
+        "positive/families-raw-over-cap-compact-ok.json",
+        858_146,
+        "1f6e6a8ceb362ac050ce4def0a2dc1f5815e88abd4aaa43a6ef7dfe36b3b7d17",
+    ),
+    (
+        "positive/manifest-raw-over-16384-compact-ok.json",
+        75_146,
+        "81657f91046b957648c3d2351a1c58769f5329618808574f617a70139313f226",
+    ),
+    (
+        "positive/families-facts-depth-4.json",
+        58_157,
+        "08e8aa50443bf31d8447615d691a8fd09633bff02a110dc9f62c5da13483fa82",
+    ),
+    (
+        "negative/families-link-locator-on-linkless-page.json",
+        416_078,
+        "e7a179ecad07f01236b935686b491a1affc0ad704963b237ac9724fb250cc248",
+    ),
+    (
+        "negative/families-relationship-locator-on-empty-page.json",
+        416_086,
+        "6191fd48e489defed9ca55f702a809f07d6316893e296d2cf56b230ebe840408",
+    ),
 ];
 
 #[test]
@@ -275,7 +310,7 @@ fn receiver_only_cases_keep_the_coverage_the_8b4_set_lacks() {
         .collect();
     let v1dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/s14-schema4-v1");
     let mut seen = 0;
-    for want in RECEIVER_ONLY {
+    for (want, want_len, want_sha) in RECEIVER_ONLY {
         let c = all
             .iter()
             .find(|c| c.path == want)
@@ -285,6 +320,8 @@ fn receiver_only_cases_keep_the_coverage_the_8b4_set_lacks() {
             "{want} now in 8b-4: drop it here"
         );
         seen += 1;
+        assert_eq!(c.bytes.len(), want_len, "{want} bytes");
+        assert_eq!(sha_hex(&c.bytes), want_sha, "{want} sha256");
         let got = admit(&c.bytes, dl());
         match c.expect {
             None => {
@@ -323,7 +360,36 @@ fn receiver_only_cases_keep_the_coverage_the_8b4_set_lacks() {
     assert_eq!(seen, 5);
     // the raw-whitespace positives really are over their raw caps (not vacuous)
     let raw = |n: &str| all.iter().find(|c| c.path == n).unwrap().bytes.len();
-    assert!(raw(RECEIVER_ONLY[0]) > 786_432 && raw(RECEIVER_ONLY[1]) > 16_384);
+    assert!(raw(RECEIVER_ONLY[0].0) > 786_432 && raw(RECEIVER_ONLY[1].0) > 16_384);
+}
+
+/// Review R2-1 (restored, F1/B1): `check_consistency` under v2 equals its v1 twin for
+/// every generated v2 positive. The committed 8b-4 manifest `base` is free text, so the
+/// twins come from the in-test generator (`wire2_common::cases()`), which still builds
+/// each positive from a real v1 base fixture.
+#[test]
+fn check_consistency_v2_matches_the_v1_twin() {
+    let v1dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/s14-schema4-v1");
+    let (mut twins, mut omitting) = (0, 0);
+    for c in cases().iter().filter(|c| c.expect.is_none()) {
+        let a = fs::read(v1dir.join(c.base)).unwrap();
+        let (x, y) = (
+            check_consistency(&a, dl()).unwrap(),
+            check_consistency(&c.bytes, dl()).unwrap(),
+        );
+        assert_eq!(
+            (x.rules_checked, x.omitted_records),
+            (y.rules_checked, y.omitted_records),
+            "{} vs {}",
+            c.path,
+            c.base
+        );
+        omitting += usize::from(y.omitted_records > 0);
+        twins += 1;
+    }
+    assert!(twins >= 15, "{twins}");
+    // the record-limit twin really omits records, so the comparison is not vacuous
+    assert!(omitting > 0);
 }
 
 /// F1 (review-8c1-h): a v1 report whose page carries a non-array `relationships`

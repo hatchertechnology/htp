@@ -1,9 +1,10 @@
 //! Receiver-side HANDMADE wire-2 cases (WP8c-1). The committed corpus under
 //! `tests/fixtures/s14-wire2-v1/` is the `SEOsmith` 8b-4 set (byte-copies, see its
 //! `SOURCE`). This generator derives wire-2 cases from a committed wire-1 fixture by
-//! `to_v2` plus one named mutation; nothing here is committed as a file. Only the
-//! five paths in `RECEIVER_ONLY` (`wire2_conformance.rs`) are asserted; the rest are
-//! the retired hand-built set, kept as the generator that produced them.
+//! `to_v2` plus one named mutation; nothing here is committed as a file. The
+//! five paths in `RECEIVER_ONLY` (`wire2_conformance.rs`) are byte-pinned and asserted
+//! case by case; every generated positive is also compared with its v1 twin by
+//! `check_consistency_v2_matches_the_v1_twin`.
 #![allow(
     dead_code,
     clippy::too_many_lines,
