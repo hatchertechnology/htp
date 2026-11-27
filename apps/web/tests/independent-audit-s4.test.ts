@@ -12,10 +12,10 @@ const find = (rows: ReturnType<typeof compare2>, url: string, rule: string) => r
 
 describe('s15-metadata-2 (schema 4)', () => {
   it('is the current semantics and s15-metadata-1 stays supported', () => {
-    expect(CURRENT_SEMANTICS).toBe('s15-metadata-2')
+    expect(CURRENT_SEMANTICS).toBe('s15-metadata-3')
     expect(isSupportedSemantics('s15-metadata-1')).toBe(true)
     expect(isSupportedSemantics('s15-metadata-2')).toBe(true)
-    expect(isSupportedSemantics('s15-metadata-3')).toBe(false)
+    expect(isSupportedSemantics('s15-metadata-3')).toBe(true)
   })
 
   it('pins the committed SEOsmith fixtures byte for byte', () => {

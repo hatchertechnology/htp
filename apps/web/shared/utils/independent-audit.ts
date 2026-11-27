@@ -96,12 +96,12 @@ export function parseControlledCsv(source: string): Observation[] {
 }
 
 type Evaluation = { entity_id?: string; rule?: string; outcome?: string; unknown_reason?: string | null }
-type Coverage = { rule?: string; unknown?: number; unknown_reasons?: Record<string, number> }
-type EvidenceContract = { version?: number; truncated?: boolean; evaluation_coverage_complete?: boolean; evaluations?: Evaluation[]; coverage?: Coverage[] }
+type Coverage = { entities?: number; rule?: string; unknown?: number; unknown_reasons?: Record<string, number> }
+type EvidenceContract = { observations?: unknown[]; omitted_observations?: number; version?: number; truncated?: boolean; evaluation_coverage_complete?: boolean; evaluations?: Evaluation[]; coverage?: Coverage[] }
 type Report = { schema_version?: number; engine_version?: string; ruleset_version?: string; outcome?: string; coverage_complete?: boolean; stop_reason?: string | null; pages?: Array<{url: string; status?: number; content_type?: string; error?: unknown; extraction_truncated?: boolean; is_resource?: boolean; blocked_by_robots?: boolean; flags?: string[]}>; findings?: Array<{url: string; rule: string}>; evidence_contract?: EvidenceContract }
 /** Newest semantics, used for new comparisons. Older supported versions stay replayable. */
-export const CURRENT_SEMANTICS = 's15-metadata-2'
-export const SUPPORTED_SEMANTICS = ['s15-metadata-1', 's15-metadata-2'] as const
+export const CURRENT_SEMANTICS = 's15-metadata-3'
+export const SUPPORTED_SEMANTICS = ['s15-metadata-1', 's15-metadata-2', 's15-metadata-3'] as const
 export function isSupportedSemantics(semantics: string): boolean { return (SUPPORTED_SEMANTICS as readonly string[]).includes(semantics) }
 export type ComparisonCategory = 'agreement' | 'independent_only' | 'seosmith_only' | 'unknown' | 'unmapped'
 /** `reason` and `reason_count` explain an `unknown` SEOsmith observation for s15-metadata-2 rows; they are absent for s15-metadata-1. */
@@ -110,6 +110,7 @@ export function compareIndependent(rows: Observation[], report: Report, asserted
   switch (semantics) {
     case 's15-metadata-1': return compareS15Metadata1(rows, report, assertedUnmodified)
     case 's15-metadata-2': return compareS15Metadata2(rows, report, assertedUnmodified)
+    case 's15-metadata-3': return compareS15Metadata3(rows, report, assertedUnmodified)
     default: throw new Error(`Unsupported comparison semantics: ${semantics}`)
   }
 }
@@ -216,6 +217,83 @@ function compareS15Metadata2(rows: Observation[], report: Report, assertedUnmodi
     }
     if (evaluation.outcome === 'fail') return { state: 'present' }
     if (evaluation.outcome === 'pass' && row.rule === 'missing_title' && cov.unknown === 0) return { state: 'absent' }
+    // A `pass` for missing_description, an `unknown`/`not_applicable`/other outcome, and a `pass` for
+    // missing_title while the rule still carries unknown coverage all take the coverage reason.
+    return { state: 'unknown', ...coverageReason(row.rule, cov.unknown, evaluation.outcome === 'pass' ? 'absence_not_established' : 'unknown_outcome') }
+  }
+  return combined.map(row => {
+    const seen = observe(row), seosmith = seen.state
+    const category: ComparisonCategory = !mappedRules.has(row.rule) ? 'unmapped' : row.state === 'unknown' || seosmith === 'unknown' ? 'unknown' : row.state === seosmith ? 'agreement' : row.state === 'present' ? 'independent_only' : 'seosmith_only'
+    const result: ComparisonRow = { ...row, seosmith, category }
+    if (seen.reason) { result.reason = seen.reason; if (seen.count !== undefined) result.reason_count = seen.count }
+    return result
+  })
+}
+
+// Page-level semantics. Versions 1 and 2 above remain frozen.
+function compareS15Metadata3(rows: Observation[], report: Report, assertedUnmodified: boolean): ComparisonRow[] {
+  const contract = report.evidence_contract
+  const compatible = assertedUnmodified && report.schema_version === 4 && report.outcome === 'completed' && report.coverage_complete === true
+    && !!contract && contract.version === 1 && typeof contract.truncated === 'boolean' && Array.isArray(contract.evaluations) && Array.isArray(contract.coverage)
+  const evaluations = new Map<string, Evaluation>(), duplicates = new Set<string>()
+  const coverage = new Map<string, Coverage>(), duplicateCoverage = new Set<string>()
+  if (compatible) {
+    for (const e of contract!.evaluations!) { const key = JSON.stringify([e.entity_id, e.rule]); if (evaluations.has(key)) duplicates.add(key); evaluations.set(key, e) }
+    for (const c of contract!.coverage!) { if (coverage.has(c.rule!)) duplicateCoverage.add(c.rule!); coverage.set(c.rule!, c) }
+  }
+  // Count and classify the entire raw population before allowing page-level absence.
+  const titleCoverage = contract?.coverage?.filter(c => c.rule === 'missing_title')
+  const pages = report.pages
+  const urls = new Set<string>()
+  let pageProof = compatible && Array.isArray(pages) && titleCoverage?.length === 1
+    && Number.isSafeInteger(titleCoverage[0]?.entities) && titleCoverage[0]?.entities === pages.length
+    && Array.isArray(contract?.observations) && Number.isSafeInteger(contract.omitted_observations)
+    && contract.omitted_observations! >= 0 && contract.observations.length + contract.omitted_observations! === pages.length
+  if (pageProof) for (const page of pages!) {
+    if (!page || typeof page.url !== 'string' || !page.url || typeof page.is_resource !== 'boolean' || urls.has(page.url)) { pageProof = false; break }
+    urls.add(page.url)
+    if (!page.is_resource) {
+      const key = JSON.stringify([pageEntityId(page.url), 'missing_title'])
+      if (duplicates.has(key) || !['pass', 'fail', 'not_applicable'].includes(evaluations.get(key)?.outcome || '')) { pageProof = false; break }
+    }
+  }
+  const pageUrls = new Set((pages || []).filter(p => p && p.is_resource === false).map(p => p.url))
+  const known = new Set(rows.map(row => JSON.stringify([row.url, row.rule])))
+  const combined = [...rows]
+  for (const finding of report.findings || []) {
+    const key = JSON.stringify([finding.url, finding.rule])
+    if (!known.has(key)) { combined.push({ url: finding.url, rule: finding.rule, state: 'unknown' }); known.add(key) }
+  }
+  // Largest count first, then key order, so the explanation is deterministic.
+  const topReason = (rule: string): { reason: string; count: number } | null => {
+    const entries = Object.entries(coverage.get(rule)?.unknown_reasons || {}).filter(([, n]) => typeof n === 'number' && n > 0).sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1))
+    return entries[0] ? { reason: entries[0][0], count: entries[0][1] } : null
+  }
+  // R3-1/R3-5: every non-`present`/non-`absent` observation is explained by the rule's own coverage,
+  // never by a per-row evaluation field or an outcome string. Documented fallbacks when the coverage has
+  // no reason key: `no_evaluation` (only for a missing evaluation), `absence_not_established` (a `pass`
+  // that cannot establish absence, i.e. missing_description), `coverage_unknown` (an unknown count with
+  // no reason keys, carrying that count) and `unknown_outcome` (no unknown count to attribute).
+  const coverageReason = (rule: string, unknown: number, fallback: string): { reason: string; count?: number } => {
+    const top = topReason(rule)
+    if (top) return { reason: top.reason, count: top.count }
+    return unknown > 0 ? { reason: 'coverage_unknown', count: unknown } : { reason: fallback }
+  }
+  const observe = (row: Observation): { state: Observation['state']; reason?: string; count?: number } => {
+    if (!mappedRules.has(row.rule)) return { state: 'unknown' }
+    if (!compatible) return { state: 'unknown', reason: 'report_not_comparable' }
+    const cov = coverage.get(row.rule)
+    if (!cov || duplicateCoverage.has(row.rule) || typeof cov.unknown !== 'number') return { state: 'unknown', reason: 'no_coverage' }
+    const key = JSON.stringify([pageEntityId(row.url), row.rule])
+    if (duplicates.has(key)) return { state: 'unknown', reason: 'duplicate_evaluation' }
+    const evaluation = evaluations.get(key)
+    if (!evaluation) {
+      const top = topReason(row.rule)
+      return top ? { state: 'unknown', reason: top.reason, count: top.count } : { state: 'unknown', reason: 'no_evaluation' }
+    }
+    if (!pageUrls.has(row.url)) return { state: 'unknown', reason: 'no_page' }
+    if (evaluation.outcome === 'fail') return { state: 'present' }
+    if (evaluation.outcome === 'pass' && row.rule === 'missing_title' && pageProof) return { state: 'absent' }
     // A `pass` for missing_description, an `unknown`/`not_applicable`/other outcome, and a `pass` for
     // missing_title while the rule still carries unknown coverage all take the coverage reason.
     return { state: 'unknown', ...coverageReason(row.rule, cov.unknown, evaluation.outcome === 'pass' ? 'absence_not_established' : 'unknown_outcome') }
