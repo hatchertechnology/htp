@@ -94,6 +94,32 @@ const pairSummary = { ...completeSummary, comparison_key: 'sha256:pair' }
 details.push({ ...details[0], delivery_id: pairId[0], scan_at: '2026-11-16T11:40:00Z', summary: { ...pairSummary, finished_at: '2026-11-16T11:40:30Z' } })
 details.push({ ...details[0], delivery_id: pairId[1], scan_at: '2026-11-16T11:39:00Z', summary: { ...pairSummary, finished_at: '2026-11-16T11:39:30Z' } })
 details.push({ ...details[0], delivery_id: pairId[2], scan_at: '2026-11-16T11:38:00Z', summary: { ...pairSummary, schema_version: 2, finished_at: '2026-11-16T11:38:30Z' } })
+// Existing admitted wire-1 fixture: the robots-blocked page also has retained
+// S14 advisory unknowns. Serve its exact report and receiver summary bytes.
+const coexistenceId = '00000000-0000-4000-8000-000000000018'
+const coexistenceRaw = await readFile(new URL('../../../../crates/s14-receiver/tests/fixtures/s14-schema4-v1/mixed-caps-exceeded.json', import.meta.url), 'utf8')
+const coexistenceSummaryText = await read('summary-transport-unknown.json')
+const coexistenceSummary = JSON.parse(coexistenceSummaryText)
+const coexistenceReport = JSON.parse(coexistenceRaw)
+assert.equal(sha256(coexistenceRaw), 'cdfa83c5a430f02307930822df421830595497d883bf61d5dd8e1ae766f02eb1')
+assert.equal(sha256(coexistenceSummaryText), '01058dcc7a3f84e068082e503be8e08a806531759abfbee9c5708bcb3a12c369')
+details.push({
+  delivery_id: coexistenceId, scan_at: '2026-11-16T11:36:00Z', received_at: time, ingestion_source: 'worker',
+  summary: coexistenceSummary, summary_text: coexistenceSummaryText, summary_sha256: sha256(coexistenceSummaryText),
+  report: coexistenceReport, report_json: coexistenceRaw, source_sha256: `sha256:${sha256(coexistenceRaw)}`,
+})
+const legacyDetails = await Promise.all(['seosmith-expanded.json', 'contracts/v2-partial.json'].map(async (path, index) => {
+  const report = JSON.parse(await readFile(new URL(`../../../../supabase/tests/fixtures/${path}`, import.meta.url), 'utf8'))
+  const severities = { critical: 0, alert: 0, warning: 0 }
+  for (const finding of report.findings) severities[finding.severity]++
+  return {
+    delivery_id: `00000000-0000-4000-8000-00000000002${index}`, scan_at: `2026-11-16T11:3${4 - index}:00Z`,
+    received_at: time, ingestion_source: 'worker', report,
+    summary: { ...partialSummary, schema_version: report.schema_version, summary_version: 4, severities, findings: report.findings.length,
+      finished_at: report.finished_at, comparison_key: 'fixture-legacy' },
+  }
+}))
+details.push(...legacyDetails)
 const runs = details.map(({ report, report_json, ...run }) => run)
 const ruleTotals = coverage => {
   const claims = Object.values(coverage ?? {}).map(rule => rule.coverage !== 'complete_verified' ? 'unverified' : rule.reported_findings > 0 ? 'findings' : 'clean')
@@ -110,12 +136,17 @@ function installRoutes(target, log) {
     const request = route.request(), url = new URL(request.url()), path = url.pathname
     const json = data => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) })
     if (url.hostname === 'raxuvdbdfmmtpqjcafcq.supabase.co' && path.includes('/auth/v1/')) return json({ id: user, aud: 'authenticated' })
+    if (url.hostname === 'raxuvdbdfmmtpqjcafcq.supabase.co' && request.method() === 'POST') {
+      if (path === '/rest/v1/rpc/audit_event_history') return json({ semantics_version: 1, events: [], has_more: false })
+      if (path === '/rest/v1/rpc/audit_operational_history') return json({ version: 1, episodes: [], has_more: false })
+    }
     if (url.hostname !== '127.0.0.1') { log.push(`BLOCKED ${request.method()} ${url.hostname}${path}`); return route.abort() }
     if (path.startsWith('/api/')) {
       log.push(`${request.method()} ${path}`)
       if (request.method() !== 'GET') { log.push(`ABORTED ${request.method()} ${path}`); return route.abort() }
       if (path === '/api/websites') return json({ items: [{ id: site, fqdn: 'example.com' }], has_more: false })
       if (path === `/api/websites/${site}/seo/audits`) return json({ items: runs, has_more: false, next_cursor: null })
+      if (/\/seo\/audits\/[^/]+\/work$/.test(path)) return json([])
       const bounded = path.match(/\/seo\/audits\/([^/]+)\/dashboard$/)
       if (bounded) return json(details.find(detail => detail.delivery_id === bounded[1]))
       const detail = path.match(/\/seo\/audits\/([^/]+)$/)
@@ -201,6 +232,47 @@ try {
   const violationDownload = await downloadBytes('Download run JSON')
   assert.equal(violationDownload.text, rawReports[3])
   assert.equal(violationDownload.sha, sourceShas[3])
+  const findingsTable = page.getByRole('table', { name: 'Seosmith findings for the selected run' })
+  await page.getByLabel('Rule', { exact: true }).selectOption('http_redirect')
+  const violation = findingsTable.getByRole('row', { name: /S14 policy violation.*http redirect/ })
+  assert.equal(await violation.getByRole('cell').first().innerText(), '—')
+  if (process.env.NUXT_PUBLIC_ROLLOUT_REMEDIATION === 'true') {
+    const remediation = page.getByRole('region', { name: 'Remediation work' })
+    const picker = remediation.getByRole('combobox').filter({ has: page.getByRole('option', { name: /^S14 policy violation · http_redirect · / }) })
+    await picker.selectOption({ value: String(violationReport.findings.findIndex(finding => finding.rule === 'http_redirect')) })
+    assert.match(await picker.locator('option:checked').innerText(), /^S14 policy violation · http_redirect · /)
+    await remediation.getByText('Technical severity', { exact: true }).locator('..').getByText('unavailable', { exact: true }).waitFor()
+  }
+  await page.getByLabel('Rule', { exact: true }).selectOption('short_title')
+  const advisory = findingsTable.getByRole('row', { name: /S14 advisory.*short title/ }).first()
+  assert.equal(await advisory.getByRole('cell').first().innerText(), '—')
+  await page.getByLabel('Severity', { exact: true }).selectOption('warning')
+  await page.getByText('No findings match these filters.', { exact: true }).waitFor()
+  await page.getByLabel('Severity', { exact: true }).selectOption('all')
+
+  // Both rows refer to the exact same page in one saved schema-4 run.
+  await page.getByLabel('Inspect a run', { exact: true }).selectOption(coexistenceId)
+  await panel.locator('summary', { hasText: 'Retained S14 unknown records' }).click()
+  const affectedUrl = 'https://example.com/p11'
+  const unknownTable = panel.getByRole('table', { name: 'S14 evidence with an unknown outcome' })
+  const unknown = unknownTable.getByRole('row').filter({ has: page.getByRole('rowheader', { name: 'short title', exact: true }) })
+    .filter({ has: page.getByRole('cell', { name: affectedUrl, exact: true }) })
+  await unknown.waitFor()
+  assert.deepEqual(await unknown.getByRole('cell').allTextContents(), ['advisory', 'Unknown / not checked', affectedUrl, 'source unavailable'])
+  await page.getByLabel('Rule', { exact: true }).selectOption('robots_blocked')
+  const transport = findingsTable.getByRole('row').filter({ has: page.getByRole('link', { name: affectedUrl, exact: true }) })
+  await transport.waitFor()
+  assert.deepEqual((await transport.getByRole('cell').allTextContents()).slice(0, 5),
+    ['warning', 'Legacy audit finding', 'robots blocked', affectedUrl, 'Not fetched: robots.txt'])
+  if (process.env.H04_RENDER_EVIDENCE_DIR) {
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await unknown.screenshot({ path: `${process.env.H04_RENDER_EVIDENCE_DIR}/s14-unknown-${mode}.png` })
+    await transport.screenshot({ path: `${process.env.H04_RENDER_EVIDENCE_DIR}/legacy-transport-${mode}.png` })
+    await page.setViewportSize({ width: 390, height: 844 })
+  }
+  const coexistenceDownload = await downloadBytes('Download run JSON')
+  assert.equal(coexistenceDownload.text, coexistenceRaw)
+  console.log('PASS: schema-4 same-page coexistence, S14 advisory and violation severity isolation, and exact coexistence download')
 
   // Run E: a future summary version is explicitly unsupported, with no claims.
   await page.getByLabel('Inspect a run', { exact: true }).selectOption(ids[4])
@@ -301,6 +373,10 @@ try {
   assert.doesNotMatch(noCryptoText, /does not match this binding/)
   const noCryptoDownload = await downloadBytes('Download receiver summary', noCryptoPage)
   assert.equal(noCryptoDownload.sha, summaryShas[0])
+  await noCryptoPage.getByLabel('Inspect a run', { exact: true }).selectOption(coexistenceId)
+  await noCryptoPanel.locator('summary', { hasText: 'Retained S14 unknown records' }).click()
+  const entityId = `sha256:${sha256(`seosmith-entity-v1\npage\n${affectedUrl}`)}`
+  await noCryptoPanel.getByRole('cell', { name: entityId, exact: true }).first().waitFor()
   assert.deepEqual(noCryptoErrors, [])
   assert.ok(!noCryptoCalls.some(call => call.startsWith('BLOCKED')), noCryptoCalls.join('\n'))
   assert.ok(noCryptoCalls.filter(call => /^(POST|PUT|PATCH|DELETE) /.test(call)).every(call => noCryptoCalls.includes(`ABORTED ${call}`)))
@@ -314,7 +390,7 @@ try {
   const received = panel.locator(`time[datetime="${time}"]`)
   assert.equal(await received.getAttribute('title'), time)
   assert.match(await received.innerText(), /^Nov 16, 2026, 7:02 AM EST$/)
-  assert.doesNotMatch(await panel.locator('details').first().innerText(), / UTC\b/)
+  assert.doesNotMatch(await received.locator('xpath=ancestor::details[1]').innerText(), / UTC\b/)
 
   // Reconstructed exports are named so; exact retained bytes keep the plain name.
   const filename = async (target, name) => { const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name, exact: true }).click()]); return download.suggestedFilename() }
@@ -339,6 +415,15 @@ try {
   await page.getByLabel('Comparison baseline').waitFor()
   assert.equal(await compare.count(), 0, '4 against 2 offers no comparison')
   await page.getByText(/Finding changes are unavailable against the selected baseline because .* schema version/).waitFor()
+
+  for (const legacy of legacyDetails) {
+    await page.getByLabel('Inspect a run', { exact: true }).selectOption(legacy.delivery_id)
+    await page.getByRole('region', { name: 'Evidence and coverage' }).getByText(new RegExp(`Report schema ${legacy.report.schema_version}`)).waitFor()
+    await findingsTable.getByRole('cell', { name: legacy.report.findings[0].severity, exact: true }).first().waitFor()
+    assert.equal(await findingsTable.getByRole('columnheader', { name: 'Origin', exact: true }).count(), 0)
+    assert.equal(await panel.count(), 0)
+  }
+  assert.deepEqual(errors, [])
 
   console.log(`PASS: schema-4 receiver semantics in the normal dashboard (${mode} saved-read transport); complete, mixed partial, omitted and violation runs; future summary explicitly unsupported; retained summary text and retained report downloads verified by SHA-256; JSONB-reordered parsed summary not treated as receiver bytes; absent summary text and summary digest mismatch labeled; reconstructed exports labeled when bytes are absent; missing rule_coverage shown as unavailable instead of all-clean; unavailable digest computation distinct from a mismatch; reads only, no external traffic`)
   console.log(calls.join('\n'))

@@ -1,4 +1,4 @@
-import type { AuditDetail, AuditRecordCounts, AuditRuleCoverage, AuditSummary } from '../types/seosmith'
+import type { AuditDetail, AuditFinding, AuditRecordCounts, AuditRuleCoverage, AuditSummary, Severity } from '../types/seosmith'
 
 /** Saved-summary version emitted by the receiver for schema 4. */
 export const SCHEMA4_SUMMARY_VERSION = 5
@@ -18,6 +18,65 @@ export function semanticsSupport(summary: AuditSummary | null | undefined): Sema
   if (!summary) return 'none'
   if (summary.schema_version !== SCHEMA4_SCHEMA_VERSION) return 'legacy'
   return summary.summary_version === SCHEMA4_SUMMARY_VERSION ? 'schema4-summary5' : 'schema4-unsupported'
+}
+
+// Both supported S14 contracts reserve these rule IDs. Only triggered
+// advisories and explicit violations have a compatibility finding.
+const s14FindingClasses = new Map<string, 'advisory' | 'policy_violation' | null>([
+  ['short_title', 'advisory'], ['long_title', 'advisory'],
+  ['short_description', 'advisory'], ['long_description', 'advisory'],
+  ['little_content', 'advisory'], ['too_many_links', 'advisory'],
+  ['noindex', 'policy_violation'], ['http_redirect', 'policy_violation'],
+  ['alternates_observed', null], ['external_target', null], ['external_link', null],
+])
+
+type FindingDetail = Pick<AuditDetail, 'report' | 'summary'>
+function supportsS14Records({ report, summary }: FindingDetail): boolean {
+  return report.schema_version === 4 && semanticsSupport(summary) === 'schema4-summary5'
+    && (report.policy_guidance?.version === 's14-wire-1' || report.policy_guidance?.version === 's14-wire-2')
+}
+
+export function findingPresentation(detail: FindingDetail, finding: AuditFinding): { origin: string | null; severity: Severity | null } {
+  if (detail.report.schema_version !== 4 && detail.summary.schema_version !== 4) {
+    return { origin: null, severity: finding.severity }
+  }
+  if (supportsS14Records(detail)) {
+    const category = s14FindingClasses.get(finding.rule)
+    if (category === undefined) return { origin: 'Legacy audit finding', severity: finding.severity }
+    if (category !== null && finding.details?.classification === category) {
+      return { origin: category === 'advisory' ? 'S14 advisory' : 'S14 policy violation', severity: null }
+    }
+    return { origin: 'S14 classification unavailable', severity: null }
+  }
+  return { origin: 'Finding origin unavailable', severity: null }
+}
+
+export function technicalSeverityOrder(severity: Severity | null): number {
+  return severity === null ? 3 : ['critical', 'alert', 'warning'].indexOf(severity)
+}
+
+interface S14UnknownRecord {
+  record_id: string
+  entity_id: string
+  category: string
+  rule_id: string
+  outcome: 'unknown'
+  reason: string
+}
+
+function isS14UnknownRecord(value: unknown): value is S14UnknownRecord {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Partial<S14UnknownRecord>
+  return record.outcome === 'unknown'
+    && typeof record.record_id === 'string' && typeof record.entity_id === 'string'
+    && typeof record.rule_id === 'string' && s14FindingClasses.has(record.rule_id)
+    && (record.category === 'observation' || record.category === 'advisory' || record.category === 'policy_violation')
+    && typeof record.reason === 'string'
+}
+
+export function s14UnknownRecords(detail: FindingDetail): S14UnknownRecord[] {
+  const records = detail.report.policy_guidance?.candidate?.records
+  return supportsS14Records(detail) && Array.isArray(records) ? records.filter(isS14UnknownRecord) : []
 }
 
 export type RecordCountKind = 'observation' | 'advisory' | 'violation' | 'neutral'

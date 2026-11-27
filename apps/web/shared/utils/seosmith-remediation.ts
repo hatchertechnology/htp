@@ -1,5 +1,6 @@
 import type { AuditDetail, AuditEvaluation, AuditReport } from '../types/seosmith'
 import { safeAuditUrl } from './seosmith'
+import { findingPresentation } from './saved-semantics'
 
 /** Only the unique explicit failed evaluation for this exact saved finding is attributed. */
 export function findingEvaluation(report: AuditReport, index: number): AuditEvaluation | undefined {
@@ -50,9 +51,12 @@ export interface FindingPriority {
   rationale: string
 }
 
-function severityInput(finding: AuditReport['findings'][number] | undefined, index: number): PriorityInput {
+function severityInput(detail: AuditDetail, index: number): PriorityInput {
+  const finding = detail.report.findings[index]
   if (!finding) return { key: 'severity', label: 'Technical severity', state: 'unknown', value: null, basis: `No saved finding exists at /findings/${index}.` }
-  return { key: 'severity', label: 'Technical severity', state: 'known', value: finding.severity, basis: `Technical severity recorded by the producer for rule ${finding.rule}.` }
+  const { origin, severity } = findingPresentation(detail, finding)
+  if (severity === null) return { key: 'severity', label: 'Technical severity', state: 'unavailable', value: null, basis: origin ?? 'Technical severity unavailable.' }
+  return { key: 'severity', label: 'Technical severity', state: 'known', value: severity, basis: `Technical severity recorded by the producer for rule ${finding.rule}.` }
 }
 
 function confidenceInput(report: AuditReport, index: number): PriorityInput {
@@ -131,7 +135,7 @@ function policyInput(report: AuditReport): PriorityInput {
 export function findingPriority(detail: AuditDetail, index: number): FindingPriority {
   const report = detail.report
   const finding = report.findings[index]
-  const severity = severityInput(finding, index)
+  const severity = severityInput(detail, index)
   const confidence = confidenceInput(report, index)
   const reach = reachInput(detail, finding, index)
   const policy = policyInput(report)

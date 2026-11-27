@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { isSavedDetail } from '../shared/utils/saved-detail-validation'
-import { auditCoverageLabel, digestStatus, recordCountRows, recordCounts, reportExport, ruleClaim, ruleClaimLabels, ruleClaimTotals, semanticsSupport, sha256Hex, sha256Matches, summaryExport, SCHEMA4_SUMMARY_VERSION } from '../shared/utils/saved-semantics'
+import { auditCoverageLabel, digestStatus, findingPresentation, recordCountRows, recordCounts, reportExport, ruleClaim, ruleClaimLabels, ruleClaimTotals, semanticsSupport, sha256Hex, sha256Matches, summaryExport, SCHEMA4_SUMMARY_VERSION } from '../shared/utils/saved-semantics'
+import { findingPriority } from '../shared/utils/seosmith-remediation'
 import { auditPoints, auditValue, severityCount } from '../shared/utils/seosmith'
-import type { AuditDetail, AuditRun, AuditSummary } from '../shared/types/seosmith'
+import type { AuditDetail, AuditFinding, AuditRun, AuditSummary } from '../shared/types/seosmith'
 
 const sha256 = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex')
 const pinnedSummaries = [
@@ -20,6 +21,46 @@ async function fixture<T>(name: string): Promise<T> {
 function detail(summary: AuditSummary, report: unknown, id = '00000000-0000-4000-8000-000000000001'): AuditDetail {
   return { delivery_id: id, scan_at: '2026-11-16T12:01:00Z', received_at: '2026-11-16T12:02:00Z', ingestion_source: 'worker', summary, report } as AuditDetail
 }
+
+describe('saved finding origin and technical severity', () => {
+  const finding: AuditFinding = { key: 'test', rule: 'short_title', severity: 'warning', url: 'https://example.com/', evidence: '10 characters' }
+
+  it.each(['s14-wire-1', 's14-wire-2'])('keeps every registered rule out of technical severity in %s', (version) => {
+    const audit = detail({ schema_version: 4, summary_version: 5 } as AuditSummary, {
+      schema_version: 4, policy_guidance: { version }, findings: [finding], pages: [],
+    })
+    for (const rule of ['short_title', 'long_title', 'short_description', 'long_description', 'little_content', 'too_many_links']) {
+      expect(findingPresentation(audit, { ...finding, rule, details: { classification: 'advisory' } }))
+        .toEqual({ origin: 'S14 advisory', severity: null })
+      expect(findingPresentation(audit, { ...finding, rule })).toEqual({ origin: 'S14 classification unavailable', severity: null })
+    }
+    for (const rule of ['noindex', 'http_redirect']) {
+      expect(findingPresentation(audit, { ...finding, rule, details: { classification: 'policy_violation' } }))
+        .toEqual({ origin: 'S14 policy violation', severity: null })
+      expect(findingPresentation(audit, { ...finding, rule, details: { classification: 'advisory' } }))
+        .toEqual({ origin: 'S14 classification unavailable', severity: null })
+    }
+    for (const rule of ['alternates_observed', 'external_link', 'external_target']) {
+      expect(findingPresentation(audit, { ...finding, rule })).toEqual({ origin: 'S14 classification unavailable', severity: null })
+    }
+    expect(findingPresentation(audit, { ...finding, rule: 'robots_blocked' }))
+      .toEqual({ origin: 'Legacy audit finding', severity: 'warning' })
+    expect(findingPriority(audit, 0).inputs[0]).toMatchObject({ key: 'severity', state: 'unavailable', value: null })
+  })
+
+  it.each([1, 2])('retains severity for the same rule on schema %i', (schema_version) => {
+    const audit = detail({ schema_version } as AuditSummary, { schema_version, findings: [finding], pages: [] })
+    expect(findingPresentation(audit, finding)).toEqual({ origin: null, severity: 'warning' })
+    expect(findingPriority(audit, 0).inputs[0]).toMatchObject({ key: 'severity', state: 'known', value: 'warning' })
+  })
+
+  it('withholds classification and severity for an unsupported schema-4 summary', () => {
+    const audit = detail({ schema_version: 4, summary_version: 6 } as AuditSummary, {
+      schema_version: 4, policy_guidance: { version: 's14-wire-1' },
+    })
+    expect(findingPresentation(audit, finding)).toEqual({ origin: 'Finding origin unavailable', severity: null })
+  })
+})
 
 describe('receiver-verified schema 4 semantics', () => {
   it('selects the supported summary version and leaves legacy or missing summaries alone', () => {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { AuditDetail } from '../../shared/types/seosmith'
 import { findingEvaluation, findingPriority } from '#shared/utils/seosmith-remediation'
+import { findingPresentation, technicalSeverityOrder } from '#shared/utils/saved-semantics'
 import { formatInstant } from '#shared/utils/local-time'
 const props = defineProps<{ audit: AuditDetail }>()
 type Attempt = { id: string; result: string; note: string; created_at: string; delivery_id: string | null }
@@ -10,7 +11,9 @@ const index = ref(0), cursors = ref<Array<{ before: string; before_id: string } 
 const form = reactive({ status: 'open', assignee: '', page: '', template: '', locale: '', device: '', business: '', exception_note: '', notes: '', business_exposure: '', estimated_effort: '', rationale: '' })
 const attemptNote = ref(''), attemptResult = ref('unverified'), attemptAudit = ref('')
 const finding = computed(() => props.audit.report.findings[index.value])
-const rankedFindings = computed(() => props.audit.report.findings.map((item, index) => ({ item, index })).sort((a, b) => ['critical', 'alert', 'warning'].indexOf(a.item.severity) - ['critical', 'alert', 'warning'].indexOf(b.item.severity) || a.index - b.index))
+const rankedFindings = computed(() => props.audit.report.findings
+  .map((item, index) => ({ item, index, ...findingPresentation(props.audit, item) }))
+  .sort((a, b) => technicalSeverityOrder(a.severity) - technicalSeverityOrder(b.severity) || a.index - b.index))
 const current = computed(() => items.value.find(item => item.finding_index === index.value))
 const evaluation = computed(() => findingEvaluation(props.audit.report, index.value))
 const priority = computed(() => findingPriority(props.audit, index.value))
@@ -101,7 +104,7 @@ async function addAttempt() {
     <p v-if="message" role="status" class="form-notice">{{ message }}</p>
     <p v-if="!audit.report.findings.length" class="compact-empty">This audit has no findings to plan.</p>
     <template v-else>
-      <label class="insight-control">Finding<select v-model.number="index" :disabled="busy"><option v-for="entry in rankedFindings" :key="entry.index" :value="entry.index">{{ entry.item.severity }} · {{ entry.item.rule }} · {{ entry.item.url }}</option></select></label>
+      <label class="insight-control">Finding<select v-model.number="index" :disabled="busy"><option v-for="entry in rankedFindings" :key="entry.index" :value="entry.index">{{ [entry.origin, entry.severity, entry.item.rule, entry.item.url].filter(Boolean).join(' · ') }}</option></select></label>
       <p v-if="finding" class="report-caption">Evidence: {{ finding.evidence || 'Unavailable' }} · Source: /findings/{{ index }}. See evidence and coverage above.</p>
       <dl v-if="finding" class="priority-inputs" aria-label="Priority inputs"><div v-for="input in priority.inputs" :key="input.key"><dt>{{ input.label }}</dt><dd><strong>{{ input.state === 'known' ? input.value : input.state }}</strong> <span>{{ input.basis }}</span></dd></div></dl>
       <p v-if="finding" class="report-caption">{{ priority.rationale }}</p>
