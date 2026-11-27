@@ -6,6 +6,8 @@ const target = new URL(origin)
 if (target.protocol !== 'http:' || target.hostname !== '127.0.0.1') throw new Error('This test only runs against loopback HTTP.')
 const mode = process.env.HTP_COMPARISON_MODE || 'off'
 const calls = [], auditRequests = [], importBodies = []
+const dashboardRpcs = ['audit_event_history', 'audit_operational_history']
+const createComparisonHint = /Select a schema 4 run to create a comparison under s15-metadata-3/
 let delaySource = false, releaseSource, sourceRequested
 const sourceRequest = new Promise(resolve => { sourceRequested = resolve })
 const sourceRelease = new Promise(resolve => { releaseSource = resolve })
@@ -58,7 +60,7 @@ if (mode === 'off') {
   if (await link.count()) throw Error('off mode exposes dashboard link')
   await page.goto(`${origin}/independent-audits`)
   await page.getByText('Independent audit comparisons are not available yet.').waitFor()
-  if (calls.length) throw Error(`off mode issued RPCs: ${calls}`)
+  if (calls.some(name => !dashboardRpcs.includes(name))) throw Error(`unexpected off-mode RPC: ${calls}`)
 } else {
   await link.click()
   await page.getByRole('button',{name:/example.csv/}).waitFor({timeout:20000})
@@ -85,6 +87,8 @@ if (mode === 'off') {
     await page.getByRole('table').waitFor()
     await page.getByText(/1 agreement/).first().waitFor()
     await page.getByRole('table').getByText('absent',{exact:true}).first().waitFor()
+    await page.getByText('This schema version 4 report replays under s15-metadata-2.', { exact: true }).waitFor()
+    if (await page.getByText(createComparisonHint).count()) throw Error('read-only replay offers a run selection instruction')
     await page.getByRole('button',{name:/saved comparison/}).click()
     await page.getByRole('table').waitFor()
     await page.getByText(/Compared SEOsmith report: example\.com/).waitFor()
@@ -120,7 +124,7 @@ if (mode === 'off') {
     await page.getByRole('button',{name:/future comparison/}).click()
     await page.getByRole('alert').getByText(/unsupported semantics/).waitFor()
     // The dashboard entry also reads its saved alerts before opening the comparison page.
-    const allowed = ['audit_event_history', 'audit_operational_history', 'independent_audit_history', 'independent_comparison_history', 'independent_comparison_detail']
+    const allowed = [...dashboardRpcs, 'independent_audit_history', 'independent_comparison_history', 'independent_comparison_detail']
     if (auditRequests.length) throw Error(`read-only requested SEOsmith audits: ${auditRequests}`)
     if (calls.some(name => !allowed.includes(name))) throw Error(`unexpected RPC: ${calls}`)
   } else {
@@ -129,6 +133,7 @@ if (mode === 'off') {
     await page.getByRole('button',{name:/schema four comparison/}).click()
     await page.getByRole('table').waitFor()
     await page.getByText(/replays under s15-metadata-2/).waitFor()
+    await page.getByText(createComparisonHint).waitFor()
     if (await page.getByRole('button',{name:'Save comparison'}).count()) throw Error('s15-metadata-2 replay offers Save comparison')
     await page.getByRole('button',{name:'Save import'}).waitFor()
     await page.getByRole('button',{name:'Delete independent evidence'}).waitFor()

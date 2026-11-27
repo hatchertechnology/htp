@@ -42,6 +42,64 @@ The disposable native fixture `scripts/comparison-native/run.sh read` qualifies 
 
 New schema-4 comparisons use `s15-metadata-3`; the frozen `-1` and `-2` implementations and saved pins remain supported. A completed, coverage-complete schema-4 report with contract version 1 can establish `missing_title` absence for a page with a pass only when the raw population is provably complete: the title coverage entity count equals the raw page count, observations plus omitted observations equal that count, every URL is unique and has an explicit resource classification, every retained observation identifies its raw entry, and each non-resource entity has exactly one known title evaluation. Resource unknowns and contract truncation are allowed when that proof holds. Missing, ambiguous or unverifiable population or page evaluations fail closed. A page evaluated as `not_applicable` stays unknown with reason `not_applicable` and no rule-wide omission count. `missing_description` is never inferred absent. A known page evaluation failure remains present once the page population is verified. This proof is scoped to the report's declared crawl and does not prove a site is defect-free.
 
-Migration `20261216000000_comparison_semantics_page.sql` must be applied first, followed by the API and then the web client. The old four-argument save RPC continues to pin `-2` for old open clients; new clients call `save_independent_comparison_versioned` with `-3`. Its execute grant mirrors the existing authenticated grant at migration time. If the pilot is enabled later, explicitly grant both save functions; pilot disable must revoke both. Keep the old RPC available while old clients can save. A schema-1 selection continues to use `-1` and is not saveable through the new path. Existing exports and replays carry their saved semantics. Before rollback, check for stored -3 comparisons. While any exist, keep the -3 reader deployed so owners can replay and export their evidence. Disable comparison writes if necessary and keep the API compatible with open browser tabs. When there are zero -3 rows, disable writes before restoring the previous web client, then restore the previous API. Already-open tabs can continue sending the explicit version field until reloaded. Verify the previous client can read saved comparisons before re-enabling its writes. The additive migration stays in place.
+Migration `20261216000000_comparison_semantics_page.sql` must be applied first, followed by the API and then the web client. The old four-argument save RPC continues to pin `-2` for old open clients; new clients call `save_independent_comparison_versioned` with `-3`. Its execute grant mirrors the existing authenticated grant at migration time. If the pilot is enabled later, explicitly grant both save functions; pilot disable must revoke both. Keep the old RPC available while old clients can save. A schema-1 selection continues to use `-1` and is not saveable through the new path. Existing exports and replays carry their saved semantics.
+
+### Roll back to the previous comparison client
+
+Keep the `s15-metadata-3` web bundle in full mode and the compatible API serving owner reads while fencing saves. Full mode keeps owner replay and full evidence export available. Use a privileged database connection and run each SQL block in order with `psql -X -v ON_ERROR_STOP=1` against the same database. Stop on any error and verify the live state before proceeding.
+
+1. Close both comparison save RPCs. The REST API forwards the caller's identity to these same RPCs, so the database fence covers static clients and direct Supabase callers, including open tabs. `HTP_ROLLOUT_COMPARISONS_READ_ONLY=true` can also close REST writes, but direct Supabase calls still require the database fence. Keep the existing owner history, detail and fingerprint grants so owners can replay and export. The full pilot-disable SQL revokes these reads as well.
+
+   ```sql
+   begin;
+   revoke execute on function
+     public.save_independent_comparison(uuid,uuid,uuid,boolean),
+     public.save_independent_comparison_versioned(uuid,uuid,uuid,boolean,text)
+     from public, anon, authenticated, service_role;
+   do $$
+   begin
+     if exists (
+       select 1 from unnest(array['anon', 'authenticated', 'service_role']) as caller(role_name)
+       cross join unnest(array[
+         'public.save_independent_comparison(uuid,uuid,uuid,boolean)',
+         'public.save_independent_comparison_versioned(uuid,uuid,uuid,boolean,text)'
+       ]) as save(signature)
+       where has_function_privilege(caller.role_name, save.signature, 'EXECUTE')
+     ) then
+       raise exception 'comparison save still granted';
+     end if;
+   end $$;
+   commit;
+   ```
+
+2. Drain transactions already writing comparison rows and fence any already-admitted `-3` save that has yet to reach its insert. Adding the `NOT VALID` check takes an exclusive table lock, which waits for existing writers to finish. After commit the check rejects later `-3` inserts while retaining stored `-3` rows. A timeout leaves the RPC hold in place. Resolve the blocking transaction and finish this step before counting. Run the count after the check commits, using a fresh snapshot.
+
+   ```sql
+   begin;
+   set local lock_timeout = '5s';
+   alter table public.independent_audit_comparisons
+     add constraint independent_audit_comparisons_hold_s15_metadata_3
+     check (semantics <> 's15-metadata-3') not valid;
+   commit;
+
+   select count(*) as stored_s15_metadata_3
+   from public.independent_audit_comparisons
+   where semantics = 's15-metadata-3';
+   ```
+
+3. If the count is nonzero, keep the `s15-metadata-3` web bundle and compatible API. Owners can replay and export with that bundle. If an owner elects to remove evidence, have them verify the full export and use the fingerprint-checked owner deletion workflow, which removes all independent evidence for that website. Recount after deletion with the fence still in place. If you set the API read-only flag in step 1, it also blocks REST deletion. Use the compatible API with that flag off for the approved deletion while keeping the database save fence in place.
+4. At zero, restore the previous web bundle first, then the previous API. Verify owner replay of saved `-1` and `-2` comparisons on the restored stack. Leave the additive migration applied. Keep the `-3` check and the versioned RPC hold through old-client-only operation.
+5. If legacy pilot writes were enabled before the rollback and may resume, grant only the four-argument save to `authenticated`. Restore the REST write setting for the legacy client if it was held. Verify a legacy save pins `-2` and the versioned RPC is still denied. A stale `-3` SSR tab calls the held RPC directly. A stale `-3` static tab sends an explicit `semantics` field, which the previous API rejects. Reload those tabs to use the previous bundle.
+
+   ```sql
+   grant execute on function public.save_independent_comparison(uuid,uuid,uuid,boolean)
+     to authenticated;
+   select has_function_privilege('authenticated',
+     'public.save_independent_comparison(uuid,uuid,uuid,boolean)', 'EXECUTE') as legacy_enabled,
+     has_function_privilege('authenticated',
+     'public.save_independent_comparison_versioned(uuid,uuid,uuid,boolean,text)', 'EXECUTE') as versioned_enabled;
+   ```
+
+   Expect `legacy_enabled = true` and `versioned_enabled = false`. For a later approved `-3` rollout, restore a compatible API and reader before dropping `independent_audit_comparisons_hold_s15_metadata_3` and restoring the versioned grant.
 
 The Kerry regression projections in `apps/web/tests/fixtures/comparison-s15-page` retain population identities, rule evaluations and coverage from the saved 100/3000 complete report (source SHA-256 `dfa522652cfd32fd22eaf10f8c55b6f8e15e71cc8aeac4c34505343d9ab95a9a`) and the partial 100/400 report (`49b5d02544f09e14521da5d215428d3343120a682bd9a726cc2e940088d1a33b`). They are reduced test projections, not full admissible reports or evidence of a fresh production crawl.
