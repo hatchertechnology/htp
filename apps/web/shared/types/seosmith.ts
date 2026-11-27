@@ -76,6 +76,7 @@ export interface AuditPage {
 }
 export interface AuditReport {
   evidence_contract?: AuditEvidenceContract
+  policy_guidance?: { version?: unknown; candidate?: { records?: unknown } }
   schema_version?: number; engine_version?: string; ruleset_version?: string
   started_at?: string; finished_at?: string; outcome?: string; stop_reason?: string; coverage_complete?: boolean
   request: {

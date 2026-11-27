@@ -12,6 +12,7 @@ import {
   ruleClaimLabels,
   ruleClaimTotals,
   semanticsSupport,
+  s14UnknownRecords,
   sha256Hex,
   summaryExport,
   type DigestStatus,
@@ -36,6 +37,29 @@ const showAllRules = ref(false)
 // coverage stay visible because those are the claims a reader must weigh.
 const visibleClaims = computed(() => showAllRules.value ? claims.value : claims.value.filter(entry => entry.claim !== 'verified-clean'))
 const omitted = computed(() => (shownSummary.value?.omitted_records ?? 0) + (shownSummary.value?.omitted_observations ?? 0))
+const unknownRecords = computed(() => s14UnknownRecords(props.audit))
+const unknownUrls = shallowRef(new Map<string, string>())
+watch(() => props.audit, async (audit, _, onCleanup) => {
+  let current = true
+  onCleanup(() => { current = false })
+  unknownUrls.value = new Map()
+  if (!globalThis.crypto?.subtle || !unknownRecords.value.length) return
+
+  const wanted = new Set(unknownRecords.value.map(record => record.entity_id))
+  const urls = new Map<string, string>()
+  const pages = audit.report.pages
+  // Match the retained entity identity over the exact URL and resource kind.
+  // Unknown records have no source locator, so leave unmatched IDs visible.
+  for (let start = 0; current && wanted.size && start < pages.length; start += 256) {
+    await Promise.all(pages.slice(start, start + 256).map(async page => {
+      if (!page.url) return
+      const hex = await sha256Hex(`seosmith-entity-v1\n${page.is_resource ? 'resource' : 'page'}\n${page.url}`)
+      const id = `sha256:${hex}`
+      if (hex && wanted.delete(id)) urls.set(id, page.url)
+    }))
+  }
+  if (current) unknownUrls.value = urls
+}, { immediate: true })
 // Viewer-local time with a zone label (owner decision); the UTC instant stays in title/datetime.
 function stamp(value: string | null | undefined) { return value ? formatInstant(value) : 'Unavailable' }
 // The receiver emits an opaque summary text. We hash those exact bytes when the
@@ -101,6 +125,24 @@ function downloadSummary() {
       </table>
     </div>
     <p class="report-caption">An advisory is a threshold observation; a policy violation requires explicit intent. Neither is inferred from an absent finding.</p>
+    <details v-if="unknownRecords.length">
+      <summary>Retained S14 unknown records ({{ unknownRecords.length }})</summary>
+      <div class="table-scroll">
+        <table>
+          <caption>S14 evidence with an unknown outcome</caption>
+          <thead><tr><th scope="col">Rule</th><th scope="col">Category</th><th scope="col">Outcome</th><th scope="col">Affected URL or entity ID</th><th scope="col">Reason</th></tr></thead>
+          <tbody>
+            <tr v-for="record in unknownRecords" :key="record.record_id">
+              <th scope="row">{{ labelRule(record.rule_id) }}</th>
+              <td>{{ labelRule(record.category) }}</td>
+              <td>Unknown / not checked</td>
+              <td>{{ unknownUrls.get(record.entity_id) ?? record.entity_id }}</td>
+              <td>{{ labelRule(record.reason) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
     <div class="table-scroll">
       <table>
         <caption>Retained observations and provenance</caption>
