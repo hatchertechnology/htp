@@ -28,7 +28,7 @@ begin
   select w.id,i.fqdn,p_import_id,p_delivery_id,p_semantics,p_asserted from public.independent_audit_imports i where i.id=p_import_id returning * into item;
   return to_jsonb(item);
 end $$;
-revoke all on function public.save_independent_comparison_versioned(uuid,uuid,uuid,boolean,text) from public,anon,authenticated;
+revoke all on function public.save_independent_comparison_versioned(uuid,uuid,uuid,boolean,text) from public,anon,authenticated,service_role;
 do $grant$
 begin
   if has_function_privilege('authenticated','public.save_independent_comparison(uuid,uuid,uuid,boolean)','EXECUTE') then
@@ -42,6 +42,7 @@ begin
   if not exists(select 1 from pg_proc p where p.oid=old_f and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')='59c990b5081e71a31db4967a79dc5593381a5b6217d2035ecd13e749ac8b64f5')
      or not exists(select 1 from pg_proc p where p.oid=new_f and p.prosecdef and exists(select 1 from unnest(p.proconfig) c where c in ('search_path=', 'search_path=""')))
      or has_function_privilege('anon',new_f,'EXECUTE') or has_function_privilege('public',new_f,'EXECUTE')
+     or has_function_privilege('service_role',new_f,'EXECUTE')
      or has_function_privilege('authenticated',old_f,'EXECUTE') is distinct from has_function_privilege('authenticated',new_f,'EXECUTE') then
     raise exception 'comparison_page_postcondition_drift';
   end if;
